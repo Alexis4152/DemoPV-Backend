@@ -1,0 +1,113 @@
+package com.boutique.pos.service;
+
+import com.boutique.pos.dto.InventoryAdjustRequest;
+import com.boutique.pos.dto.ProductRequest;
+import com.boutique.pos.model.MovementType;
+import com.boutique.pos.model.Category;
+import com.boutique.pos.model.InventoryMovement;
+import com.boutique.pos.model.Product;
+import com.boutique.pos.model.User;
+import com.boutique.pos.repository.CategoryRepository;
+import com.boutique.pos.repository.InventoryMovementRepository;
+import com.boutique.pos.repository.ProductRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+
+@Service
+@RequiredArgsConstructor
+public class ProductService {
+
+    private final ProductRepository productRepository;
+    private final CategoryRepository categoryRepository;
+    private final InventoryMovementRepository movementRepository;
+
+    public Page<Product> search(String q, Long categoryId, Boolean lowStock, Pageable pageable) {
+        return productRepository.searchActive(q, categoryId, lowStock, pageable);
+    }
+
+    public List<Product> findAll() {
+        return productRepository.findByIsActiveTrueOrderByNameAsc();
+    }
+
+    public Product findById(Long id) {
+        return productRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Producto no encontrado: " + id));
+    }
+
+    public Product create(ProductRequest req, User actor) {
+        Category cat = categoryRepository.findById(req.getCategoryId())
+                .orElseThrow(() -> new IllegalArgumentException("Categoría no encontrada"));
+
+        Product p = new Product();
+        p.setName(req.getName());
+        p.setDescription(req.getDescription());
+        p.setBarcode(req.getBarcode());
+        p.setPrice(req.getPrice());
+        p.setCost(req.getCost());
+        p.setStock(req.getStock() != null ? req.getStock() : 0);
+        p.setMinStock(req.getMinStock() != null ? req.getMinStock() : 5);
+        p.setUnit(req.getUnit() != null ? req.getUnit() : "pieza");
+        p.setCategory(cat);
+        p.setIsActive(true);
+        Product saved = productRepository.save(p);
+
+        if (saved.getStock() > 0) {
+            recordMovement(saved, actor, MovementType.IN, saved.getStock(), 0, "Stock inicial");
+        }
+        return saved;
+    }
+
+    public Product update(Long id, ProductRequest req, User actor) {
+        Product p = findById(id);
+        Category cat = categoryRepository.findById(req.getCategoryId())
+                .orElseThrow(() -> new IllegalArgumentException("Categoría no encontrada"));
+
+        p.setName(req.getName());
+        p.setDescription(req.getDescription());
+        p.setBarcode(req.getBarcode());
+        p.setPrice(req.getPrice());
+        p.setCost(req.getCost());
+        p.setMinStock(req.getMinStock() != null ? req.getMinStock() : 5);
+        p.setUnit(req.getUnit() != null ? req.getUnit() : "pieza");
+        p.setCategory(cat);
+        return productRepository.save(p);
+    }
+
+    @Transactional
+    public Product adjustStock(Long id, InventoryAdjustRequest req, User actor) {
+        Product p = findById(id);
+        int previous = p.getStock();
+        int newStock = previous + req.getQuantity();
+        if (newStock < 0) throw new IllegalStateException("Stock insuficiente");
+        p.setStock(newStock);
+        productRepository.save(p);
+
+        MovementType type = req.getQuantity() >= 0 ? MovementType.IN : MovementType.OUT;
+        recordMovement(p, actor, type, Math.abs(req.getQuantity()), previous, req.getReason());
+        return p;
+    }
+
+    public void deactivate(Long id) {
+        Product p = findById(id);
+        p.setIsActive(false);
+        productRepository.save(p);
+    }
+
+    private void recordMovement(Product product, User actor, MovementType type,
+                                 int quantity, int previous, String reason) {
+        InventoryMovement mv = new InventoryMovement();
+        mv.setProduct(product);
+        mv.setUser(actor);
+        mv.setType(type);
+        mv.setQuantity(quantity);
+        mv.setPreviousStock(previous);
+        mv.setNewStock(previous + (type == MovementType.IN ? quantity : -quantity));
+        mv.setReason(reason);
+        movementRepository.save(mv);
+    }
+}
