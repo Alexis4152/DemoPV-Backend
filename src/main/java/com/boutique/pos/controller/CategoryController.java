@@ -20,11 +20,13 @@ public class CategoryController {
     private final CategoryService categoryService;
 
     @GetMapping
+    @PreAuthorize("@sectionAccess.checkAny('INVENTORY', 'POS')")
     public ResponseEntity<ApiResponse<List<Category>>> list() {
         return ResponseEntity.ok(ApiResponse.ok(categoryService.findAll(), null));
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize("@sectionAccess.checkAny('INVENTORY', 'POS')")
     public ResponseEntity<ApiResponse<Category>> get(@PathVariable Long id) {
         return ResponseEntity.ok(ApiResponse.ok(categoryService.findById(id), null));
     }

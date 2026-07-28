@@ -1,6 +1,5 @@
 package com.boutique.pos.dto;
 
-import com.boutique.pos.model.Role;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -14,6 +13,6 @@ public class UserRequest {
     private String email;
     private String password;
     @NotNull
-    private Role role;
+    private Long roleId;
     private Boolean isActive;
 }
