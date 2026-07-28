@@ -26,11 +26,14 @@ public class ProductController {
     private final ProductService productService;
 
     @GetMapping
+    @PreAuthorize("@sectionAccess.checkAny('INVENTORY', 'POS')")
     public ResponseEntity<ApiResponse<List<Product>>> list() {
         return ResponseEntity.ok(ApiResponse.ok(productService.findAll(), null));
     }
 
+    // usado también por el widget de stock bajo del Dashboard
     @GetMapping("/search")
+    @PreAuthorize("@sectionAccess.checkAny('INVENTORY', 'POS', 'DASHBOARD')")
     public ResponseEntity<?> search(@RequestParam(required = false) String q,
                                      @RequestParam(required = false) Long categoryId,
                                      @RequestParam(required = false) Boolean lowStock,
@@ -42,6 +45,7 @@ public class ProductController {
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize("@sectionAccess.checkAny('INVENTORY', 'POS')")
     public ResponseEntity<ApiResponse<Product>> get(@PathVariable Long id) {
         return ResponseEntity.ok(ApiResponse.ok(productService.findById(id), null));
     }

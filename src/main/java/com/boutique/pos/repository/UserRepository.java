@@ -1,5 +1,6 @@
 package com.boutique.pos.repository;
 
+import com.boutique.pos.model.Role;
 import com.boutique.pos.model.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.List;
@@ -9,4 +10,5 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByEmail(String email);
     boolean existsByEmail(String email);
     List<User> findAllByOrderByNameAsc();
+    long countByRole(Role role);
 }

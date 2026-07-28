@@ -26,6 +26,7 @@ public class SaleController {
     private final SaleService saleService;
 
     @GetMapping
+    @PreAuthorize("@sectionAccess.check('SALES')")
     public ResponseEntity<ApiResponse<List<Sale>>> list(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
@@ -36,11 +37,13 @@ public class SaleController {
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize("@sectionAccess.check('SALES')")
     public ResponseEntity<ApiResponse<Sale>> get(@PathVariable Long id) {
         return ResponseEntity.ok(ApiResponse.ok(saleService.findById(id), null));
     }
 
     @PostMapping
+    @PreAuthorize("@sectionAccess.check('POS')")
     public ResponseEntity<ApiResponse<Sale>> create(@Valid @RequestBody SaleRequest req,
                                                      @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(saleService.create(req, actor), "Venta registrada"));
