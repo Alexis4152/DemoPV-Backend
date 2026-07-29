@@ -65,8 +65,9 @@ public class ProductController {
         return ResponseEntity.ok(ApiResponse.ok(productService.update(id, req, actor), "Producto actualizado"));
     }
 
+    // cualquier rol con acceso a la sección de Inventario puede ajustar stock (no solo ADMIN)
     @PostMapping("/{id}/adjust-stock")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@sectionAccess.check('INVENTORY')")
     public ResponseEntity<ApiResponse<Product>> adjustStock(@PathVariable Long id,
                                                              @Valid @RequestBody InventoryAdjustRequest req,
                                                              @AuthenticationPrincipal User actor) {

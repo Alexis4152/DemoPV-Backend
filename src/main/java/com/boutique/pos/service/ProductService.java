@@ -80,6 +80,9 @@ public class ProductService {
 
     @Transactional
     public Product adjustStock(Long id, InventoryAdjustRequest req, User actor) {
+        if (req.getQuantity() < 0 && !"ADMIN".equals(actor.getRole().getName())) {
+            throw new IllegalStateException("Solo un administrador puede quitar piezas del inventario");
+        }
         Product p = findById(id);
         int previous = p.getStock();
         int newStock = previous + req.getQuantity();

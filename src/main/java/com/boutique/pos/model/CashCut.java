@@ -50,6 +50,15 @@ public class CashCut {
     @Builder.Default
     private Integer totalTransactions = 0;
 
+    // columnDefinition incluye un DEFAULT para que el ALTER TABLE funcione contra filas ya existentes
+    @Column(nullable = false, columnDefinition = "integer default 0")
+    @Builder.Default
+    private Integer cancelledCount = 0;
+
+    @Column(nullable = false, precision = 12, scale = 2, columnDefinition = "numeric(12,2) default 0")
+    @Builder.Default
+    private BigDecimal cancelledTotal = BigDecimal.ZERO;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 10)
     @Builder.Default

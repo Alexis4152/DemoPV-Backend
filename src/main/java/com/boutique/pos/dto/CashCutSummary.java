@@ -14,4 +14,6 @@ public class CashCutSummary {
     private BigDecimal transferSales;
     private BigDecimal totalSales;
     private int totalTransactions;
+    private int cancelledCount;
+    private BigDecimal cancelledTotal;
 }
