@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -25,26 +26,62 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class CashCutService {
 
+    private static final String ADMIN = "ADMIN";
+
     private final CashCutRepository cashCutRepository;
     private final SaleRepository saleRepository;
 
-    public Optional<CashCut> findOpen() {
-        return cashCutRepository.findFirstByStatus(CashCutStatus.OPEN);
+    // ADMIN ve cualquier corte; el resto solo ve el suyo del día de hoy (abierto o ya cerrado).
+    // Al día siguiente pasa a ser historial, visible solo para ADMIN.
+    public Optional<CashCut> findOpen(User actor) {
+        return cashCutRepository.findFirstByStatus(CashCutStatus.OPEN)
+                .filter(cut -> canView(cut, actor));
     }
 
     public Page<CashCut> findAll(Pageable pageable) {
         return cashCutRepository.findAllByOrderByOpenedAtDesc(pageable);
     }
 
-    public CashCut findById(Long id) {
+    // El corte propio del día de hoy, abierto o ya cerrado — a diferencia de findOpen(),
+    // esto no depende de que siga OPEN, así que sigue disponible justo después de cerrarlo.
+    public Optional<CashCut> findMineToday(User actor) {
+        LocalDateTime startOfDay = LocalDate.now().atStartOfDay();
+        LocalDateTime endOfDay = startOfDay.plusDays(1);
+        return cashCutRepository.findFirstByUserIdAndOpenedAtBetweenOrderByOpenedAtDesc(
+                actor.getId(), startOfDay, endOfDay);
+    }
+
+    public CashCut findById(Long id, User actor) {
+        CashCut cut = findById(id);
+        if (!canView(cut, actor)) {
+            throw new IllegalArgumentException("Corte no encontrado: " + id);
+        }
+        return cut;
+    }
+
+    private CashCut findById(Long id) {
         return cashCutRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Corte no encontrado: " + id));
+    }
+
+    private boolean canView(CashCut cut, User actor) {
+        if (ADMIN.equals(actor.getRole().getName())) return true;
+        return cut.getUser().getId().equals(actor.getId())
+                && cut.getOpenedAt().toLocalDate().equals(LocalDate.now());
     }
 
     @Transactional
     public CashCut open(CashCutRequest req, User actor) {
         if (cashCutRepository.findFirstByStatus(CashCutStatus.OPEN).isPresent()) {
             throw new IllegalStateException("Ya hay un corte de caja abierto");
+        }
+        if (!ADMIN.equals(actor.getRole().getName())) {
+            LocalDateTime startOfDay = LocalDate.now().atStartOfDay();
+            LocalDateTime endOfDay = startOfDay.plusDays(1);
+            if (cashCutRepository.existsByUserIdAndOpenedAtBetween(actor.getId(), startOfDay, endOfDay)) {
+                throw new IllegalStateException(
+                        "Ya abriste un corte de caja hoy. Solo un administrador puede abrir varios cortes el mismo día.");
+            }
         }
         CashCut cut = new CashCut();
         cut.setUser(actor);
@@ -54,8 +91,8 @@ public class CashCutService {
         return cashCutRepository.save(cut);
     }
 
-    public CashCutSummary summary(Long id) {
-        CashCut cut = findById(id);
+    public CashCutSummary summary(Long id, User actor) {
+        CashCut cut = findById(id, actor);
         List<Sale> sales = saleRepository.findByCashCutId(id);
         SalesTotals totals = sumSales(sales);
         return new CashCutSummary(cut.getOpeningAmount(), totals.cashSales, totals.cardSales, totals.transferSales,
