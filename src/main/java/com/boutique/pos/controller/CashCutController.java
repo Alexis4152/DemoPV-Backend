@@ -26,8 +26,9 @@ public class CashCutController {
 
     private final CashCutService cashCutService;
 
+    // tabla/historial de cortes: solo ADMIN
     @GetMapping
-    @PreAuthorize("@sectionAccess.check('CASH_CUTS')")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<List<CashCut>>> list(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
@@ -38,21 +39,29 @@ public class CashCutController {
     // usado también por el widget del Dashboard, por eso admite ambas secciones
     @GetMapping("/open")
     @PreAuthorize("@sectionAccess.checkAny('CASH_CUTS', 'DASHBOARD')")
-    public ResponseEntity<ApiResponse<CashCut>> getOpen() {
-        Optional<CashCut> open = cashCutService.findOpen();
+    public ResponseEntity<ApiResponse<CashCut>> getOpen(@AuthenticationPrincipal User actor) {
+        Optional<CashCut> open = cashCutService.findOpen(actor);
         return ResponseEntity.ok(ApiResponse.ok(open.orElse(null), null));
+    }
+
+    // corte propio del día de hoy (abierto o ya cerrado) — para que quien lo cerró lo pueda seguir viendo
+    @GetMapping("/mine/today")
+    @PreAuthorize("@sectionAccess.check('CASH_CUTS')")
+    public ResponseEntity<ApiResponse<CashCut>> getMineToday(@AuthenticationPrincipal User actor) {
+        Optional<CashCut> mine = cashCutService.findMineToday(actor);
+        return ResponseEntity.ok(ApiResponse.ok(mine.orElse(null), null));
     }
 
     @GetMapping("/{id}")
     @PreAuthorize("@sectionAccess.check('CASH_CUTS')")
-    public ResponseEntity<ApiResponse<CashCut>> get(@PathVariable Long id) {
-        return ResponseEntity.ok(ApiResponse.ok(cashCutService.findById(id), null));
+    public ResponseEntity<ApiResponse<CashCut>> get(@PathVariable Long id, @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(cashCutService.findById(id, actor), null));
     }
 
     @GetMapping("/{id}/summary")
     @PreAuthorize("@sectionAccess.check('CASH_CUTS')")
-    public ResponseEntity<ApiResponse<CashCutSummary>> summary(@PathVariable Long id) {
-        return ResponseEntity.ok(ApiResponse.ok(cashCutService.summary(id), null));
+    public ResponseEntity<ApiResponse<CashCutSummary>> summary(@PathVariable Long id, @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(cashCutService.summary(id, actor), null));
     }
 
     @PostMapping("/open")

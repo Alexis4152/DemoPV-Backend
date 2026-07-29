@@ -24,6 +24,7 @@ public class SaleService {
     private final SaleItemRepository saleItemRepository;
     private final CashCutRepository cashCutRepository;
     private final InventoryMovementRepository movementRepository;
+    private final EmailService emailService;
 
     public Page<Sale> findAll(LocalDateTime from, LocalDateTime to, Pageable pageable) {
         if (from != null && to != null) {
@@ -46,6 +47,7 @@ public class SaleService {
         sale.setUser(actor);
         sale.setCashCut(openCut);
         sale.setCustomerName(req.getCustomerName());
+        sale.setCustomerEmail(req.getCustomerEmail());
         sale.setPaymentMethod(req.getPaymentMethod());
         sale.setStatus(SaleStatus.COMPLETED);
         sale.setNotes(req.getNotes());
@@ -107,7 +109,13 @@ public class SaleService {
         sale.setTotal(total);
         sale.setItems(items);
 
-        return saleRepository.save(sale);
+        Sale saved = saleRepository.save(sale);
+
+        if (req.getCustomerEmail() != null && !req.getCustomerEmail().isBlank()) {
+            emailService.sendTicketEmail(saved, req.getCustomerEmail());
+        }
+
+        return saved;
     }
 
     @Transactional

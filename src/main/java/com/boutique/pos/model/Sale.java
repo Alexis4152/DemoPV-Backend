@@ -29,6 +29,9 @@ public class Sale {
     @Column(length = 150)
     private String customerName;
 
+    @Column(length = 150)
+    private String customerEmail;
+
     @Column(nullable = false, precision = 12, scale = 2)
     @Builder.Default
     private BigDecimal subtotal = BigDecimal.ZERO;
