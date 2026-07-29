@@ -1,0 +1,44 @@
+package com.boutique.pos.service;
+
+import com.boutique.pos.dto.TiendaRequest;
+import com.boutique.pos.model.Tienda;
+import com.boutique.pos.repository.TiendaRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+
+@Service
+@RequiredArgsConstructor
+public class TiendaService {
+
+    private final TiendaRepository tiendaRepository;
+
+    public List<Tienda> findAll() {
+        return tiendaRepository.findAllByOrderByNameAsc();
+    }
+
+    public Tienda findById(Long id) {
+        return tiendaRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Tienda no encontrada: " + id));
+    }
+
+    public Tienda create(TiendaRequest req) {
+        Tienda t = new Tienda();
+        t.setName(req.getName());
+        t.setIsActive(true);
+        return tiendaRepository.save(t);
+    }
+
+    public Tienda update(Long id, TiendaRequest req) {
+        Tienda t = findById(id);
+        t.setName(req.getName());
+        return tiendaRepository.save(t);
+    }
+
+    public void deactivate(Long id) {
+        Tienda t = findById(id);
+        t.setIsActive(false);
+        tiendaRepository.save(t);
+    }
+}
