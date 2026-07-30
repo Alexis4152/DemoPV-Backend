@@ -27,8 +27,8 @@ public class ProductController {
 
     @GetMapping
     @PreAuthorize("@sectionAccess.checkAny('INVENTORY', 'POS')")
-    public ResponseEntity<ApiResponse<List<Product>>> list() {
-        return ResponseEntity.ok(ApiResponse.ok(productService.findAll(), null));
+    public ResponseEntity<ApiResponse<List<Product>>> list(@AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(productService.findAll(actor), null));
     }
 
     // usado también por el widget de stock bajo del Dashboard
@@ -38,16 +38,17 @@ public class ProductController {
                                      @RequestParam(required = false) Long categoryId,
                                      @RequestParam(required = false) Boolean lowStock,
                                      @RequestParam(defaultValue = "0") int page,
-                                     @RequestParam(defaultValue = "20") int size) {
+                                     @RequestParam(defaultValue = "20") int size,
+                                     @AuthenticationPrincipal User actor) {
         Pageable pageable = PageRequest.of(page, size);
-        Page<Product> result = productService.search(q, categoryId, lowStock, pageable);
+        Page<Product> result = productService.search(q, categoryId, lowStock, pageable, actor);
         return ResponseEntity.ok(ApiResponse.ok(result.getContent(), null));
     }
 
     @GetMapping("/{id}")
     @PreAuthorize("@sectionAccess.checkAny('INVENTORY', 'POS')")
-    public ResponseEntity<ApiResponse<Product>> get(@PathVariable Long id) {
-        return ResponseEntity.ok(ApiResponse.ok(productService.findById(id), null));
+    public ResponseEntity<ApiResponse<Product>> get(@PathVariable Long id, @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(productService.findById(id, actor), null));
     }
 
     @PostMapping
@@ -76,8 +77,8 @@ public class ProductController {
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id) {
-        productService.deactivate(id);
+    public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id, @AuthenticationPrincipal User actor) {
+        productService.deactivate(id, actor);
         return ResponseEntity.ok(ApiResponse.ok(null, "Producto desactivado"));
     }
 }

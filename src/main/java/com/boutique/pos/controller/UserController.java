@@ -8,6 +8,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -21,29 +22,30 @@ public class UserController {
     private final UserService userService;
 
     @GetMapping
-    public ResponseEntity<ApiResponse<List<User>>> list() {
-        return ResponseEntity.ok(ApiResponse.ok(userService.findAll(), null));
+    public ResponseEntity<ApiResponse<List<User>>> list(@AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(userService.findAll(actor), null));
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<ApiResponse<User>> get(@PathVariable Long id) {
-        return ResponseEntity.ok(ApiResponse.ok(userService.findById(id), null));
+    public ResponseEntity<ApiResponse<User>> get(@PathVariable Long id, @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(userService.findById(id, actor), null));
     }
 
     @PostMapping
-    public ResponseEntity<ApiResponse<User>> create(@Valid @RequestBody UserRequest req) {
-        return ResponseEntity.ok(ApiResponse.ok(userService.create(req), "Usuario creado"));
+    public ResponseEntity<ApiResponse<User>> create(@Valid @RequestBody UserRequest req, @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(userService.create(req, actor), "Usuario creado"));
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<ApiResponse<User>> update(@PathVariable Long id,
-                                                     @Valid @RequestBody UserRequest req) {
-        return ResponseEntity.ok(ApiResponse.ok(userService.update(id, req), "Usuario actualizado"));
+                                                     @Valid @RequestBody UserRequest req,
+                                                     @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(userService.update(id, req, actor), "Usuario actualizado"));
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id) {
-        userService.deactivate(id);
+    public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id, @AuthenticationPrincipal User actor) {
+        userService.deactivate(id, actor);
         return ResponseEntity.ok(ApiResponse.ok(null, "Usuario desactivado"));
     }
 }

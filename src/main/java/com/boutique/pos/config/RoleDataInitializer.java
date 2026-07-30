@@ -13,7 +13,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 @Component
@@ -28,7 +27,7 @@ public class RoleDataInitializer implements CommandLineRunner {
     @Transactional
     public void run(String... args) {
         seedDefaultRoles();
-        migrateLegacyUserRoles();
+        assignDefaultAdminRole();
     }
 
     private void seedDefaultRoles() {
@@ -59,28 +58,18 @@ public class RoleDataInitializer implements CommandLineRunner {
         log.info("Roles sembrados: ADMIN, CASHIER, SELLER");
     }
 
-    private void migrateLegacyUserRoles() {
-        List<Map<String, Object>> pending;
-        try {
-            pending = jdbcTemplate.queryForList(
-                    "SELECT id, role FROM users WHERE role_id IS NULL AND role IS NOT NULL");
-        } catch (Exception e) {
-            return; // columna legacy 'role' no existe (base nueva) — nada que migrar
+    // init.sql da de alta admin@boutique.com sin role_id (la tabla roles la maneja Hibernate,
+    // no ese script) — este paso idempotente le asigna ADMIN si todavía no tiene rol.
+    // findFirstByNameOrderById (no findByName): una vez que cada tienda tiene su propio
+    // rol "ADMIN", puede haber más de uno y findByName tronaría por resultado ambiguo.
+    private void assignDefaultAdminRole() {
+        Role admin = roleRepository.findFirstByNameOrderById("ADMIN").orElse(null);
+        if (admin == null) return;
+        int updated = jdbcTemplate.update(
+                "UPDATE users SET role_id = ? WHERE email = 'admin@boutique.com' AND role_id IS NULL",
+                admin.getId());
+        if (updated > 0) {
+            log.info("Rol ADMIN asignado a admin@boutique.com");
         }
-        if (pending.isEmpty()) return;
-
-        int migrated = 0;
-        for (Map<String, Object> row : pending) {
-            Long userId = ((Number) row.get("id")).longValue();
-            String legacyRoleName = String.valueOf(row.get("role"));
-            Role role = roleRepository.findByName(legacyRoleName).orElse(null);
-            if (role == null) {
-                log.warn("Usuario {} tiene rol legacy desconocido '{}', se omite", userId, legacyRoleName);
-                continue;
-            }
-            jdbcTemplate.update("UPDATE users SET role_id = ? WHERE id = ?", role.getId(), userId);
-            migrated++;
-        }
-        log.info("Migrados {} usuarios desde la columna legacy 'role'", migrated);
     }
 }

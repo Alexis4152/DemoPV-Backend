@@ -10,6 +10,7 @@ import com.boutique.pos.model.SaleStatus;
 import com.boutique.pos.model.User;
 import com.boutique.pos.repository.CashCutRepository;
 import com.boutique.pos.repository.SaleRepository;
+import com.boutique.pos.security.TenantScope;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -30,16 +31,20 @@ public class CashCutService {
 
     private final CashCutRepository cashCutRepository;
     private final SaleRepository saleRepository;
+    private final TenantScope tenantScope;
 
-    // ADMIN ve cualquier corte; el resto solo ve el suyo del día de hoy (abierto o ya cerrado).
-    // Al día siguiente pasa a ser historial, visible solo para ADMIN.
+    // ADMIN ve cualquier corte de su tienda; SUPER_ADMIN ve todo; el resto solo ve el suyo
+    // del día de hoy (abierto o ya cerrado). Al día siguiente pasa a ser historial.
     public Optional<CashCut> findOpen(User actor) {
-        return cashCutRepository.findFirstByStatus(CashCutStatus.OPEN)
-                .filter(cut -> canView(cut, actor));
+        Optional<CashCut> open = tenantScope.isSuperAdmin(actor)
+                ? cashCutRepository.findFirstByStatus(CashCutStatus.OPEN)
+                : cashCutRepository.findFirstByStatusAndTiendaId(CashCutStatus.OPEN,
+                        actor.getTienda() != null ? actor.getTienda().getId() : null);
+        return open.filter(cut -> canView(cut, actor));
     }
 
-    public Page<CashCut> findAll(Pageable pageable) {
-        return cashCutRepository.findAllByOrderByOpenedAtDesc(pageable);
+    public Page<CashCut> findAll(Pageable pageable, User actor) {
+        return cashCutRepository.findAllForTienda(tenantScope.scopeId(actor), pageable);
     }
 
     // El corte propio del día de hoy, abierto o ya cerrado — a diferencia de findOpen(),
@@ -65,15 +70,20 @@ public class CashCutService {
     }
 
     private boolean canView(CashCut cut, User actor) {
-        if (ADMIN.equals(actor.getRole().getName())) return true;
+        if (tenantScope.isSuperAdmin(actor)) return true;
+        if (ADMIN.equals(actor.getRole().getName())) {
+            return actor.getTienda() == null ? cut.getTienda() == null
+                    : actor.getTienda().getId().equals(cut.getTienda() != null ? cut.getTienda().getId() : null);
+        }
         return cut.getUser().getId().equals(actor.getId())
                 && cut.getOpenedAt().toLocalDate().equals(LocalDate.now());
     }
 
     @Transactional
     public CashCut open(CashCutRequest req, User actor) {
-        if (cashCutRepository.findFirstByStatus(CashCutStatus.OPEN).isPresent()) {
-            throw new IllegalStateException("Ya hay un corte de caja abierto");
+        Long tiendaId = actor.getTienda() != null ? actor.getTienda().getId() : null;
+        if (cashCutRepository.findFirstByStatusAndTiendaId(CashCutStatus.OPEN, tiendaId).isPresent()) {
+            throw new IllegalStateException("Ya hay un corte de caja abierto en tu tienda");
         }
         if (!ADMIN.equals(actor.getRole().getName())) {
             LocalDateTime startOfDay = LocalDate.now().atStartOfDay();
@@ -85,6 +95,7 @@ public class CashCutService {
         }
         CashCut cut = new CashCut();
         cut.setUser(actor);
+        cut.setTienda(actor.getTienda());
         cut.setOpeningAmount(req.getAmount());
         cut.setStatus(CashCutStatus.OPEN);
         cut.setNotes(req.getNotes());
@@ -101,7 +112,7 @@ public class CashCutService {
 
     @Transactional
     public CashCut close(Long id, CashCutRequest req, User actor) {
-        CashCut cut = findById(id);
+        CashCut cut = findById(id, actor);
         if (cut.getStatus() != CashCutStatus.OPEN) {
             throw new IllegalStateException("El corte ya está cerrado");
         }

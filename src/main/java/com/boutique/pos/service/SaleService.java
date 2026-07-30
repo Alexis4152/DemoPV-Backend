@@ -4,6 +4,7 @@ import com.boutique.pos.dto.SaleItemRequest;
 import com.boutique.pos.dto.SaleRequest;
 import com.boutique.pos.model.*;
 import com.boutique.pos.repository.*;
+import com.boutique.pos.security.TenantScope;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -21,16 +22,19 @@ public class SaleService {
 
     private final SaleRepository saleRepository;
     private final ProductRepository productRepository;
+    private final ProductService productService;
     private final SaleItemRepository saleItemRepository;
     private final CashCutRepository cashCutRepository;
     private final InventoryMovementRepository movementRepository;
     private final EmailService emailService;
+    private final TenantScope tenantScope;
 
-    public Page<Sale> findAll(LocalDateTime from, LocalDateTime to, Pageable pageable) {
+    public Page<Sale> findAll(LocalDateTime from, LocalDateTime to, Pageable pageable, User actor) {
+        Long scope = tenantScope.scopeId(actor);
         if (from != null && to != null) {
-            return saleRepository.findByCreatedAtBetweenOrderByCreatedAtDesc(from, to, pageable);
+            return saleRepository.findBetweenForTienda(from, to, scope, pageable);
         }
-        return saleRepository.findAllByOrderByCreatedAtDesc(pageable);
+        return saleRepository.findAllForTienda(scope, pageable);
     }
 
     public Sale findById(Long id) {
@@ -38,9 +42,19 @@ public class SaleService {
                 .orElseThrow(() -> new IllegalArgumentException("Venta no encontrada: " + id));
     }
 
+    public Sale findById(Long id, User actor) {
+        Sale s = findById(id);
+        Long scope = tenantScope.scopeId(actor);
+        if (scope != null && (s.getTienda() == null || !scope.equals(s.getTienda().getId()))) {
+            throw new IllegalArgumentException("Venta no encontrada: " + id);
+        }
+        return s;
+    }
+
     @Transactional
     public Sale create(SaleRequest req, User actor) {
-        CashCut openCut = cashCutRepository.findFirstByStatus(CashCutStatus.OPEN)
+        Long tiendaId = actor.getTienda() != null ? actor.getTienda().getId() : null;
+        CashCut openCut = cashCutRepository.findFirstByStatusAndTiendaId(CashCutStatus.OPEN, tiendaId)
                 .orElseThrow(() -> new IllegalStateException("Debes abrir un corte de caja antes de registrar ventas"));
 
         Sale sale = new Sale();
@@ -51,13 +65,13 @@ public class SaleService {
         sale.setPaymentMethod(req.getPaymentMethod());
         sale.setStatus(SaleStatus.COMPLETED);
         sale.setNotes(req.getNotes());
+        sale.setTienda(actor.getTienda());
 
         List<SaleItem> items = new ArrayList<>();
         BigDecimal subtotal = BigDecimal.ZERO;
 
         for (SaleItemRequest ir : req.getItems()) {
-            Product product = productRepository.findById(ir.getProductId())
-                    .orElseThrow(() -> new IllegalArgumentException("Producto no encontrado: " + ir.getProductId()));
+            Product product = productService.findById(ir.getProductId(), actor);
 
             if (!product.getIsActive()) throw new IllegalStateException("Producto inactivo: " + product.getName());
 
@@ -119,8 +133,8 @@ public class SaleService {
     }
 
     @Transactional
-    public Sale cancel(Long id) {
-        Sale sale = findById(id);
+    public Sale cancel(Long id, User actor) {
+        Sale sale = findById(id, actor);
         if (sale.getStatus() == SaleStatus.CANCELLED) {
             throw new IllegalStateException("La venta ya está cancelada");
         }

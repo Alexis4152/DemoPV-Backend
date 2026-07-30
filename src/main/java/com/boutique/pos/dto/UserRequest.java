@@ -15,4 +15,6 @@ public class UserRequest {
     @NotNull
     private Long roleId;
     private Boolean isActive;
+    // solo aplica si quien crea/edita es SUPER_ADMIN; para el resto se ignora y se usa su propia tienda
+    private Long tiendaId;
 }

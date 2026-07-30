@@ -31,15 +31,16 @@ public class SaleController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "20") int size,
+            @AuthenticationPrincipal User actor) {
         Pageable pageable = PageRequest.of(page, size);
-        return ResponseEntity.ok(ApiResponse.ok(saleService.findAll(from, to, pageable).getContent(), null));
+        return ResponseEntity.ok(ApiResponse.ok(saleService.findAll(from, to, pageable, actor).getContent(), null));
     }
 
     @GetMapping("/{id}")
     @PreAuthorize("@sectionAccess.check('SALES')")
-    public ResponseEntity<ApiResponse<Sale>> get(@PathVariable Long id) {
-        return ResponseEntity.ok(ApiResponse.ok(saleService.findById(id), null));
+    public ResponseEntity<ApiResponse<Sale>> get(@PathVariable Long id, @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(saleService.findById(id, actor), null));
     }
 
     @PostMapping
@@ -51,7 +52,7 @@ public class SaleController {
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<ApiResponse<Sale>> cancel(@PathVariable Long id) {
-        return ResponseEntity.ok(ApiResponse.ok(saleService.cancel(id), "Venta cancelada"));
+    public ResponseEntity<ApiResponse<Sale>> cancel(@PathVariable Long id, @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(saleService.cancel(id, actor), "Venta cancelada"));
     }
 }

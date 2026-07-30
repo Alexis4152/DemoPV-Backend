@@ -17,8 +17,6 @@ CREATE TABLE IF NOT EXISTS users (
     name        VARCHAR(100) NOT NULL,
     email       VARCHAR(150) NOT NULL UNIQUE,
     password    VARCHAR(255) NOT NULL,
-    role        VARCHAR(20)  NOT NULL DEFAULT 'CASHIER'
-                    CHECK (role IN ('ADMIN','CASHIER','SELLER')),
     tienda_id   BIGINT REFERENCES tiendas(id),
     is_active   BOOLEAN NOT NULL DEFAULT TRUE,
     created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -134,10 +132,13 @@ INSERT INTO tiendas (name)
 SELECT 'Tienda Principal'
 WHERE NOT EXISTS (SELECT 1 FROM tiendas LIMIT 1);
 
--- Default admin (password: admin123)
-INSERT INTO users (name, email, password, role, tienda_id)
+-- Default admin (password: admin123). El rol (role_id) se lo asignan RoleDataInitializer +
+-- TenantDataInitializer al arrancar la app: siembran ADMIN/CASHIER/SELLER (uno por tienda,
+-- nunca compartidos entre tiendas) y le dan el ADMIN de su tienda a este usuario. La tabla
+-- roles la administra Hibernate, no este script.
+INSERT INTO users (name, email, password, tienda_id)
 SELECT 'Administrador','admin@boutique.com',
-       '$2b$10$PMm3XPaFv7Rm150MI4NP2uFHtyQ6Sxh1UDBGwcaSp9v7Cn3Ikn/ou','ADMIN',
+       '$2b$10$PMm3XPaFv7Rm150MI4NP2uFHtyQ6Sxh1UDBGwcaSp9v7Cn3Ikn/ou',
        (SELECT id FROM tiendas ORDER BY id LIMIT 1)
 WHERE NOT EXISTS (SELECT 1 FROM users WHERE email='admin@boutique.com');
 
