@@ -11,15 +11,19 @@ import java.util.List;
 
 public interface ProductRepository extends JpaRepository<Product, Long> {
 
-    List<Product> findByIsActiveTrueOrderByNameAsc();
+    @Query("SELECT p FROM Product p WHERE p.isActive = true " +
+           "AND (:tiendaId IS NULL OR p.tienda.id = :tiendaId) ORDER BY p.name ASC")
+    List<Product> findAllActive(@Param("tiendaId") Long tiendaId);
 
     @Query("SELECT p FROM Product p WHERE p.isActive = true " +
            "AND (:q IS NULL OR LOWER(p.name) LIKE LOWER(CONCAT('%',CAST(:q AS string),'%')) OR LOWER(p.barcode) LIKE LOWER(CONCAT('%',CAST(:q AS string),'%'))) " +
            "AND (:categoryId IS NULL OR p.category.id = :categoryId) " +
-           "AND (:lowStock IS NULL OR (:lowStock = true AND p.stock <= p.minStock))")
+           "AND (:lowStock IS NULL OR (:lowStock = true AND p.stock <= p.minStock)) " +
+           "AND (:tiendaId IS NULL OR p.tienda.id = :tiendaId)")
     Page<Product> searchActive(@Param("q") String q,
                                 @Param("categoryId") Long categoryId,
                                 @Param("lowStock") Boolean lowStock,
+                                @Param("tiendaId") Long tiendaId,
                                 Pageable pageable);
 
     @Query("SELECT p FROM Product p WHERE p.isActive = true AND p.stock <= p.minStock ORDER BY p.stock ASC")

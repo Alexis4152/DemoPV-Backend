@@ -26,14 +26,15 @@ public class CashCutController {
 
     private final CashCutService cashCutService;
 
-    // tabla/historial de cortes: solo ADMIN
+    // tabla/historial de cortes: solo ADMIN (de su propia tienda) o SUPER_ADMIN (todas)
     @GetMapping
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<List<CashCut>>> list(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "20") int size,
+            @AuthenticationPrincipal User actor) {
         Pageable pageable = PageRequest.of(page, size);
-        return ResponseEntity.ok(ApiResponse.ok(cashCutService.findAll(pageable).getContent(), null));
+        return ResponseEntity.ok(ApiResponse.ok(cashCutService.findAll(pageable, actor).getContent(), null));
     }
 
     // usado también por el widget del Dashboard, por eso admite ambas secciones

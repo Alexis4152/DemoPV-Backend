@@ -13,6 +13,7 @@ import java.util.List;
 public class TiendaService {
 
     private final TiendaRepository tiendaRepository;
+    private final RoleService roleService;
 
     public List<Tienda> findAll() {
         return tiendaRepository.findAllByOrderByNameAsc();
@@ -27,7 +28,9 @@ public class TiendaService {
         Tienda t = new Tienda();
         t.setName(req.getName());
         t.setIsActive(true);
-        return tiendaRepository.save(t);
+        Tienda saved = tiendaRepository.save(t);
+        roleService.seedDefaultRolesForTienda(saved);
+        return saved;
     }
 
     public Tienda update(Long id, TiendaRequest req) {

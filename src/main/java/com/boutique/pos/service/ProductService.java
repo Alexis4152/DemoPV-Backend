@@ -7,9 +7,9 @@ import com.boutique.pos.model.Category;
 import com.boutique.pos.model.InventoryMovement;
 import com.boutique.pos.model.Product;
 import com.boutique.pos.model.User;
-import com.boutique.pos.repository.CategoryRepository;
 import com.boutique.pos.repository.InventoryMovementRepository;
 import com.boutique.pos.repository.ProductRepository;
+import com.boutique.pos.security.TenantScope;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -23,15 +23,16 @@ import java.util.List;
 public class ProductService {
 
     private final ProductRepository productRepository;
-    private final CategoryRepository categoryRepository;
+    private final CategoryService categoryService;
     private final InventoryMovementRepository movementRepository;
+    private final TenantScope tenantScope;
 
-    public Page<Product> search(String q, Long categoryId, Boolean lowStock, Pageable pageable) {
-        return productRepository.searchActive(q, categoryId, lowStock, pageable);
+    public Page<Product> search(String q, Long categoryId, Boolean lowStock, Pageable pageable, User actor) {
+        return productRepository.searchActive(q, categoryId, lowStock, tenantScope.scopeId(actor), pageable);
     }
 
-    public List<Product> findAll() {
-        return productRepository.findByIsActiveTrueOrderByNameAsc();
+    public List<Product> findAll(User actor) {
+        return productRepository.findAllActive(tenantScope.scopeId(actor));
     }
 
     public Product findById(Long id) {
@@ -39,9 +40,17 @@ public class ProductService {
                 .orElseThrow(() -> new IllegalArgumentException("Producto no encontrado: " + id));
     }
 
+    public Product findById(Long id, User actor) {
+        Product p = findById(id);
+        Long scope = tenantScope.scopeId(actor);
+        if (scope != null && (p.getTienda() == null || !scope.equals(p.getTienda().getId()))) {
+            throw new IllegalArgumentException("Producto no encontrado: " + id);
+        }
+        return p;
+    }
+
     public Product create(ProductRequest req, User actor) {
-        Category cat = categoryRepository.findById(req.getCategoryId())
-                .orElseThrow(() -> new IllegalArgumentException("Categoría no encontrada"));
+        Category cat = categoryService.findById(req.getCategoryId(), actor);
 
         Product p = new Product();
         p.setName(req.getName());
@@ -53,6 +62,7 @@ public class ProductService {
         p.setMinStock(req.getMinStock() != null ? req.getMinStock() : 5);
         p.setUnit(req.getUnit() != null ? req.getUnit() : "pieza");
         p.setCategory(cat);
+        p.setTienda(actor.getTienda());
         p.setIsActive(true);
         Product saved = productRepository.save(p);
 
@@ -63,9 +73,8 @@ public class ProductService {
     }
 
     public Product update(Long id, ProductRequest req, User actor) {
-        Product p = findById(id);
-        Category cat = categoryRepository.findById(req.getCategoryId())
-                .orElseThrow(() -> new IllegalArgumentException("Categoría no encontrada"));
+        Product p = findById(id, actor);
+        Category cat = categoryService.findById(req.getCategoryId(), actor);
 
         p.setName(req.getName());
         p.setDescription(req.getDescription());
@@ -83,7 +92,7 @@ public class ProductService {
         if (req.getQuantity() < 0 && !"ADMIN".equals(actor.getRole().getName())) {
             throw new IllegalStateException("Solo un administrador puede quitar piezas del inventario");
         }
-        Product p = findById(id);
+        Product p = findById(id, actor);
         int previous = p.getStock();
         int newStock = previous + req.getQuantity();
         if (newStock < 0) throw new IllegalStateException("Stock insuficiente");
@@ -95,8 +104,8 @@ public class ProductService {
         return p;
     }
 
-    public void deactivate(Long id) {
-        Product p = findById(id);
+    public void deactivate(Long id, User actor) {
+        Product p = findById(id, actor);
         p.setIsActive(false);
         productRepository.save(p);
     }
