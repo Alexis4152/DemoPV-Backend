@@ -20,6 +20,10 @@ public class Category {
     @Column(columnDefinition = "TEXT")
     private String description;
 
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "tienda_id")
+    private Tienda tienda;
+
     @CreationTimestamp
     private LocalDateTime createdAt;
 }

@@ -37,6 +37,10 @@ public class User implements UserDetails {
     @JoinColumn(name = "role_id")
     private Role role;
 
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "tienda_id")
+    private Tienda tienda;
+
     @Column(nullable = false)
     @Builder.Default
     private Boolean isActive = true;

@@ -19,6 +19,10 @@ public class CashCut {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "tienda_id")
+    private Tienda tienda;
+
     @Column(nullable = false, precision = 12, scale = 2)
     @Builder.Default
     private BigDecimal openingAmount = BigDecimal.ZERO;

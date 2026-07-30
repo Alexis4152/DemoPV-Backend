@@ -26,6 +26,10 @@ public class Sale {
     @JoinColumn(name = "cash_cut_id")
     private CashCut cashCut;
 
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "tienda_id")
+    private Tienda tienda;
+
     @Column(length = 150)
     private String customerName;
 
