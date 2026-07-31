@@ -20,7 +20,10 @@ CREATE TABLE IF NOT EXISTS users (
     tienda_id   BIGINT REFERENCES tiendas(id),
     is_active   BOOLEAN NOT NULL DEFAULT TRUE,
     created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
+    updated_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+    -- sin FK aquí porque "roles" todavía no existe en este script (la crea Hibernate);
+    -- la foreign key la agrega el propio Hibernate al arrancar la app.
+    role_id     BIGINT
 );
 
 CREATE TABLE IF NOT EXISTS categories (

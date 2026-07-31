@@ -53,8 +53,10 @@ public class SaleService {
 
     @Transactional
     public Sale create(SaleRequest req, User actor) {
-        Long tiendaId = actor.getTienda() != null ? actor.getTienda().getId() : null;
-        CashCut openCut = cashCutRepository.findFirstByStatusAndTiendaId(CashCutStatus.OPEN, tiendaId)
+        // cada cajero/vendedor puede tener su propio corte abierto en simultáneo con
+        // los de sus compañeros de tienda, así que la venta se pega al SUYO, no a
+        // "el" corte abierto de la tienda (ya no existe tal cosa).
+        CashCut openCut = cashCutRepository.findFirstByUserIdAndStatus(actor.getId(), CashCutStatus.OPEN)
                 .orElseThrow(() -> new IllegalStateException("Debes abrir un corte de caja antes de registrar ventas"));
 
         Sale sale = new Sale();

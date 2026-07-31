@@ -33,14 +33,10 @@ public class CashCutService {
     private final SaleRepository saleRepository;
     private final TenantScope tenantScope;
 
-    // ADMIN ve cualquier corte de su tienda; SUPER_ADMIN ve todo; el resto solo ve el suyo
-    // del día de hoy (abierto o ya cerrado). Al día siguiente pasa a ser historial.
+    // "Mi" corte abierto ahora mismo — cada cajero/vendedor puede tener el suyo propio
+    // abierto en simultáneo con los de sus compañeros de la misma tienda.
     public Optional<CashCut> findOpen(User actor) {
-        Optional<CashCut> open = tenantScope.isSuperAdmin(actor)
-                ? cashCutRepository.findFirstByStatus(CashCutStatus.OPEN)
-                : cashCutRepository.findFirstByStatusAndTiendaId(CashCutStatus.OPEN,
-                        actor.getTienda() != null ? actor.getTienda().getId() : null);
-        return open.filter(cut -> canView(cut, actor));
+        return cashCutRepository.findFirstByUserIdAndStatus(actor.getId(), CashCutStatus.OPEN);
     }
 
     public Page<CashCut> findAll(Pageable pageable, User actor) {
@@ -69,6 +65,8 @@ public class CashCutService {
                 .orElseThrow(() -> new IllegalArgumentException("Corte no encontrado: " + id));
     }
 
+    // ADMIN ve cualquier corte de su tienda (para supervisar a todos sus cajeros a la vez);
+    // SUPER_ADMIN ve todo; el resto solo ve el suyo propio del día de hoy.
     private boolean canView(CashCut cut, User actor) {
         if (tenantScope.isSuperAdmin(actor)) return true;
         if (ADMIN.equals(actor.getRole().getName())) {
@@ -79,12 +77,10 @@ public class CashCutService {
                 && cut.getOpenedAt().toLocalDate().equals(LocalDate.now());
     }
 
+    // Cada cajero/vendedor abre y cierra el suyo, uno por día, con su propio fondo inicial —
+    // ya no importa si alguien más de la misma tienda tiene el suyo abierto al mismo tiempo.
     @Transactional
     public CashCut open(CashCutRequest req, User actor) {
-        Long tiendaId = actor.getTienda() != null ? actor.getTienda().getId() : null;
-        if (cashCutRepository.findFirstByStatusAndTiendaId(CashCutStatus.OPEN, tiendaId).isPresent()) {
-            throw new IllegalStateException("Ya hay un corte de caja abierto en tu tienda");
-        }
         if (!ADMIN.equals(actor.getRole().getName())) {
             LocalDateTime startOfDay = LocalDate.now().atStartOfDay();
             LocalDateTime endOfDay = startOfDay.plusDays(1);
@@ -110,17 +106,37 @@ public class CashCutService {
                 totals.totalSales, totals.transactionCount, totals.cancelledCount, totals.cancelledTotal);
     }
 
+    // El aviso por correo NO se manda aquí: solo lo dispara el job programado
+    // (CashCutAutoCloseJob), que junta en un solo reporte por tienda TODOS los
+    // cortes del día — los cerrados a mano en cualquier momento y los que él mismo
+    // cierra al llegar la hora configurada.
     @Transactional
     public CashCut close(Long id, CashCutRequest req, User actor) {
         CashCut cut = findById(id, actor);
+        ensureOpen(cut);
+        BigDecimal expenses = req.getExpenses() != null ? req.getExpenses() : BigDecimal.ZERO;
+        return closeInternal(cut, expenses, req.getNotes());
+    }
+
+    // Usado por el job programado de cierre automático: mismo cálculo de totales que un
+    // cierre manual, pero sin gastos capturados (nadie estuvo ahí para escribirlos) y con
+    // una nota que deja claro que no lo cerró una persona.
+    @Transactional
+    public CashCut autoClose(Long id) {
+        CashCut cut = findById(id);
+        ensureOpen(cut);
+        return closeInternal(cut, BigDecimal.ZERO, "Cerrado automáticamente por el sistema (corte del día).");
+    }
+
+    private void ensureOpen(CashCut cut) {
         if (cut.getStatus() != CashCutStatus.OPEN) {
             throw new IllegalStateException("El corte ya está cerrado");
         }
+    }
 
-        List<Sale> sales = saleRepository.findByCashCutId(id);
+    private CashCut closeInternal(CashCut cut, BigDecimal expenses, String notes) {
+        List<Sale> sales = saleRepository.findByCashCutId(cut.getId());
         SalesTotals totals = sumSales(sales);
-
-        BigDecimal expenses = req.getExpenses() != null ? req.getExpenses() : BigDecimal.ZERO;
         BigDecimal closingAmount = cut.getOpeningAmount().add(totals.cashSales).subtract(expenses);
 
         cut.setExpenses(expenses);
@@ -134,7 +150,7 @@ public class CashCutService {
         cut.setCancelledTotal(totals.cancelledTotal);
         cut.setStatus(CashCutStatus.CLOSED);
         cut.setClosedAt(LocalDateTime.now());
-        cut.setNotes(req.getNotes() != null ? req.getNotes() : cut.getNotes());
+        if (notes != null) cut.setNotes(notes);
         return cashCutRepository.save(cut);
     }
 

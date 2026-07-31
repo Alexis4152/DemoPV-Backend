@@ -9,20 +9,24 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 public interface CashCutRepository extends JpaRepository<CashCut, Long> {
-    Optional<CashCut> findFirstByStatus(CashCutStatus status);
     Page<CashCut> findAllByOrderByOpenedAtDesc(Pageable pageable);
     boolean existsByUserIdAndOpenedAtBetween(Long userId, LocalDateTime from, LocalDateTime to);
     Optional<CashCut> findFirstByUserIdAndOpenedAtBetweenOrderByOpenedAtDesc(Long userId, LocalDateTime from, LocalDateTime to);
 
+    // el corte propio de cada quien — varios pueden estar OPEN a la vez en la misma tienda
+    Optional<CashCut> findFirstByUserIdAndStatus(Long userId, CashCutStatus status);
+
+    // usado por el job de cierre automático: todos los cortes abiertos, de cualquier tienda
+    List<CashCut> findAllByStatus(CashCutStatus status);
+
+    // usado por el job de cierre automático para armar el reporte del día completo:
+    // todos los cortes ya cerrados hoy, sin importar si se cerraron a mano antes o los cerró el job.
+    List<CashCut> findAllByStatusAndOpenedAtBetween(CashCutStatus status, LocalDateTime from, LocalDateTime to);
+
     @Query("SELECT c FROM CashCut c WHERE (:tiendaId IS NULL OR c.tienda.id = :tiendaId) ORDER BY c.openedAt DESC")
     Page<CashCut> findAllForTienda(@Param("tiendaId") Long tiendaId, Pageable pageable);
-
-    // el "ya hay un corte abierto" es por tienda, no global — así que un null de tiendaId
-    // (SUPER_ADMIN sin tienda) se compara contra cortes que tampoco tengan tienda.
-    @Query("SELECT c FROM CashCut c WHERE c.status = :status AND " +
-           "((:tiendaId IS NULL AND c.tienda IS NULL) OR c.tienda.id = :tiendaId)")
-    Optional<CashCut> findFirstByStatusAndTiendaId(@Param("status") CashCutStatus status, @Param("tiendaId") Long tiendaId);
 }

@@ -16,4 +16,8 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     @Query("SELECT u FROM User u WHERE (:tiendaId IS NULL OR u.tienda.id = :tiendaId) ORDER BY u.name ASC")
     List<User> findAllForTienda(@Param("tiendaId") Long tiendaId);
+
+    // para avisarle por correo al/los admin(es) de una tienda cuando se autocierra un corte
+    @Query("SELECT u FROM User u WHERE u.tienda.id = :tiendaId AND u.role.name = 'ADMIN' AND u.isActive = true")
+    List<User> findAdminsByTiendaId(@Param("tiendaId") Long tiendaId);
 }
