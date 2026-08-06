@@ -1,5 +1,6 @@
 package com.boutique.pos.dto;
 
+import com.boutique.pos.model.Tienda;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -15,4 +16,5 @@ public class LoginResponse {
     private String email;
     private String role;
     private List<String> sections;
+    private Tienda tienda; // null si es SUPER_ADMIN — el frontend usa tienda.primaryColor para el tema
 }

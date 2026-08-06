@@ -32,6 +32,7 @@ public class AuthService {
                 .email(user.getEmail())
                 .role(user.getRole().getName())
                 .sections(user.getRole().getSections().stream().map(Enum::name).toList())
+                .tienda(user.getTienda())
                 .build();
     }
 

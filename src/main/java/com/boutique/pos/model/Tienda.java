@@ -21,6 +21,16 @@ public class Tienda {
     @Builder.Default
     private Boolean isActive = true;
 
+    // color de marca elegido por el ADMIN de esta tienda (hex, ej. "#155dea");
+    // null = usa el azul Nexora por default en el frontend
+    @Column(length = 7)
+    private String primaryColor;
+
+    // ruta pública del logo subido por el ADMIN de esta tienda (ej. "/uploads/logos/tienda-1-xxx.png");
+    // null = usa el logo de Nexora por default en el frontend
+    @Column(length = 255)
+    private String logoPath;
+
     @CreationTimestamp
     private LocalDateTime createdAt;
 }

@@ -15,4 +15,11 @@ public class TenantScope {
         if (isSuperAdmin(actor)) return null;
         return actor.getTienda() != null ? actor.getTienda().getId() : null;
     }
+
+    // SUPER_ADMIN puede administrar cualquier tienda; un ADMIN normal solo la suya propia
+    // (color de marca, logo, datos fiscales, etc.)
+    public boolean canManageTienda(User actor, Long tiendaId) {
+        if (isSuperAdmin(actor)) return true;
+        return actor.getTienda() != null && actor.getTienda().getId().equals(tiendaId);
+    }
 }
