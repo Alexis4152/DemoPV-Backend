@@ -29,12 +29,18 @@ public class SaleService {
     private final EmailService emailService;
     private final TenantScope tenantScope;
 
-    public Page<Sale> findAll(LocalDateTime from, LocalDateTime to, Pageable pageable, User actor) {
+    // BETWEEN siempre necesita las dos fechas: cuando el filtro viene vacío, Postgres no
+    // logra inferir el tipo de un parámetro timestamp nulo (ni con CAST), así que en vez
+    // de mandar null se usa un rango que cubre todo el historial.
+    private static final LocalDateTime MIN_DATE = LocalDateTime.of(2000, 1, 1, 0, 0);
+    private static final LocalDateTime MAX_DATE = LocalDateTime.of(2100, 1, 1, 0, 0);
+
+    public Page<Sale> findAll(LocalDateTime from, LocalDateTime to, String customerName,
+                               PaymentMethod paymentMethod, SaleStatus status, Pageable pageable, User actor) {
         Long scope = tenantScope.scopeId(actor);
-        if (from != null && to != null) {
-            return saleRepository.findBetweenForTienda(from, to, scope, pageable);
-        }
-        return saleRepository.findAllForTienda(scope, pageable);
+        LocalDateTime effectiveFrom = from != null ? from : MIN_DATE;
+        LocalDateTime effectiveTo = to != null ? to : MAX_DATE;
+        return saleRepository.search(scope, effectiveFrom, effectiveTo, customerName, paymentMethod, status, pageable);
     }
 
     public Sale findById(Long id) {

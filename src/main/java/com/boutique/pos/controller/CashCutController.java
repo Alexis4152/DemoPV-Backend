@@ -3,20 +3,23 @@ package com.boutique.pos.controller;
 import com.boutique.pos.dto.ApiResponse;
 import com.boutique.pos.dto.CashCutRequest;
 import com.boutique.pos.dto.CashCutSummary;
+import com.boutique.pos.dto.PageResponse;
 import com.boutique.pos.model.CashCut;
+import com.boutique.pos.model.CashCutStatus;
 import com.boutique.pos.model.User;
 import com.boutique.pos.service.CashCutService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
-import java.util.Map;
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 @RestController
@@ -29,12 +32,16 @@ public class CashCutController {
     // tabla/historial de cortes: solo ADMIN (de su propia tienda) o SUPER_ADMIN (todas)
     @GetMapping
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<ApiResponse<List<CashCut>>> list(
+    public ResponseEntity<ApiResponse<PageResponse<CashCut>>> list(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
+            @RequestParam(required = false) CashCutStatus status,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @AuthenticationPrincipal User actor) {
         Pageable pageable = PageRequest.of(page, size);
-        return ResponseEntity.ok(ApiResponse.ok(cashCutService.findAll(pageable, actor).getContent(), null));
+        Page<CashCut> result = cashCutService.findAll(from, to, status, pageable, actor);
+        return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
     }
 
     // usado también por el widget del Dashboard, por eso admite ambas secciones

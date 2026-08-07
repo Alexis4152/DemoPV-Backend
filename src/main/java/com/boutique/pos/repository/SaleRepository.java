@@ -1,5 +1,6 @@
 package com.boutique.pos.repository;
 
+import com.boutique.pos.model.PaymentMethod;
 import com.boutique.pos.model.Sale;
 import com.boutique.pos.model.SaleStatus;
 import org.springframework.data.domain.Page;
@@ -14,13 +15,24 @@ import java.util.List;
 
 public interface SaleRepository extends JpaRepository<Sale, Long> {
 
-    @Query("SELECT s FROM Sale s WHERE (:tiendaId IS NULL OR s.tienda.id = :tiendaId) ORDER BY s.createdAt DESC")
-    Page<Sale> findAllForTienda(@Param("tiendaId") Long tiendaId, Pageable pageable);
-
-    @Query("SELECT s FROM Sale s WHERE s.createdAt BETWEEN :from AND :to " +
-           "AND (:tiendaId IS NULL OR s.tienda.id = :tiendaId) ORDER BY s.createdAt DESC")
-    Page<Sale> findBetweenForTienda(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to,
-                                     @Param("tiendaId") Long tiendaId, Pageable pageable);
+    // Un solo query con todos los filtros opcionales (fecha, cliente, método, estado) —
+    // reemplaza los dos métodos que había antes (con/sin rango de fechas).
+    // from/to siempre vienen con un valor real (nunca null) — ver SaleService.findAll,
+    // porque Postgres no logra inferir el tipo de un parámetro timestamp nulo ni con CAST.
+    @Query("SELECT s FROM Sale s WHERE " +
+           "(:tiendaId IS NULL OR s.tienda.id = :tiendaId) " +
+           "AND s.createdAt BETWEEN :from AND :to " +
+           "AND (:customerName IS NULL OR LOWER(s.customerName) LIKE LOWER(CONCAT('%', CAST(:customerName AS string), '%'))) " +
+           "AND (:paymentMethod IS NULL OR s.paymentMethod = :paymentMethod) " +
+           "AND (:status IS NULL OR s.status = :status) " +
+           "ORDER BY s.createdAt DESC")
+    Page<Sale> search(@Param("tiendaId") Long tiendaId,
+                       @Param("from") LocalDateTime from,
+                       @Param("to") LocalDateTime to,
+                       @Param("customerName") String customerName,
+                       @Param("paymentMethod") PaymentMethod paymentMethod,
+                       @Param("status") SaleStatus status,
+                       Pageable pageable);
 
     List<Sale> findByCashCutId(Long cashCutId);
 

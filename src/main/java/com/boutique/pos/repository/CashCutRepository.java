@@ -27,6 +27,15 @@ public interface CashCutRepository extends JpaRepository<CashCut, Long> {
     // todos los cortes ya cerrados hoy, sin importar si se cerraron a mano antes o los cerró el job.
     List<CashCut> findAllByStatusAndOpenedAtBetween(CashCutStatus status, LocalDateTime from, LocalDateTime to);
 
-    @Query("SELECT c FROM CashCut c WHERE (:tiendaId IS NULL OR c.tienda.id = :tiendaId) ORDER BY c.openedAt DESC")
-    Page<CashCut> findAllForTienda(@Param("tiendaId") Long tiendaId, Pageable pageable);
+    // from/to siempre vienen con un valor real (nunca null) — ver CashCutService.findAll.
+    @Query("SELECT c FROM CashCut c WHERE " +
+           "(:tiendaId IS NULL OR c.tienda.id = :tiendaId) " +
+           "AND c.openedAt BETWEEN :from AND :to " +
+           "AND (:status IS NULL OR c.status = :status) " +
+           "ORDER BY c.openedAt DESC")
+    Page<CashCut> search(@Param("tiendaId") Long tiendaId,
+                          @Param("from") LocalDateTime from,
+                          @Param("to") LocalDateTime to,
+                          @Param("status") CashCutStatus status,
+                          Pageable pageable);
 }

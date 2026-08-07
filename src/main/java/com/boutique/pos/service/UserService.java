@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
@@ -22,8 +23,16 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
     private final TenantScope tenantScope;
 
-    public List<User> findAll(User actor) {
-        return userRepository.findAllForTienda(tenantScope.scopeId(actor));
+    // BETWEEN siempre necesita las dos fechas: Postgres no logra inferir el tipo de un
+    // parámetro timestamp nulo (mismo caso que en SaleService/CashCutService.findAll).
+    private static final LocalDateTime MIN_DATE = LocalDateTime.of(2000, 1, 1, 0, 0);
+    private static final LocalDateTime MAX_DATE = LocalDateTime.of(2100, 1, 1, 0, 0);
+
+    public List<User> findAll(LocalDateTime from, LocalDateTime to, String name, String email,
+                               Long roleId, Boolean isActive, User actor) {
+        LocalDateTime effectiveFrom = from != null ? from : MIN_DATE;
+        LocalDateTime effectiveTo = to != null ? to : MAX_DATE;
+        return userRepository.search(tenantScope.scopeId(actor), effectiveFrom, effectiveTo, name, email, roleId, isActive);
     }
 
     public User findById(Long id) {

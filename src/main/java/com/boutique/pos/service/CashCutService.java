@@ -39,8 +39,16 @@ public class CashCutService {
         return cashCutRepository.findFirstByUserIdAndStatus(actor.getId(), CashCutStatus.OPEN);
     }
 
-    public Page<CashCut> findAll(Pageable pageable, User actor) {
-        return cashCutRepository.findAllForTienda(tenantScope.scopeId(actor), pageable);
+    // BETWEEN siempre necesita las dos fechas: Postgres no logra inferir el tipo de un
+    // parámetro timestamp nulo (mismo caso que en SaleService.findAll), así que en vez de
+    // null se manda un rango que cubre todo el historial cuando no se filtra por fecha.
+    private static final LocalDateTime MIN_DATE = LocalDateTime.of(2000, 1, 1, 0, 0);
+    private static final LocalDateTime MAX_DATE = LocalDateTime.of(2100, 1, 1, 0, 0);
+
+    public Page<CashCut> findAll(LocalDateTime from, LocalDateTime to, CashCutStatus status, Pageable pageable, User actor) {
+        LocalDateTime effectiveFrom = from != null ? from : MIN_DATE;
+        LocalDateTime effectiveTo = to != null ? to : MAX_DATE;
+        return cashCutRepository.search(tenantScope.scopeId(actor), effectiveFrom, effectiveTo, status, pageable);
     }
 
     // El corte propio del día de hoy, abierto o ya cerrado — a diferencia de findOpen(),
@@ -115,17 +123,18 @@ public class CashCutService {
         CashCut cut = findById(id, actor);
         ensureOpen(cut);
         BigDecimal expenses = req.getExpenses() != null ? req.getExpenses() : BigDecimal.ZERO;
-        return closeInternal(cut, expenses, req.getNotes());
+        return closeInternal(cut, expenses, req.getNotes(), actor);
     }
 
     // Usado por el job programado de cierre automático: mismo cálculo de totales que un
     // cierre manual, pero sin gastos capturados (nadie estuvo ahí para escribirlos) y con
-    // una nota que deja claro que no lo cerró una persona.
+    // una nota que deja claro que no lo cerró una persona. closedBy queda null a propósito
+    // para que quede registrado que lo cerró el sistema, no un usuario.
     @Transactional
     public CashCut autoClose(Long id) {
         CashCut cut = findById(id);
         ensureOpen(cut);
-        return closeInternal(cut, BigDecimal.ZERO, "Cerrado automáticamente por el sistema (corte del día).");
+        return closeInternal(cut, BigDecimal.ZERO, "Cerrado automáticamente por el sistema (corte del día).", null);
     }
 
     private void ensureOpen(CashCut cut) {
@@ -134,7 +143,7 @@ public class CashCutService {
         }
     }
 
-    private CashCut closeInternal(CashCut cut, BigDecimal expenses, String notes) {
+    private CashCut closeInternal(CashCut cut, BigDecimal expenses, String notes, User closedBy) {
         List<Sale> sales = saleRepository.findByCashCutId(cut.getId());
         SalesTotals totals = sumSales(sales);
         BigDecimal closingAmount = cut.getOpeningAmount().add(totals.cashSales).subtract(expenses);
@@ -150,6 +159,7 @@ public class CashCutService {
         cut.setCancelledTotal(totals.cancelledTotal);
         cut.setStatus(CashCutStatus.CLOSED);
         cut.setClosedAt(LocalDateTime.now());
+        cut.setClosedBy(closedBy);
         if (notes != null) cut.setNotes(notes);
         return cashCutRepository.save(cut);
     }

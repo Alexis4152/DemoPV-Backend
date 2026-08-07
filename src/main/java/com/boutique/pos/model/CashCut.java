@@ -15,9 +15,16 @@ public class CashCut {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // quien abrió el corte (siempre el propio cajero/vendedor)
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
+
+    // quien lo cerró — null mientras sigue abierto, y también null si lo cerró el job
+    // automático (CashCutAutoCloseJob) en vez de una persona; el frontend muestra "Sistema".
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "closed_by_user_id")
+    private User closedBy;
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "tienda_id")

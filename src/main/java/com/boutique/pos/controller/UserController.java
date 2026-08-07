@@ -6,11 +6,13 @@ import com.boutique.pos.model.User;
 import com.boutique.pos.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @RestController
@@ -22,8 +24,15 @@ public class UserController {
     private final UserService userService;
 
     @GetMapping
-    public ResponseEntity<ApiResponse<List<User>>> list(@AuthenticationPrincipal User actor) {
-        return ResponseEntity.ok(ApiResponse.ok(userService.findAll(actor), null));
+    public ResponseEntity<ApiResponse<List<User>>> list(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
+            @RequestParam(required = false) String name,
+            @RequestParam(required = false) String email,
+            @RequestParam(required = false) Long roleId,
+            @RequestParam(required = false) Boolean isActive,
+            @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(userService.findAll(from, to, name, email, roleId, isActive, actor), null));
     }
 
     @GetMapping("/{id}")

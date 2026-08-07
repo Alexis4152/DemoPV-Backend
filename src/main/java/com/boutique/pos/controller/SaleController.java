@@ -1,12 +1,16 @@
 package com.boutique.pos.controller;
 
 import com.boutique.pos.dto.ApiResponse;
+import com.boutique.pos.dto.PageResponse;
 import com.boutique.pos.dto.SaleRequest;
+import com.boutique.pos.model.PaymentMethod;
 import com.boutique.pos.model.Sale;
+import com.boutique.pos.model.SaleStatus;
 import com.boutique.pos.model.User;
 import com.boutique.pos.service.SaleService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -16,7 +20,6 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/sales")
@@ -27,14 +30,18 @@ public class SaleController {
 
     @GetMapping
     @PreAuthorize("@sectionAccess.check('SALES')")
-    public ResponseEntity<ApiResponse<List<Sale>>> list(
+    public ResponseEntity<ApiResponse<PageResponse<Sale>>> list(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
+            @RequestParam(required = false) String customerName,
+            @RequestParam(required = false) PaymentMethod paymentMethod,
+            @RequestParam(required = false) SaleStatus status,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @AuthenticationPrincipal User actor) {
         Pageable pageable = PageRequest.of(page, size);
-        return ResponseEntity.ok(ApiResponse.ok(saleService.findAll(from, to, pageable, actor).getContent(), null));
+        Page<Sale> result = saleService.findAll(from, to, customerName, paymentMethod, status, pageable, actor);
+        return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
     }
 
     @GetMapping("/{id}")
