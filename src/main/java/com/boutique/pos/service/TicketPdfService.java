@@ -30,6 +30,17 @@ import java.text.NumberFormat;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 
+/**
+ * Genera el ticket de una venta en formato PDF, usado para adjuntarse al correo del
+ * cliente ({@link EmailService#sendTicketEmail}).
+ *
+ * <p>El ticket incluye el logo de la tienda (o el de Nexora por defecto si la tienda no
+ * subió uno propio), sus datos fiscales/de contacto ({@link TiendaInfo}, si los
+ * capturó), el detalle de la venta y el total escrito en letras con {@link
+ * SpanishNumberToWords}. Usa la librería OpenPDF (paquete {@code com.lowagie.text}) de
+ * bajo nivel: el documento se arma agregando párrafos, tablas y separadores en el orden
+ * en que deben aparecer impresos.</p>
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -56,6 +67,19 @@ public class TicketPdfService {
     @Value("${app.uploads.dir}")
     private String uploadsDir;
 
+    /**
+     * Genera el PDF del ticket de una venta ya registrada.
+     *
+     * <p>Estructura del documento: encabezado (logo, nombre de tienda, RFC y dirección),
+     * datos de la venta (vendedor, fecha/hora, folio, cliente si lo hay, método de
+     * pago), tabla de productos vendidos con cantidades y subtotales, totales
+     * (subtotal, descuento, impuestos, total), y pie de página con el total en letras,
+     * la cantidad de artículos vendidos y la marca del sistema.</p>
+     *
+     * @param sale venta ya persistida, con sus {@link SaleItem} cargados
+     * @return el PDF generado, listo para adjuntarse a un correo o descargarse
+     * @throws IllegalStateException si OpenPDF falla al construir el documento
+     */
     public byte[] generate(Sale sale) {
         Tienda tienda = sale.getTienda();
         TiendaInfo info = tienda != null ? tiendaInfoRepository.findByTiendaId(tienda.getId()).orElse(null) : null;
@@ -133,6 +157,12 @@ public class TicketPdfService {
         return out.toByteArray();
     }
 
+    /**
+     * Traduce el método de pago al español para mostrarse en el ticket.
+     *
+     * @param pm método de pago de la venta
+     * @return texto en español, o "—" si viene null
+     */
     private String metodoPagoEs(PaymentMethod pm) {
         if (pm == null) return "—";
         return switch (pm) {
@@ -160,6 +190,14 @@ public class TicketPdfService {
     }
 
     // Logo de la tienda si ya subió uno; si no, el de Nexora por default.
+    /**
+     * Agrega el logo al encabezado del ticket. Un fallo al cargar la imagen (archivo
+     * corrupto, ruta inválida, etc.) solo se registra como advertencia: el ticket se
+     * sigue generando sin logo en vez de fallar por completo.
+     *
+     * @param document documento PDF en construcción
+     * @param tienda tienda de la venta, usada para resolver su logo (o null)
+     */
     private void addLogo(Document document, Tienda tienda) {
         try {
             byte[] bytes = logoBytes(tienda);
@@ -172,6 +210,15 @@ public class TicketPdfService {
         }
     }
 
+    /**
+     * Obtiene los bytes del logo a imprimir: el propio de la tienda si tiene uno y el
+     * archivo sigue existiendo en disco, o si no, el logo por defecto de Nexora
+     * empaquetado en el classpath.
+     *
+     * @param tienda tienda de la venta, o null
+     * @return bytes de la imagen del logo a usar
+     * @throws IOException si falla la lectura del logo por defecto
+     */
     private byte[] logoBytes(Tienda tienda) throws IOException {
         if (tienda != null && tienda.getLogoPath() != null && !tienda.getLogoPath().isBlank()) {
             Path path = Paths.get(uploadsDir, tienda.getLogoPath().replaceFirst("^/uploads/", ""));

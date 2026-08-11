@@ -3,9 +3,15 @@ package com.boutique.pos.util;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 
+/**
+ * Utilidad estática para convertir un monto en pesos a su leyenda en letras, tal como se
+ * requiere impresa en el ticket de venta (ej. {@code 82.00} → {@code "Ochenta y dos pesos
+ * 00/100 M.N."}). Clase de solo métodos estáticos: no se instancia.
+ */
 // Convierte un monto a su leyenda en letras para el ticket, ej. 82.00 -> "OCHENTA Y DOS PESOS 00/100 M.N."
 public final class SpanishNumberToWords {
 
+    /** Constructor privado: clase de utilidades, no debe instanciarse. */
     private SpanishNumberToWords() {}
 
     private static final String[] UNIDADES = {
@@ -20,6 +26,15 @@ public final class SpanishNumberToWords {
             "seiscientos", "setecientos", "ochocientos", "novecientos"
     };
 
+    /**
+     * Convierte un monto a su leyenda completa en español para el ticket impreso, con la
+     * primera letra en mayúscula y los centavos siempre en dos dígitos.
+     *
+     * @param amount monto a convertir; {@code null} se trata como cero, y se toma el valor
+     *               absoluto (el signo no se representa en la leyenda)
+     * @return leyenda con el formato {@code "<Entero en letras> pesos NN/100 M.N."}, ej.
+     *         {@code "Ochenta y dos pesos 00/100 M.N."}
+     */
     public static String pesos(BigDecimal amount) {
         BigDecimal abs = (amount != null ? amount : BigDecimal.ZERO).abs().setScale(2, RoundingMode.HALF_UP);
         long enteros = abs.longValue();
@@ -32,6 +47,10 @@ public final class SpanishNumberToWords {
         return letras + " pesos " + String.format("%02d", centavos) + "/100 M.N.";
     }
 
+    /**
+     * Aplica el apócope de "uno" antes de "pesos": la forma completa "uno"/"veintiuno" no es
+     * correcta como cantidad de pesos en español, debe acortarse a "un"/"veintiún".
+     */
     // "uno" -> "un" y "veintiuno" -> "veintiún" antes de "pesos" (ej. "treinta y un pesos", "veintiún pesos")
     private static String applyApocope(String words) {
         if (words.equals("uno")) return "un";
@@ -39,6 +58,16 @@ public final class SpanishNumberToWords {
         return words.replace("veintiuno", "veintiún");
     }
 
+    /**
+     * Convierte recursivamente un entero (la parte entera del monto, siempre en pesos, nunca
+     * centavos) a su representación en letras en español, manejando unidades, decenas,
+     * centenas, miles y millones con sus irregularidades propias del idioma (ej. "cien" vs.
+     * "ciento", "un millón" vs. "N millones").
+     *
+     * @param n número entero no negativo esperado en este dominio (los montos de un ticket no
+     *          son negativos); el caso negativo se soporta por robustez pero no debería
+     *          ocurrir en la práctica
+     */
     private static String convert(long n) {
         if (n == 0) return "cero";
         if (n < 0) return "menos " + convert(-n);

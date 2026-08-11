@@ -7,6 +7,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
+/**
+ * {@link CommandLineRunner} que siembra al arrancar la aplicación la fila de configuración
+ * (id=1) del horario global de cierre automático de cortes de caja, usada por
+ * {@link CashCutAutoCloseJob}. Es idempotente: si la fila ya existe no hace nada.
+ */
 // Siembra la fila única (id=1) del horario de cierre automático de cortes de caja si no
 // existe todavía. Queda deshabilitada (enabled=false) por default a propósito: el
 // SUPER_ADMIN debe entrar y elegir la hora + activarla, no queremos que empiece a cerrar
@@ -18,6 +23,10 @@ public class CashCutScheduleInitializer implements CommandLineRunner {
 
     private final CashCutScheduleRepository scheduleRepository;
 
+    /**
+     * Crea el registro por defecto del horario (23:00, deshabilitado) si todavía no existe
+     * ninguno en {@code cash_cut_schedule}. No sobrescribe una configuración ya existente.
+     */
     @Override
     public void run(String... args) {
         if (scheduleRepository.existsById(1L)) return;

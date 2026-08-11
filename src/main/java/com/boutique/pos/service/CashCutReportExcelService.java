@@ -15,6 +15,21 @@ import java.util.*;
 
 // Arma el Excel (3 hojas: Resumen / Ventas / Productos) que se manda al admin de una tienda
 // cada vez que se cierra uno o más cortes (a mano o por el job automático).
+/**
+ * Genera el reporte Excel (.xlsx, vía Apache POI) del cierre de caja diario de una
+ * tienda, consumido por {@link CashCutReportNotifier} para adjuntarlo al correo que
+ * reciben los administradores.
+ *
+ * <p>El libro tiene tres hojas:</p>
+ * <ul>
+ *   <li><b>Resumen</b>: una fila por cada corte cerrado (cajero, apertura, cierre,
+ *   fondo inicial, ventas, gastos, fondo final) más totales y utilidad del periodo.</li>
+ *   <li><b>Ventas</b>: totales por método de pago y el detalle de cada venta completada
+ *   (se excluyen las canceladas), agrupadas por cajero.</li>
+ *   <li><b>Productos</b>: el detalle línea por línea de cada producto vendido, con
+ *   categoría, piezas y subtotal.</li>
+ * </ul>
+ */
 @Service
 @RequiredArgsConstructor
 public class CashCutReportExcelService {
@@ -23,6 +38,19 @@ public class CashCutReportExcelService {
 
     private final SaleRepository saleRepository;
 
+    /**
+     * Construye el libro de Excel completo (Resumen, Ventas, Productos) para el
+     * conjunto de cortes cerrados de una tienda.
+     *
+     * <p>Las ventas de cada corte se agrupan por cajero (el {@link User} dueño del
+     * corte), incluyendo solo las ventas en estado {@code COMPLETED} — las canceladas no
+     * entran a los totales ni al detalle.</p>
+     *
+     * @param tienda tienda a la que pertenece el reporte
+     * @param cuts cortes cerrados a incluir en el reporte (de un mismo día, típicamente)
+     * @return el archivo .xlsx generado, en bytes
+     * @throws RuntimeException si Apache POI falla al construir o escribir el libro
+     */
     public byte[] build(Tienda tienda, List<CashCut> cuts) {
         try (XSSFWorkbook wb = new XSSFWorkbook()) {
             CellStyle header = headerStyle(wb);
@@ -51,6 +79,17 @@ public class CashCutReportExcelService {
         }
     }
 
+    /**
+     * Construye la hoja "Resumen": una fila por corte con sus montos clave, más la fila
+     * de totales y la de utilidad (ventas menos gastos) al final.
+     *
+     * @param sheet hoja de Excel a llenar
+     * @param header estilo de encabezado
+     * @param bold estilo de texto en negritas (etiquetas y totales)
+     * @param money estilo de formato de moneda
+     * @param tienda tienda del reporte, para el título
+     * @param cuts cortes cerrados a listar
+     */
     private void buildResumen(Sheet sheet, CellStyle header, CellStyle bold, CellStyle money,
                                Tienda tienda, List<CashCut> cuts) {
         int r = 0;
@@ -90,6 +129,17 @@ public class CashCutReportExcelService {
         autosize(sheet, 7);
     }
 
+    /**
+     * Construye la hoja "Ventas": primero un mini-resumen de totales por método de pago
+     * (efectivo/tarjeta/transferencia) y luego el detalle fila por fila de cada venta
+     * completada, agrupadas por cajero.
+     *
+     * @param sheet hoja de Excel a llenar
+     * @param header estilo de encabezado
+     * @param bold estilo de texto en negritas
+     * @param money estilo de formato de moneda
+     * @param salesByCajero ventas completadas de todos los cortes, agrupadas por cajero
+     */
     private void buildVentas(Sheet sheet, CellStyle header, CellStyle bold, CellStyle money,
                               Map<User, List<Sale>> salesByCajero) {
         int r = 0;
@@ -136,6 +186,17 @@ public class CashCutReportExcelService {
         autosize(sheet, 6);
     }
 
+    /**
+     * Construye la hoja "Productos": una fila por cada línea de producto vendida (no por
+     * venta), con su categoría, cantidad y subtotal, más el gran total al final.
+     *
+     * @param sheet hoja de Excel a llenar
+     * @param header estilo de encabezado
+     * @param bold estilo de texto en negritas
+     * @param money estilo de formato de moneda
+     * @param tienda tienda del reporte, repetida en cada fila
+     * @param salesByCajero ventas completadas de todos los cortes, agrupadas por cajero
+     */
     private void buildProductos(Sheet sheet, CellStyle header, CellStyle bold, CellStyle money,
                                  Tienda tienda, Map<User, List<Sale>> salesByCajero) {
         int r = 0;
@@ -167,6 +228,12 @@ public class CashCutReportExcelService {
         autosize(sheet, 8);
     }
 
+    /**
+     * Traduce el método de pago al español (en mayúsculas) para las hojas del reporte.
+     *
+     * @param pm método de pago
+     * @return texto en español
+     */
     private String spanishMethod(PaymentMethod pm) {
         return switch (pm) {
             case CASH -> "EFECTIVO";

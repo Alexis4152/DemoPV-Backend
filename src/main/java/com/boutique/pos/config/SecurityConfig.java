@@ -23,6 +23,18 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.List;
 
+/**
+ * Configuración central de Spring Security. Define una API sin sesión (JWT stateless), sin
+ * CSRF (no aplica a una API consumida por SPA con tokens), con CORS habilitado para los
+ * orígenes de desarrollo del frontend, e inserta {@link JwtAuthFilter} antes del filtro
+ * estándar de autenticación por usuario/contraseña para autenticar cada request por su
+ * token.
+ *
+ * <p>{@code @EnableMethodSecurity} habilita las anotaciones {@code @PreAuthorize} usadas en
+ * los controllers/services, incluyendo las que consultan {@link
+ * com.boutique.pos.security.SectionAccessService} (bean {@code sectionAccess}) para el RBAC
+ * configurable por sección.</p>
+ */
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
@@ -32,6 +44,14 @@ public class SecurityConfig {
     private final JwtAuthFilter jwtAuthFilter;
     private final CustomUserDetailsService userDetailsService;
 
+    /**
+     * Cadena de filtros de seguridad HTTP: deshabilita CSRF, activa CORS, fuerza sesiones
+     * stateless, permite sin autenticación los endpoints de auth ({@code /api/auth/**}) y los
+     * archivos estáticos subidos ({@code /uploads/**}), y exige autenticación para el resto.
+     * El filtro JWT se registra antes de {@link UsernamePasswordAuthenticationFilter} para
+     * poblar el {@code SecurityContext} a partir del token antes de que Spring intente
+     * cualquier otro mecanismo de autenticación.
+     */
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         return http
@@ -48,16 +68,31 @@ public class SecurityConfig {
                 .build();
     }
 
+    /**
+     * Encoder de contraseñas usado al dar de alta usuarios y al validar el login. BCrypt
+     * genera un salt distinto por hash, por lo que dos contraseñas iguales producen valores
+     * almacenados distintos.
+     */
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
     }
 
+    /**
+     * Expone el {@link AuthenticationManager} por defecto de Spring Security para que el
+     * endpoint de login pueda autenticar credenciales (email/contraseña) manualmente antes de
+     * emitir el JWT.
+     */
     @Bean
     public AuthenticationManager authenticationManager(AuthenticationConfiguration cfg) throws Exception {
         return cfg.getAuthenticationManager();
     }
 
+    /**
+     * Configura CORS para permitir que el frontend (servido en desarrollo desde Vite/CRA en
+     * los puertos 5173 y 3000) consuma la API con credenciales, incluyendo el header
+     * {@code Authorization} usado para enviar el JWT.
+     */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration cfg = new CorsConfiguration();

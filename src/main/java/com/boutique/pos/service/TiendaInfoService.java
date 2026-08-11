@@ -12,6 +12,15 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * Administra los datos fiscales y de contacto de una tienda (RFC, dirección, razón
+ * social, teléfono, redes sociales, etc.), usados principalmente para imprimirse en el
+ * ticket de venta en PDF ({@link TicketPdfService}).
+ *
+ * <p>Cada tienda tiene a lo más un {@link TiendaInfo}. Solo el ADMIN de esa tienda o un
+ * SUPER_ADMIN pueden consultarlos o editarlos, validado con
+ * {@link TenantScope#canManageTienda(User, Long)}.</p>
+ */
 @Service
 @RequiredArgsConstructor
 public class TiendaInfoService {
@@ -21,6 +30,16 @@ public class TiendaInfoService {
     private final TenantScope tenantScope;
 
     // Solo el ADMIN de esa tienda (o SUPER_ADMIN) puede ver/editar sus propios datos fiscales.
+    /**
+     * Obtiene los datos fiscales/de contacto de una tienda.
+     *
+     * @param tiendaId id de la tienda
+     * @param actor usuario que consulta; debe poder administrar esa tienda
+     * @return los datos guardados, o un objeto vacío (no persistido) si la tienda
+     *         todavía no ha capturado ninguno
+     * @throws org.springframework.security.access.AccessDeniedException si el actor no
+     *         tiene permiso sobre esa tienda
+     */
     public TiendaInfo get(Long tiendaId, User actor) {
         checkAccess(tiendaId, actor);
         return tiendaInfoRepository.findByTiendaId(tiendaId).orElseGet(() -> blankFor(tiendaId));
@@ -35,18 +54,37 @@ public class TiendaInfoService {
         return info;
     }
 
+    /**
+     * Crea o actualiza los datos fiscales/de contacto de una tienda, y de paso
+     * actualiza el nombre de la {@link Tienda} asociada (el formulario de datos fiscales
+     * también edita el nombre comercial).
+     *
+     * @param tiendaId id de la tienda
+     * @param req nuevos datos fiscales y de contacto
+     * @param actor usuario que hace el cambio; debe poder administrar esa tienda; queda
+     *              registrado como {@code createdBy} (si es la primera captura) y
+     *              {@code updatedBy}
+     * @return los datos fiscales ya guardados
+     * @throws org.springframework.security.access.AccessDeniedException si el actor no
+     *         tiene permiso sobre esa tienda
+     * @throws IllegalArgumentException si la tienda no existe
+     */
     @Transactional
     public TiendaInfo update(Long tiendaId, TiendaInfoRequest req, User actor) {
         checkAccess(tiendaId, actor);
         Tienda tienda = findTienda(tiendaId);
         tienda.setName(req.getName());
+        tienda.setUpdatedBy(actor);
         tiendaRepository.save(tienda);
 
+        boolean isNew = tiendaInfoRepository.findByTiendaId(tiendaId).isEmpty();
         TiendaInfo info = tiendaInfoRepository.findByTiendaId(tiendaId).orElseGet(() -> {
             TiendaInfo i = new TiendaInfo();
             i.setTienda(tienda);
             return i;
         });
+        if (isNew) info.setCreatedBy(actor);
+        info.setUpdatedBy(actor);
         info.setRfc(req.getRfc());
         info.setCalle(req.getCalle());
         info.setColonia(req.getColonia());

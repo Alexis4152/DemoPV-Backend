@@ -16,6 +16,17 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
+/**
+ * Job programado que implementa el cierre automático de cortes de caja a la hora global
+ * configurada en {@link CashCutSchedule}. Se ejecuta en todas las tiendas por igual: no hay
+ * un horario por tienda, es una única hora para todo el sistema.
+ *
+ * <p>Diseño explícito del cliente: en lugar de mandar un correo por cada corte que se cierra,
+ * este job cierra primero todos los cortes abiertos del día y después manda un único reporte
+ * por tienda con el consolidado de todos los cortes cerrados ese día (tanto los cerrados a
+ * mano por el cajero/vendedor como los que el propio job cerró). Los cierres manuales
+ * ({@code CashCutService.close}) no disparan correo por su cuenta; solo este job notifica.</p>
+ */
 // Revisa cada minuto si ya es la hora configurada en cash_cut_schedule y, de ser así,
 // cierra TODOS los cortes que sigan abiertos (de cualquier tienda) y manda UN solo reporte
 // por tienda con TODOS los cortes del día — los que ya se habían cerrado a mano en cualquier
@@ -35,6 +46,14 @@ public class CashCutAutoCloseJob {
     // corre dos veces ese día — aceptable, cerrar un corte ya cerrado simplemente no hace nada.
     private LocalDate lastRunDate;
 
+    /**
+     * Punto de entrada del job, invocado cada 60 segundos por el scheduler de Spring
+     * ({@code fixedRate = 60_000}). Sale de inmediato si el horario está deshabilitado, si
+     * la hora/minuto actuales no coinciden con {@link CashCutSchedule#getCloseHour()} /
+     * {@link CashCutSchedule#getCloseMinute()}, o si ya se ejecutó hoy (guard en memoria
+     * {@link #lastRunDate}). Cuando sí corresponde ejecutar, cierra todos los cortes abiertos
+     * y envía el reporte diario consolidado por tienda.
+     */
     @Scheduled(fixedRate = 60_000)
     public void checkAndRun() {
         CashCutSchedule schedule = scheduleRepository.findById(1L).orElse(null);
@@ -49,6 +68,11 @@ public class CashCutAutoCloseJob {
         sendDailyReport();
     }
 
+    /**
+     * Cierra, uno por uno, todos los {@link CashCut} que sigan en estado {@code OPEN} sin
+     * importar a qué tienda pertenezcan. Cada cierre se envuelve en su propio try/catch para
+     * que si uno falla no impida cerrar el resto de los cortes pendientes.
+     */
     private void closeAllOpenCuts() {
         List<CashCut> openCuts = cashCutRepository.findAllByStatus(CashCutStatus.OPEN);
         if (openCuts.isEmpty()) return;
@@ -63,6 +87,11 @@ public class CashCutAutoCloseJob {
         }
     }
 
+    /**
+     * Busca todos los cortes con estado {@code CLOSED} abiertos en el día en curso (manuales
+     * o auto-cerrados) y delega a {@link CashCutReportNotifier} el envío del reporte
+     * consolidado, agrupado por tienda.
+     */
     private void sendDailyReport() {
         LocalDateTime startOfDay = LocalDate.now().atStartOfDay();
         LocalDateTime endOfDay = startOfDay.plusDays(1);

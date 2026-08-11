@@ -3,6 +3,14 @@ package com.boutique.pos.dto;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
+/**
+ * Payload para actualizar los datos fiscales y de contacto de una tienda
+ * ({@code PUT /api/tiendas/{id}/info}, accesible al ADMIN de esa tienda o al SUPER_ADMIN).
+ * Estos datos alimentan directamente el encabezado/pie del ticket de venta en PDF
+ * (razón social, RFC, dirección desglosada, contacto), por lo que se guardan en la
+ * entidad {@code TiendaInfo} asociada a la {@code Tienda}, separada de su información
+ * básica de cuenta.
+ */
 @Data
 public class TiendaInfoRequest {
     @NotBlank
