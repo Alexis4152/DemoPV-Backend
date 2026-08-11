@@ -10,6 +10,13 @@ import java.nio.charset.StandardCharsets;
 import java.security.Key;
 import java.util.Date;
 
+/**
+ * Componente responsable de generar y validar los JWT usados para autenticar a los usuarios
+ * de la API. Usa firma HMAC-SHA256 con un secreto y un tiempo de expiración configurables vía
+ * propiedades ({@code app.jwt.secret}, {@code app.jwt.expiration}). El "subject" del token es
+ * el email del usuario, que es lo que {@link JwtAuthFilter} usa para recuperar al usuario en
+ * cada request.
+ */
 @Component
 public class JwtTokenProvider {
 
@@ -19,6 +26,13 @@ public class JwtTokenProvider {
     @Value("${app.jwt.expiration}")
     private long expiration;
 
+    /**
+     * Genera un JWT firmado para el usuario dado, con el email como subject, fecha de emisión
+     * actual y expiración calculada a partir de {@code app.jwt.expiration} (en milisegundos).
+     *
+     * @param userDetails usuario autenticado (su username es el email)
+     * @return el JWT compacto y firmado, listo para devolver al cliente
+     */
     public String generateToken(UserDetails userDetails) {
         return Jwts.builder()
                 .setSubject(userDetails.getUsername())
@@ -28,10 +42,24 @@ public class JwtTokenProvider {
                 .compact();
     }
 
+    /**
+     * Obtiene el email (subject) codificado en el token.
+     *
+     * @param token JWT ya validado previamente; si no lo está, este método puede lanzar
+     *              excepción al intentar parsearlo
+     * @return el email del usuario dueño del token
+     */
     public String getEmailFromToken(String token) {
         return parseClaims(token).getSubject();
     }
 
+    /**
+     * Verifica que el token esté correctamente firmado y no haya expirado.
+     *
+     * @param token JWT a validar
+     * @return {@code true} si el token es válido; {@code false} si está corrupto, mal firmado,
+     *         expirado, o cualquier otro error de parseo
+     */
     public boolean validateToken(String token) {
         try {
             parseClaims(token);
@@ -41,6 +69,10 @@ public class JwtTokenProvider {
         }
     }
 
+    /**
+     * Parsea y valida la firma del token, devolviendo sus claims. Lanza {@link JwtException}
+     * (o subclases, como expiración) si el token no es válido.
+     */
     private Claims parseClaims(String token) {
         return Jwts.parserBuilder()
                 .setSigningKey(signingKey())
@@ -49,6 +81,7 @@ public class JwtTokenProvider {
                 .getBody();
     }
 
+    /** Construye la clave HMAC de firma a partir del secreto configurado en {@code app.jwt.secret}. */
     private Key signingKey() {
         return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
