@@ -3,6 +3,7 @@ package com.boutique.pos.config;
 import com.boutique.pos.security.CustomUserDetailsService;
 import com.boutique.pos.security.JwtAuthFilter;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -43,6 +44,9 @@ public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
     private final CustomUserDetailsService userDetailsService;
+
+    @Value("${app.cors.allowed-origins}")
+    private String allowedOrigins;
 
     /**
      * Cadena de filtros de seguridad HTTP: deshabilita CSRF, activa CORS, fuerza sesiones
@@ -89,14 +93,16 @@ public class SecurityConfig {
     }
 
     /**
-     * Configura CORS para permitir que el frontend (servido en desarrollo desde Vite/CRA en
-     * los puertos 5173 y 3000) consuma la API con credenciales, incluyendo el header
-     * {@code Authorization} usado para enviar el JWT.
+     * Configura CORS para permitir que el frontend consuma la API con credenciales, incluyendo
+     * el header {@code Authorization} usado para enviar el JWT. Los orígenes permitidos vienen
+     * de {@code app.cors.allowed-origins} (por default, solo Vite/CRA local); en producción se
+     * sobreescribe con la variable de entorno {@code APP_CORS_ALLOWED_ORIGINS} apuntando al
+     * dominio real donde quede desplegado el frontend, sin tocar código.
      */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration cfg = new CorsConfiguration();
-        cfg.setAllowedOrigins(List.of("http://localhost:5173", "http://localhost:3000"));
+        cfg.setAllowedOrigins(List.of(allowedOrigins.split(",")));
         cfg.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
         cfg.setAllowedHeaders(List.of("*"));
         cfg.setAllowCredentials(true);
