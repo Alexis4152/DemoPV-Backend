@@ -6,6 +6,7 @@ import com.boutique.pos.repository.RoleRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,7 +16,19 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+/**
+ * {@link CommandLineRunner} que siembra los roles por defecto del sistema (ADMIN, CASHIER,
+ * SELLER) la primera vez que arranca la aplicación con una base de datos sin roles, y deja
+ * asignado el rol ADMIN a la cuenta administradora inicial ({@code admin@boutique.com}).
+ *
+ * <p>{@code @Order(1)} garantiza que corra antes que {@link TenantDataInitializer}
+ * ({@code @Order(10)}), ya que este último migra roles compartidos entre tiendas y necesita
+ * que los roles base ya existan. Sin esta anotación, un {@link CommandLineRunner} sin orden
+ * explícito se trata como {@code Ordered.LOWEST_PRECEDENCE} y correría después, al revés de
+ * lo requerido.</p>
+ */
 @Component
+@Order(1)
 @RequiredArgsConstructor
 @Slf4j
 public class RoleDataInitializer implements CommandLineRunner {
@@ -23,6 +36,10 @@ public class RoleDataInitializer implements CommandLineRunner {
     private final RoleRepository roleRepository;
     private final JdbcTemplate jdbcTemplate;
 
+    /**
+     * Orquesta el sembrado inicial: primero crea los roles base si la tabla está vacía, luego
+     * asegura que la cuenta admin por defecto tenga un rol asignado.
+     */
     @Override
     @Transactional
     public void run(String... args) {
@@ -30,6 +47,12 @@ public class RoleDataInitializer implements CommandLineRunner {
         assignDefaultAdminRole();
     }
 
+    /**
+     * Crea los roles ADMIN (acceso total, marcado {@code isSystem}), CASHIER y SELLER (todas
+     * las secciones excepto USERS y ROLES) si todavía no existe ningún rol en la base de
+     * datos. No hace nada si ya hay al menos un rol sembrado, para no duplicar en arranques
+     * posteriores.
+     */
     private void seedDefaultRoles() {
         if (roleRepository.count() > 0) return;
 
@@ -58,6 +81,11 @@ public class RoleDataInitializer implements CommandLineRunner {
         log.info("Roles sembrados: ADMIN, CASHIER, SELLER");
     }
 
+    /**
+     * Asigna el rol ADMIN a la cuenta administradora sembrada por {@code init.sql} en caso de
+     * que todavía no tenga {@code role_id}. Es idempotente: solo actualiza filas con
+     * {@code role_id IS NULL}, así que en arranques posteriores no hace nada.
+     */
     // init.sql da de alta admin@boutique.com sin role_id (la tabla roles la maneja Hibernate,
     // no ese script) — este paso idempotente le asigna ADMIN si todavía no tiene rol.
     // findFirstByNameOrderById (no findByName): una vez que cada tienda tiene su propio

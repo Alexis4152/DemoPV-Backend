@@ -16,6 +16,18 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Registro y consulta de ventas (punto de venta), y cancelación de ventas ya registradas.
+ *
+ * <p>Una venta ({@link Sale}) siempre queda atada al corte de caja ({@link CashCut})
+ * ABIERTO del propio vendedor/cajero que la registra — cada usuario tiene el suyo, no
+ * existe "el corte de la tienda" (varios pueden estar abiertos a la vez en la misma
+ * tienda). Al crear una venta se valida stock disponible, se arma cada {@link SaleItem},
+ * se descuenta el stock del producto y se registra su {@link InventoryMovement}
+ * correspondiente (tipo {@code SALE}). Cancelar una venta revierte el stock (con su
+ * propio movimiento de tipo {@code IN}) pero nunca borra la fila: se marca como
+ * {@code CANCELLED} y se conserva quién y cuándo la canceló.</p>
+ */
 @Service
 @RequiredArgsConstructor
 public class SaleService {
@@ -29,19 +41,55 @@ public class SaleService {
     private final EmailService emailService;
     private final TenantScope tenantScope;
 
-    public Page<Sale> findAll(LocalDateTime from, LocalDateTime to, Pageable pageable, User actor) {
+    // BETWEEN siempre necesita las dos fechas: cuando el filtro viene vacío, Postgres no
+    // logra inferir el tipo de un parámetro timestamp nulo (ni con CAST), así que en vez
+    // de mandar null se usa un rango que cubre todo el historial.
+    private static final LocalDateTime MIN_DATE = LocalDateTime.of(2000, 1, 1, 0, 0);
+    private static final LocalDateTime MAX_DATE = LocalDateTime.of(2100, 1, 1, 0, 0);
+
+    /**
+     * Búsqueda paginada de ventas con filtros combinables, acotada a la tienda del actor.
+     *
+     * @param from fecha/hora mínima (inclusiva); si es null se usa un límite inferior
+     *             muy antiguo para evitar pasar null al BETWEEN de la consulta
+     * @param to fecha/hora máxima (inclusiva); si es null se usa un límite superior muy
+     *           lejano, por la misma razón
+     * @param customerName filtro por nombre de cliente (parcial), o null
+     * @param paymentMethod filtro por método de pago, o null
+     * @param status filtro por estado (completada/cancelada), o null
+     * @param pageable paginación y orden solicitados
+     * @param actor usuario que consulta; acota el resultado a su tienda
+     * @return página de ventas que cumplen los filtros
+     */
+    public Page<Sale> findAll(LocalDateTime from, LocalDateTime to, String customerName,
+                               PaymentMethod paymentMethod, SaleStatus status, Pageable pageable, User actor) {
         Long scope = tenantScope.scopeId(actor);
-        if (from != null && to != null) {
-            return saleRepository.findBetweenForTienda(from, to, scope, pageable);
-        }
-        return saleRepository.findAllForTienda(scope, pageable);
+        LocalDateTime effectiveFrom = from != null ? from : MIN_DATE;
+        LocalDateTime effectiveTo = to != null ? to : MAX_DATE;
+        return saleRepository.search(scope, effectiveFrom, effectiveTo, customerName, paymentMethod, status, pageable);
     }
 
+    /**
+     * Busca una venta por id sin validar a qué tienda pertenece. Uso interno; para
+     * flujos con control de acceso usar {@link #findById(Long, User)}.
+     *
+     * @param id id de la venta
+     * @return la venta encontrada
+     * @throws IllegalArgumentException si no existe
+     */
     public Sale findById(Long id) {
         return saleRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Venta no encontrada: " + id));
     }
 
+    /**
+     * Busca una venta por id validando que pertenezca a la tienda del actor.
+     *
+     * @param id id de la venta
+     * @param actor usuario que realiza la consulta
+     * @return la venta encontrada, perteneciente al alcance del actor
+     * @throws IllegalArgumentException si no existe o no pertenece a la tienda del actor
+     */
     public Sale findById(Long id, User actor) {
         Sale s = findById(id);
         Long scope = tenantScope.scopeId(actor);
@@ -51,10 +99,39 @@ public class SaleService {
         return s;
     }
 
+    /**
+     * Registra una venta nueva: valida stock, arma cada línea de venta, descuenta el
+     * inventario y ata la venta al corte de caja abierto del actor.
+     *
+     * <p>Reglas de negocio clave:</p>
+     * <ul>
+     *   <li>El actor debe tener un corte de caja propio en estado {@code OPEN}; la venta
+     *   se ata a ese corte (no existe un "corte de la tienda" compartido).</li>
+     *   <li>Cada producto debe estar activo y tener stock suficiente; si no, se aborta
+     *   toda la venta (la operación es transaccional).</li>
+     *   <li>Por cada línea se descuenta el stock del producto y se registra un
+     *   {@link InventoryMovement} de tipo {@code SALE} con el stock anterior y nuevo.</li>
+     *   <li>El total se calcula como {@code subtotal - descuento + impuestos}.</li>
+     *   <li>Si el request trae un correo de cliente, se dispara el envío asíncrono del
+     *   ticket en PDF vía {@link EmailService#sendTicketEmail}.</li>
+     * </ul>
+     *
+     * @param req datos de la venta: líneas, método de pago, descuento/impuestos
+     *            globales, datos opcionales de cliente
+     * @param actor usuario (cajero/vendedor) que registra la venta; debe tener un corte
+     *              de caja propio abierto; queda registrado como {@code user} de la venta
+     * @return la venta ya registrada y persistida
+     * @throws IllegalStateException si el actor no tiene un corte abierto, si algún
+     *         producto está inactivo o no tiene stock suficiente
+     * @throws IllegalArgumentException si algún producto de las líneas no existe o no
+     *         pertenece a la tienda del actor
+     */
     @Transactional
     public Sale create(SaleRequest req, User actor) {
-        Long tiendaId = actor.getTienda() != null ? actor.getTienda().getId() : null;
-        CashCut openCut = cashCutRepository.findFirstByStatusAndTiendaId(CashCutStatus.OPEN, tiendaId)
+        // cada cajero/vendedor puede tener su propio corte abierto en simultáneo con
+        // los de sus compañeros de tienda, así que la venta se pega al SUYO, no a
+        // "el" corte abierto de la tienda (ya no existe tal cosa).
+        CashCut openCut = cashCutRepository.findFirstByUserIdAndStatus(actor.getId(), CashCutStatus.OPEN)
                 .orElseThrow(() -> new IllegalStateException("Debes abrir un corte de caja antes de registrar ventas"));
 
         Sale sale = new Sale();
@@ -132,6 +209,24 @@ public class SaleService {
         return saved;
     }
 
+    /**
+     * Cancela una venta ya registrada: revierte el stock de cada producto vendido y
+     * marca la venta como cancelada.
+     *
+     * <p>Por cada línea de la venta se devuelve la cantidad al stock del producto y se
+     * registra un {@link InventoryMovement} de tipo {@code IN} explicando que es una
+     * reversión ("Cancelación de venta #id"). La venta nunca se borra: se marca
+     * {@code CANCELLED} y se conserva quién y cuándo la canceló ({@code cancelledBy}/
+     * {@code cancelledAt}), preservando el historial completo para auditoría y para los
+     * reportes de corte de caja (que cuentan las canceladas aparte).</p>
+     *
+     * @param id id de la venta a cancelar
+     * @param actor usuario que cancela; debe tener acceso a la tienda de la venta; queda
+     *              registrado como {@code cancelledBy}
+     * @return la venta ya marcada como cancelada
+     * @throws IllegalStateException si la venta ya estaba cancelada
+     * @throws IllegalArgumentException si la venta no existe o no pertenece a la tienda del actor
+     */
     @Transactional
     public Sale cancel(Long id, User actor) {
         Sale sale = findById(id, actor);
@@ -156,6 +251,8 @@ public class SaleService {
             movementRepository.save(mv);
         }
         sale.setStatus(SaleStatus.CANCELLED);
+        sale.setCancelledBy(actor);
+        sale.setCancelledAt(LocalDateTime.now());
         return saleRepository.save(sale);
     }
 }

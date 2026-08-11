@@ -6,13 +6,23 @@ import com.boutique.pos.model.User;
 import com.boutique.pos.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
+/**
+ * Controlador de usuarios, expuesto bajo {@code /api/users}.
+ * <p>
+ * Administra los usuarios (cajeros, vendedores, administradores, etc.) de la
+ * tienda del usuario autenticado, incluyendo su asignación de rol. Todos los
+ * métodos requieren acceso a la sección {@code USERS}, según el
+ * {@code @PreAuthorize} definido a nivel de clase.
+ */
 @RestController
 @RequestMapping("/api/users")
 @RequiredArgsConstructor
@@ -21,21 +31,60 @@ public class UserController {
 
     private final UserService userService;
 
+    /**
+     * Lista los usuarios de la tienda del usuario autenticado, con filtros
+     * opcionales por rango de fecha de alta, nombre, email, rol y estado activo.
+     *
+     * @param from     fecha/hora inicial del rango de alta (opcional)
+     * @param to       fecha/hora final del rango de alta (opcional)
+     * @param name     nombre a filtrar (opcional)
+     * @param email    email a filtrar (opcional)
+     * @param roleId   id de rol a filtrar (opcional)
+     * @param isActive filtra por usuarios activos/inactivos (opcional)
+     * @param actor    usuario autenticado; determina el filtro por tienda
+     */
     @GetMapping
-    public ResponseEntity<ApiResponse<List<User>>> list(@AuthenticationPrincipal User actor) {
-        return ResponseEntity.ok(ApiResponse.ok(userService.findAll(actor), null));
+    public ResponseEntity<ApiResponse<List<User>>> list(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
+            @RequestParam(required = false) String name,
+            @RequestParam(required = false) String email,
+            @RequestParam(required = false) Long roleId,
+            @RequestParam(required = false) Boolean isActive,
+            @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(userService.findAll(from, to, name, email, roleId, isActive, actor), null));
     }
 
+    /**
+     * Obtiene el detalle de un usuario por su id, dentro de la tienda del
+     * usuario autenticado.
+     *
+     * @param id    identificador del usuario
+     * @param actor usuario autenticado
+     */
     @GetMapping("/{id}")
     public ResponseEntity<ApiResponse<User>> get(@PathVariable Long id, @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(userService.findById(id, actor), null));
     }
 
+    /**
+     * Crea un nuevo usuario en la tienda del usuario autenticado.
+     *
+     * @param req   datos del usuario a crear (incluye el rol asignado)
+     * @param actor usuario autenticado que realiza la creación
+     */
     @PostMapping
     public ResponseEntity<ApiResponse<User>> create(@Valid @RequestBody UserRequest req, @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(userService.create(req, actor), "Usuario creado"));
     }
 
+    /**
+     * Actualiza los datos de un usuario existente.
+     *
+     * @param id    identificador del usuario a actualizar
+     * @param req   nuevos datos del usuario
+     * @param actor usuario autenticado que realiza la actualización
+     */
     @PutMapping("/{id}")
     public ResponseEntity<ApiResponse<User>> update(@PathVariable Long id,
                                                      @Valid @RequestBody UserRequest req,
@@ -43,6 +92,12 @@ public class UserController {
         return ResponseEntity.ok(ApiResponse.ok(userService.update(id, req, actor), "Usuario actualizado"));
     }
 
+    /**
+     * Desactiva (baja lógica) un usuario existente.
+     *
+     * @param id    identificador del usuario a desactivar
+     * @param actor usuario autenticado que realiza la baja
+     */
     @DeleteMapping("/{id}")
     public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id, @AuthenticationPrincipal User actor) {
         userService.deactivate(id, actor);

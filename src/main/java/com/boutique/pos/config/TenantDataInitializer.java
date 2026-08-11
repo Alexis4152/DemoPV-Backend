@@ -15,6 +15,18 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
+/**
+ * {@link CommandLineRunner} de migración que introduce el multi-tenant ("Tienda") sobre una
+ * base de datos que puede traer datos previos a ese concepto: crea la tienda por defecto si
+ * hace falta, rellena {@code tienda_id} en las tablas que antes no lo tenían, y separa los
+ * roles que originalmente eran compartidos entre todas las tiendas en copias independientes
+ * por tienda. Es idempotente en sus tres pasos: en arranques posteriores, una vez migrados
+ * los datos, no vuelve a hacer nada.
+ *
+ * <p>{@code @Order(10)} garantiza que corra después de {@link RoleDataInitializer} (sin orden
+ * explícito), de modo que los roles base y el rol SUPER_ADMIN ya existan antes de intentar la
+ * migración de roles compartidos.</p>
+ */
 // Runs after RoleDataInitializer so SUPER_ADMIN and legacy-role migration are already in place.
 @Component
 @Order(10)
@@ -29,6 +41,11 @@ public class TenantDataInitializer implements CommandLineRunner {
     private final RoleService roleService;
     private final JdbcTemplate jdbcTemplate;
 
+    /**
+     * Orquesta la migración completa en orden: asegura que exista una tienda por defecto,
+     * rellena {@code tienda_id} en registros huérfanos de esa tienda, y migra los roles
+     * compartidos a roles propios por tienda.
+     */
     @Override
     @Transactional
     public void run(String... args) {
@@ -37,6 +54,10 @@ public class TenantDataInitializer implements CommandLineRunner {
         migrateSharedRolesToTiendas();
     }
 
+    /**
+     * Devuelve la primera tienda existente (por nombre) o, si todavía no hay ninguna, crea
+     * "Tienda Principal" activa para servir como destino del backfill de datos legados.
+     */
     private Tienda ensureDefaultTienda() {
         if (tiendaRepository.count() > 0) {
             return tiendaRepository.findAllByOrderByNameAsc().get(0);
@@ -49,6 +70,12 @@ public class TenantDataInitializer implements CommandLineRunner {
         return tienda;
     }
 
+    /**
+     * Asigna {@code defaultTienda} a todos los registros con {@code tienda_id} nulo en las
+     * tablas listadas en {@link #TABLES_TO_BACKFILL}, y a los usuarios sin tienda que no sean
+     * SUPER_ADMIN (esas cuentas deben permanecer sin tienda, ya que operan a nivel
+     * plataforma).
+     */
     private void backfillTiendaId(Tienda defaultTienda) {
         for (String table : TABLES_TO_BACKFILL) {
             int updated = jdbcTemplate.update(
@@ -68,6 +95,11 @@ public class TenantDataInitializer implements CommandLineRunner {
         }
     }
 
+    /**
+     * Migra los roles que todavía no pertenecen a ninguna tienda (creados antes de que
+     * existiera el multi-tienda) a un modelo de un rol independiente por tienda. El rol
+     * SUPER_ADMIN se excluye a propósito porque es global por diseño.
+     */
     // Un solo evento, la primera vez que hay más de una tienda: los roles ADMIN/CASHIER/SELLER
     // (y cualquier otro que se haya creado antes de que existiera el multi-tienda) eran
     // compartidos por todas las tiendas. Esto le da la propiedad de esos roles a la primera
