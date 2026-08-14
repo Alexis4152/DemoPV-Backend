@@ -1,5 +1,6 @@
 package com.boutique.pos.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -69,10 +70,12 @@ public class TiendaInfo {
     private String notasAdicionales;
 
     // LAZY: evita cargar en cadena Role/Tienda/etc. de ese usuario (mismo motivo que en las demás entidades)
+    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by_user_id")
     private User createdBy;
 
+    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "updated_by_user_id")
     private User updatedBy;
