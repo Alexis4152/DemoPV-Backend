@@ -1,0 +1,24 @@
+# Build output — nunca debe versionarse (contiene copias compiladas de application.properties)
+target/
+*.class
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+nbproject/
+nbbuild/
+nbdist/
+.nb-gradle/
+
+# Archivos subidos por usuarios (logos de tienda) — datos runtime, no código
+uploads/
+
+# Configuración local con secretos — nunca debe versionarse
+application-local.properties
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
