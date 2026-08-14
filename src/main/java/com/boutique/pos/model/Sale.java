@@ -1,5 +1,6 @@
 package com.boutique.pos.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 import lombok.*;
@@ -27,6 +28,7 @@ public class Sale {
     private Long id;
 
     /** Cajero/vendedor que realizó la venta. */
+    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
@@ -85,6 +87,7 @@ public class Sale {
 
     // quién y cuándo la canceló — null si sigue COMPLETED. LAZY para evitar cargar en
     // cadena el Role/Tienda de ese usuario (mismo motivo que en las demás entidades).
+    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "cancelled_by_user_id")
     private User cancelledBy;
