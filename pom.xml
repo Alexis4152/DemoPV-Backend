@@ -48,6 +48,13 @@
       <scope>runtime</scope>
     </dependency>
 
+    <!-- Permite a Jackson serializar entidades con relaciones LAZY de Hibernate (ej.
+         createdBy/updatedBy/deletedBy) sin tronar al toparse con el proxy interno -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.datatype</groupId>
+      <artifactId>jackson-datatype-hibernate6</artifactId>
+    </dependency>
+
     <!-- Email (tickets de venta en PDF) -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
