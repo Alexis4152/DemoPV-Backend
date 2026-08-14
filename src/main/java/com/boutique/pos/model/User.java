@@ -1,6 +1,7 @@
 package com.boutique.pos.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -59,15 +60,21 @@ public class User implements UserDetails {
 
     // LAZY (a diferencia del resto de relaciones de esta clase) porque User se referencia
     // a sí mismo aquí — en EAGER, Hibernate encadena el join User→createdBy→createdBy→...
-    // sin límite y Postgres truena con "límite de profundidad de stack alcanzado".
+    // sin límite y Postgres truena con "límite de profundidad de stack alcanzado". Por el
+    // mismo motivo, JsonIgnoreProperties evita que Jackson expanda role/tienda/los propios
+    // createdBy-updatedBy-deletedBy de este User anidado al serializar (User→role→tienda→
+    // updatedBy(User)→role→... sería un ciclo infinito).
+    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by_user_id")
     private User createdBy;
 
+    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "updated_by_user_id")
     private User updatedBy;
 
+    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "deleted_by_user_id")
     private User deletedBy;

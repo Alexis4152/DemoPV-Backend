@@ -1,5 +1,6 @@
 package com.boutique.pos.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.UpdateTimestamp;
@@ -38,6 +39,7 @@ public class CashCutSchedule {
     private Boolean enabled = false;
 
     // LAZY: evita cargar en cadena el Role/Tienda de ese usuario (mismo motivo que en las demás entidades)
+    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "updated_by_user_id")
     private User updatedBy;

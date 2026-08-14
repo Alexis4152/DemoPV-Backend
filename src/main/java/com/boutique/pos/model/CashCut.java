@@ -1,5 +1,6 @@
 package com.boutique.pos.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -29,12 +30,17 @@ public class CashCut {
     private Long id;
 
     // quien abrió el corte (siempre el propio cajero/vendedor)
+    // JsonIgnoreProperties: evita que Jackson expanda role/tienda (y sus propios
+    // createdBy/updatedBy/deletedBy) de este User, lo que crearía un ciclo infinito
+    // User→role→tienda→updatedBy(User)→role→... al serializar la respuesta.
+    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
     // quien lo cerró — null mientras sigue abierto, y también null si lo cerró el job
     // automático (CashCutAutoCloseJob) en vez de una persona; el frontend muestra "Sistema".
+    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "closed_by_user_id")
     private User closedBy;

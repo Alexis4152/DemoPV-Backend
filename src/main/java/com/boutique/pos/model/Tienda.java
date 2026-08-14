@@ -1,5 +1,6 @@
 package com.boutique.pos.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -46,15 +47,21 @@ public class Tienda {
     @Column(length = 255)
     private String logoPath;
 
-    // LAZY: evita el ciclo User→Tienda(EAGER)→createdBy(User)→Tienda→... (User carga su Tienda en EAGER)
+    // LAZY: evita el ciclo User→Tienda(EAGER)→createdBy(User)→Tienda→... (User carga su Tienda en EAGER).
+    // JsonIgnoreProperties evita además que, al serializar, Jackson expanda role/tienda de
+    // este User anidado — sin esto, Tienda.updatedBy→role→tienda→updatedBy→... es un ciclo
+    // infinito real (lo que rompía /api/auth/login y /api/auth/me en producción).
+    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by_user_id")
     private User createdBy;
 
+    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "updated_by_user_id")
     private User updatedBy;
 
+    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "deleted_by_user_id")
     private User deletedBy;
