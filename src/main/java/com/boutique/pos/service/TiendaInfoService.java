@@ -74,6 +74,8 @@ public class TiendaInfoService {
         checkAccess(tiendaId, actor);
         Tienda tienda = findTienda(tiendaId);
         tienda.setName(req.getName());
+        tienda.setMaxDiscountAmount(req.getMaxDiscountAmount());
+        tienda.setMaxDiscountPercent(req.getMaxDiscountPercent());
         tienda.setUpdatedBy(actor);
         tiendaRepository.save(tienda);
 

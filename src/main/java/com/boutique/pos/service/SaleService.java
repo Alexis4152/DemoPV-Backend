@@ -12,9 +12,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.text.NumberFormat;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Registro y consulta de ventas (punto de venta), y cancelación de ventas ya registradas.
@@ -31,6 +34,8 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 public class SaleService {
+
+    private static final NumberFormat MONEY_FMT = NumberFormat.getCurrencyInstance(new Locale("es", "MX"));
 
     private final SaleRepository saleRepository;
     private final ProductRepository productRepository;
@@ -145,7 +150,13 @@ public class SaleService {
         sale.setTienda(actor.getTienda());
 
         List<SaleItem> items = new ArrayList<>();
-        BigDecimal subtotal = BigDecimal.ZERO;
+        // grossSubtotal: suma de unitPrice*qty de cada línea, SIN restar ningún descuento —
+        // es lo que se muestra como "Subtotal" en el ticket, precisamente para que ahí
+        // "Subtotal - Descuento + Impuestos = Total" cierre a simple vista. El descuento
+        // por línea sí se resta en item.subtotal (lo que se imprime junto a cada producto),
+        // pero no aquí, para no restarlo dos veces.
+        BigDecimal grossSubtotal = BigDecimal.ZERO;
+        BigDecimal itemDiscountTotal = BigDecimal.ZERO;
 
         for (SaleItemRequest ir : req.getItems()) {
             Product product = productService.findById(ir.getProductId(), actor);
@@ -161,7 +172,9 @@ public class SaleService {
 
             BigDecimal unitPrice = product.getPrice();
             BigDecimal discount = ir.getDiscount() != null ? ir.getDiscount() : BigDecimal.ZERO;
-            BigDecimal itemSubtotal = unitPrice.multiply(qty).subtract(discount);
+            BigDecimal lineGross = unitPrice.multiply(qty);
+            validateDiscountLimit(discount, lineGross, product.getName(), actor.getTienda());
+            BigDecimal itemSubtotal = lineGross.subtract(discount);
 
             SaleItem item = new SaleItem();
             item.setSale(sale);
@@ -172,6 +185,7 @@ public class SaleService {
             item.setDiscount(discount);
             item.setSubtotal(itemSubtotal);
             items.add(item);
+            itemDiscountTotal = itemDiscountTotal.add(discount);
 
             int previous = product.getStock();
             product.setStock(previous - qtyInt);
@@ -187,12 +201,17 @@ public class SaleService {
             mv.setReason("Venta");
             movementRepository.save(mv);
 
-            subtotal = subtotal.add(itemSubtotal);
+            grossSubtotal = grossSubtotal.add(lineGross);
         }
 
-        BigDecimal discount = req.getDiscount() != null ? req.getDiscount() : BigDecimal.ZERO;
+        // El descuento total de la venta es la suma de los descuentos por línea más
+        // cualquier descuento global adicional que venga en el request (ver el Javadoc de
+        // SaleRequest.discount) — antes de este fix, el descuento por línea nunca se
+        // reflejaba aquí, aunque sí se restaba correctamente en cada item.subtotal.
+        BigDecimal globalDiscount = req.getDiscount() != null ? req.getDiscount() : BigDecimal.ZERO;
+        BigDecimal discount = itemDiscountTotal.add(globalDiscount);
         BigDecimal tax = req.getTax() != null ? req.getTax() : BigDecimal.ZERO;
-        BigDecimal total = subtotal.subtract(discount).add(tax);
+        BigDecimal total = grossSubtotal.subtract(discount).add(tax);
 
         // En efectivo, el cajero debe capturar con cuánto pagó el cliente para poder
         // calcular el cambio a entregar; en tarjeta/transferencia no aplica y se ignora
@@ -211,7 +230,7 @@ public class SaleService {
             changeGiven = amountReceived.subtract(total);
         }
 
-        sale.setSubtotal(subtotal);
+        sale.setSubtotal(grossSubtotal);
         sale.setDiscount(discount);
         sale.setTax(tax);
         sale.setTotal(total);
@@ -273,5 +292,40 @@ public class SaleService {
         sale.setCancelledBy(actor);
         sale.setCancelledAt(LocalDateTime.now());
         return saleRepository.save(sale);
+    }
+
+    /**
+     * Verifica que el descuento de una línea no exceda ninguno de los límites que el ADMIN
+     * haya fijado para la tienda en "Datos de la tienda" ({@link Tienda#getMaxDiscountAmount()}/
+     * {@link Tienda#getMaxDiscountPercent()}). Ambos son opcionales e independientes: si
+     * están definidos, se rechaza el descuento que exceda CUALQUIERA de los dos.
+     * <p>
+     * El POS ya hace esta misma validación en el navegador (ver {@code lineDiscount}/
+     * {@code resolveDiscountCap} en {@code POS.jsx}) para dar feedback inmediato sin ida y
+     * vuelta al servidor; esta es la validación real, para que nadie pueda saltarse el
+     * límite llamando a la API directamente.
+     *
+     * @param discount monto de descuento (en pesos) que se intenta aplicar a la línea
+     * @param lineGross importe bruto de la línea ({@code unitPrice * quantity}), usado para
+     *                  traducir el límite en porcentaje a un monto comparable
+     * @param productName nombre del producto, solo para el mensaje de error
+     * @param tienda tienda del vendedor; si es null (SUPER_ADMIN sin tienda) no aplica límite
+     * @throws IllegalStateException si el descuento excede el límite en monto o en porcentaje
+     */
+    private void validateDiscountLimit(BigDecimal discount, BigDecimal lineGross, String productName, Tienda tienda) {
+        if (discount.signum() <= 0 || tienda == null) return;
+
+        if (tienda.getMaxDiscountAmount() != null && discount.compareTo(tienda.getMaxDiscountAmount()) > 0) {
+            throw new IllegalStateException("Ese descuento no está permitido para \"" + productName
+                    + "\", el monto máximo permitido es " + MONEY_FMT.format(tienda.getMaxDiscountAmount()));
+        }
+        if (tienda.getMaxDiscountPercent() != null && lineGross.signum() > 0) {
+            BigDecimal maxFromPercent = lineGross.multiply(tienda.getMaxDiscountPercent())
+                    .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+            if (discount.compareTo(maxFromPercent) > 0) {
+                throw new IllegalStateException("Ese porcentaje de descuento no está permitido para \"" + productName
+                        + "\", el porcentaje máximo permitido es " + tienda.getMaxDiscountPercent() + "%");
+            }
+        }
     }
 }

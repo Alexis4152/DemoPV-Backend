@@ -25,9 +25,10 @@ import java.util.*;
  *   <li><b>Resumen</b>: una fila por cada corte cerrado (cajero, apertura, cierre,
  *   fondo inicial, ventas, gastos, fondo final) más totales y utilidad del periodo.</li>
  *   <li><b>Ventas</b>: totales por método de pago y el detalle de cada venta completada
- *   (se excluyen las canceladas), agrupadas por cajero.</li>
+ *   (se excluyen las canceladas), agrupadas por cajero, incluyendo el descuento total de
+ *   cada venta.</li>
  *   <li><b>Productos</b>: el detalle línea por línea de cada producto vendido, con
- *   categoría, piezas y subtotal.</li>
+ *   categoría, piezas, descuento aplicado a esa línea y subtotal.</li>
  * </ul>
  */
 @Service
@@ -171,7 +172,7 @@ public class CashCutReportExcelService {
         moneyCell(totalRow, 2, money, grandTotal);
         r += 2;
 
-        header(sheet, r++, header, "ID_VENTA", "FECHA", "CLIENTE", "METODO", "VENDEDOR", "TOTAL");
+        header(sheet, r++, header, "ID_VENTA", "FECHA", "CLIENTE", "METODO", "VENDEDOR", "DESCUENTO", "TOTAL");
         for (Map.Entry<User, List<Sale>> entry : salesByCajero.entrySet()) {
             for (Sale s : entry.getValue()) {
                 Row row = sheet.createRow(r++);
@@ -180,10 +181,11 @@ public class CashCutReportExcelService {
                 row.createCell(2).setCellValue(s.getCustomerName() != null && !s.getCustomerName().isBlank() ? s.getCustomerName() : "—");
                 row.createCell(3).setCellValue(spanishMethod(s.getPaymentMethod()));
                 row.createCell(4).setCellValue(entry.getKey().getName());
-                moneyCell(row, 5, money, s.getTotal());
+                moneyCell(row, 5, money, s.getDiscount());
+                moneyCell(row, 6, money, s.getTotal());
             }
         }
-        autosize(sheet, 6);
+        autosize(sheet, 7);
     }
 
     /**
@@ -200,9 +202,10 @@ public class CashCutReportExcelService {
     private void buildProductos(Sheet sheet, CellStyle header, CellStyle bold, CellStyle money,
                                  Tienda tienda, Map<User, List<Sale>> salesByCajero) {
         int r = 0;
-        header(sheet, r++, header, "ID_VENTA", "FECHA", "PRODUCTO", "CATEGORIA", "PIEZAS VENDIDAS", "VENDEDOR", "TIENDA", "SUBTOTAL");
+        header(sheet, r++, header, "ID_VENTA", "FECHA", "PRODUCTO", "CATEGORIA", "PIEZAS VENDIDAS", "VENDEDOR", "TIENDA", "DESCUENTO", "SUBTOTAL");
 
         BigDecimal grandTotal = BigDecimal.ZERO;
+        BigDecimal grandDiscount = BigDecimal.ZERO;
         for (Map.Entry<User, List<Sale>> entry : salesByCajero.entrySet()) {
             for (Sale s : entry.getValue()) {
                 for (SaleItem item : s.getItems()) {
@@ -215,17 +218,20 @@ public class CashCutReportExcelService {
                     row.createCell(4).setCellValue(item.getQuantity().doubleValue());
                     row.createCell(5).setCellValue(entry.getKey().getName());
                     row.createCell(6).setCellValue(tienda.getName());
-                    moneyCell(row, 7, money, item.getSubtotal());
+                    moneyCell(row, 7, money, item.getDiscount());
+                    moneyCell(row, 8, money, item.getSubtotal());
                     grandTotal = grandTotal.add(item.getSubtotal());
+                    grandDiscount = grandDiscount.add(nz(item.getDiscount()));
                 }
             }
         }
         Row totalRow = sheet.createRow(r);
         totalRow.createCell(0).setCellValue("TOTAL");
         cellStyle(totalRow, 0, bold);
-        moneyCell(totalRow, 7, money, grandTotal);
+        moneyCell(totalRow, 7, money, grandDiscount);
+        moneyCell(totalRow, 8, money, grandTotal);
 
-        autosize(sheet, 8);
+        autosize(sheet, 9);
     }
 
     /**

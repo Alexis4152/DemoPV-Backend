@@ -6,6 +6,7 @@ import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
@@ -46,6 +47,18 @@ public class Tienda {
     // null = usa el logo de Nexora por default en el frontend
     @Column(length = 255)
     private String logoPath;
+
+    // Límites de descuento por línea de venta que el ADMIN fija para su tienda (pantalla
+    // "Datos de la tienda"), para que un cajero no pueda dejar un producto prácticamente
+    // gratis. Ambos son opcionales e independientes: si están definidos, un descuento se
+    // rechaza (en el POS y de nuevo en el backend al registrar la venta) si excede
+    // CUALQUIERA de los dos, el que sea más restrictivo para esa línea — no es necesario
+    // definir los dos a la vez. null = sin límite en ese criterio.
+    @Column(precision = 12, scale = 2)
+    private BigDecimal maxDiscountAmount;
+
+    @Column(precision = 5, scale = 2)
+    private BigDecimal maxDiscountPercent;
 
     // LAZY: evita el ciclo User→Tienda(EAGER)→createdBy(User)→Tienda→... (User carga su Tienda en EAGER).
     // JsonIgnoreProperties evita además que, al serializar, Jackson expanda role/tienda de

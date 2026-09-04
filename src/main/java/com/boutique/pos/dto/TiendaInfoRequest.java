@@ -1,7 +1,11 @@
 package com.boutique.pos.dto;
 
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
+
+import java.math.BigDecimal;
 
 /**
  * Payload para actualizar los datos fiscales y de contacto de una tienda
@@ -27,4 +31,13 @@ public class TiendaInfoRequest {
     private String paginaWeb;
     private String redesSociales;
     private String notasAdicionales;
+
+    // Límites de descuento por línea de venta (Tienda.maxDiscountAmount/maxDiscountPercent
+    // — se editan desde esta misma pantalla). Opcionales: null quita el límite en ese criterio.
+    @DecimalMin(value = "0", message = "El monto máximo de descuento no puede ser negativo")
+    private BigDecimal maxDiscountAmount;
+
+    @DecimalMin(value = "0", message = "El porcentaje máximo de descuento no puede ser negativo")
+    @DecimalMax(value = "100", message = "El porcentaje máximo de descuento no puede ser mayor a 100")
+    private BigDecimal maxDiscountPercent;
 }
