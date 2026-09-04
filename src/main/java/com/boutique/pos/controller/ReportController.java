@@ -2,6 +2,7 @@ package com.boutique.pos.controller;
 
 import com.boutique.pos.dto.ApiResponse;
 import com.boutique.pos.model.User;
+import com.boutique.pos.service.ReportPdfService;
 import com.boutique.pos.service.ReportService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -29,6 +30,7 @@ import java.util.Map;
 public class ReportController {
 
     private final ReportService reportService;
+    private final ReportPdfService reportPdfService;
 
     // usado también por el widget del Dashboard, por eso admite ambas secciones
     /**
@@ -115,5 +117,106 @@ public class ReportController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
             @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(reportService.movementsByProduct(productId, from, to, actor), null));
+    }
+
+    /**
+     * Total vendido y número de ventas agrupado por método de pago dentro del rango
+     * indicado (útil para cuadrar caja). Requiere acceso a {@code REPORTS}.
+     */
+    @GetMapping("/sales-by-payment-method")
+    @PreAuthorize("@sectionAccess.check('REPORTS')")
+    public ResponseEntity<ApiResponse<List<Object[]>>> salesByPaymentMethod(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(reportService.salesByPaymentMethod(from, to, actor), null));
+    }
+
+    /**
+     * Ranking de vendedores/cajeros por monto total vendido dentro del rango indicado,
+     * limitado a los {@code limit} primeros. Requiere acceso a {@code REPORTS}.
+     */
+    @GetMapping("/top-sellers")
+    @PreAuthorize("@sectionAccess.check('REPORTS')")
+    public ResponseEntity<ApiResponse<List<Object[]>>> topSellers(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(defaultValue = "10") int limit,
+            @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(reportService.topSellers(from, to, limit, actor), null));
+    }
+
+    /**
+     * Total vendido agrupado por mes dentro del rango indicado, para detectar temporadas
+     * altas/bajas en rangos que cubren varios meses. Requiere acceso a {@code REPORTS}.
+     */
+    @GetMapping("/sales-by-month")
+    @PreAuthorize("@sectionAccess.check('REPORTS')")
+    public ResponseEntity<ApiResponse<List<Object[]>>> salesByMonth(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(reportService.salesByMonth(from, to, actor), null));
+    }
+
+    /**
+     * Rentabilidad estimada (ingreso menos costo actual) por producto dentro del rango
+     * indicado, limitado a los {@code limit} primeros por margen. Requiere acceso a
+     * {@code REPORTS}.
+     */
+    @GetMapping("/top-products-by-margin")
+    @PreAuthorize("@sectionAccess.check('REPORTS')")
+    public ResponseEntity<ApiResponse<List<Object[]>>> topProductsByMargin(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(defaultValue = "10") int limit,
+            @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(reportService.topProductsByMargin(from, to, limit, actor), null));
+    }
+
+    /**
+     * Total vendido por categoría de producto dentro del rango indicado. Requiere acceso
+     * a {@code REPORTS}.
+     */
+    @GetMapping("/sales-by-category")
+    @PreAuthorize("@sectionAccess.check('REPORTS')")
+    public ResponseEntity<ApiResponse<List<Object[]>>> salesByCategory(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(reportService.salesByCategory(from, to, actor), null));
+    }
+
+    /**
+     * Compara el rango de fechas indicado contra el mismo rango del año anterior, para
+     * detectar crecimiento o caída interanual. Requiere acceso a {@code REPORTS}.
+     */
+    @GetMapping("/year-over-year")
+    @PreAuthorize("@sectionAccess.check('REPORTS')")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> yearOverYear(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(reportService.yearOverYearComparison(from, to, actor), null));
+    }
+
+    /**
+     * Genera el reporte completo del rango de fechas indicado en PDF (resumen, ventas por
+     * método de pago, ranking de vendedores, productos más vendidos y más rentables, ventas
+     * por categoría, comparativo interanual y stock bajo), listo para descargarse. Requiere
+     * acceso a {@code REPORTS}.
+     */
+    @GetMapping("/pdf")
+    @PreAuthorize("@sectionAccess.check('REPORTS')")
+    public ResponseEntity<byte[]> pdf(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @AuthenticationPrincipal User actor) {
+        byte[] pdf = reportPdfService.generate(from, to, actor);
+        String filename = "reporte-" + from + "-a-" + to + ".pdf";
+        return ResponseEntity.ok()
+                .header("Content-Type", "application/pdf")
+                .header("Content-Disposition", "attachment; filename=\"" + filename + "\"")
+                .body(pdf);
     }
 }

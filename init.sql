@@ -102,7 +102,11 @@ CREATE TABLE IF NOT EXISTS products (
     deleted_at          TIMESTAMP,
     created_by_user_id  BIGINT REFERENCES users(id),
     updated_by_user_id  BIGINT REFERENCES users(id),
-    deleted_by_user_id  BIGINT REFERENCES users(id)
+    deleted_by_user_id  BIGINT REFERENCES users(id),
+    -- Unicidad POR TIENDA, no global: dos tiendas distintas pueden vender legítimamente
+    -- el mismo producto de fábrica con el mismo código real. Postgres permite múltiples
+    -- NULL en una UNIQUE, así que no afecta a los productos sin código de barras.
+    UNIQUE (tienda_id, barcode)
 );
 
 CREATE TABLE IF NOT EXISTS cash_cuts (
@@ -139,6 +143,10 @@ CREATE TABLE IF NOT EXISTS sales (
     discount                NUMERIC(12,2) NOT NULL DEFAULT 0,
     tax                     NUMERIC(12,2) NOT NULL DEFAULT 0,
     total                   NUMERIC(12,2) NOT NULL DEFAULT 0,
+    -- Solo aplican cuando payment_method = 'CASH' (obligatorios ahí, ver SaleService);
+    -- NULL en tarjeta/transferencia y en ventas registradas antes de este feature.
+    amount_received         NUMERIC(12,2),
+    change_given            NUMERIC(12,2),
     payment_method          VARCHAR(20) NOT NULL DEFAULT 'CASH'
                                 CHECK (payment_method IN ('CASH','CARD','TRANSFER')),
     status                  VARCHAR(15) NOT NULL DEFAULT 'COMPLETED'

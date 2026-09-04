@@ -74,6 +74,24 @@ public class ProductController {
     }
 
     /**
+     * Busca un producto activo por su código de barras exacto, dentro de la tienda del
+     * usuario autenticado. Pensado para los flujos de lector de código de barras (venta e
+     * inventario): a diferencia de {@link #get}, no falla si no existe — regresa
+     * {@code data: null}, ya que escanear un código desconocido es un resultado normal
+     * (el frontend puede, por ejemplo, ofrecer dar de alta un producto nuevo con ese
+     * código ya precargado). Accesible desde {@code INVENTORY} o {@code POS}.
+     *
+     * @param barcode código de barras exacto a buscar
+     * @param actor   usuario autenticado; determina el filtro por tienda
+     */
+    @GetMapping("/by-barcode/{barcode}")
+    @PreAuthorize("@sectionAccess.checkAny('INVENTORY', 'POS')")
+    public ResponseEntity<ApiResponse<Product>> getByBarcode(@PathVariable String barcode,
+                                                              @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(productService.findByBarcode(barcode, actor), null));
+    }
+
+    /**
      * Obtiene el detalle de un producto por su id, dentro de la tienda del
      * usuario autenticado.
      *

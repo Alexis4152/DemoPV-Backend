@@ -62,6 +62,23 @@ public class ProductService {
     }
 
     /**
+     * Busca un producto activo por su código de barras exacto, dentro de la tienda del
+     * actor — pensado para los flujos de lector de código de barras (venta e inventario).
+     *
+     * <p>A diferencia de {@link #findById}, NO lanza excepción si no existe: un código
+     * desconocido es un resultado normal al escanear (no un error), y el llamador decide
+     * qué hacer (ej. ofrecer dar de alta un producto nuevo con ese código ya precargado).</p>
+     *
+     * @param barcode código de barras exacto a buscar
+     * @param actor usuario que consulta; acota la búsqueda a su tienda
+     * @return el producto encontrado, o {@code null} si ningún producto activo de su
+     *         tienda tiene ese código
+     */
+    public Product findByBarcode(String barcode, User actor) {
+        return productRepository.findByBarcodeExact(barcode, tenantScope.scopeId(actor)).orElse(null);
+    }
+
+    /**
      * Busca un producto por id sin validar a qué tienda pertenece. Uso interno; para
      * flujos con control de acceso usar {@link #findById(Long, User)}.
      *
@@ -109,13 +126,15 @@ public class ProductService {
      */
     public Product create(ProductRequest req, User actor) {
         Category cat = categoryService.findById(req.getCategoryId(), actor);
+        Long tiendaId = actor.getTienda() != null ? actor.getTienda().getId() : null;
+        validateBarcodeUnique(req.getBarcode(), tiendaId, null);
 
         Product p = new Product();
         p.setName(req.getName());
         p.setDescription(req.getDescription());
         p.setBarcode(req.getBarcode());
         p.setPrice(req.getPrice());
-        p.setCost(req.getCost());
+        p.setCost(req.getCost() != null ? req.getCost() : java.math.BigDecimal.ZERO);
         p.setStock(req.getStock() != null ? req.getStock() : 0);
         p.setMinStock(req.getMinStock() != null ? req.getMinStock() : 5);
         p.setUnit(req.getUnit() != null ? req.getUnit() : "pieza");
@@ -147,12 +166,14 @@ public class ProductService {
     public Product update(Long id, ProductRequest req, User actor) {
         Product p = findById(id, actor);
         Category cat = categoryService.findById(req.getCategoryId(), actor);
+        Long tiendaId = p.getTienda() != null ? p.getTienda().getId() : null;
+        validateBarcodeUnique(req.getBarcode(), tiendaId, p.getId());
 
         p.setName(req.getName());
         p.setDescription(req.getDescription());
         p.setBarcode(req.getBarcode());
         p.setPrice(req.getPrice());
-        p.setCost(req.getCost());
+        p.setCost(req.getCost() != null ? req.getCost() : java.math.BigDecimal.ZERO);
         p.setMinStock(req.getMinStock() != null ? req.getMinStock() : 5);
         p.setUnit(req.getUnit() != null ? req.getUnit() : "pieza");
         p.setCategory(cat);
@@ -207,6 +228,27 @@ public class ProductService {
         p.setDeletedBy(actor);
         p.setDeletedAt(java.time.LocalDateTime.now());
         productRepository.save(p);
+    }
+
+    /**
+     * Valida que un código de barras (si viene) no esté ya en uso por otro producto
+     * activo de la misma tienda — la unicidad es por tienda, no global, ya que dos
+     * tiendas distintas pueden vender legítimamente el mismo producto de fábrica con el
+     * mismo código real (ver también la restricción {@code UNIQUE(tienda_id, barcode)}
+     * en {@link Product}, que actúa como segunda barrera a nivel de base de datos).
+     *
+     * @param barcode código a validar; si es {@code null} o está en blanco, no valida nada
+     * @param tiendaId tienda contra la que se valida
+     * @param excludeProductId id del propio producto a excluir de la validación (al
+     *                         editar, para no chocar contra sí mismo); {@code null} al crear
+     * @throws IllegalStateException si otro producto activo de la tienda ya usa ese código
+     */
+    private void validateBarcodeUnique(String barcode, Long tiendaId, Long excludeProductId) {
+        if (barcode == null || barcode.isBlank()) return;
+        Product existing = productRepository.findByBarcodeExact(barcode, tiendaId).orElse(null);
+        if (existing != null && !existing.getId().equals(excludeProductId)) {
+            throw new IllegalStateException("Ya existe un producto con ese código de barras: " + existing.getName());
+        }
     }
 
     /**

@@ -17,8 +17,12 @@ import java.time.LocalDateTime;
  * Se elimina mediante borrado suave ({@code isActive=false} + {@code deletedBy}/{@code deletedAt})
  * para conservar el historial de auditoría y no romper la referencia desde ventas pasadas.
  */
+// La unicidad del código de barras es POR TIENDA, no global: dos tiendas distintas
+// pueden vender legítimamente el mismo producto de fábrica con el mismo código real.
+// Postgres permite múltiples NULL en una columna de un UNIQUE (no todo producto tiene
+// barcode), así que esto no afecta a los productos sin código.
 @Entity
-@Table(name = "products")
+@Table(name = "products", uniqueConstraints = @UniqueConstraint(columnNames = {"tienda_id", "barcode"}))
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
 public class Product {
 

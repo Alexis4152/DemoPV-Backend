@@ -66,6 +66,15 @@ public class Sale {
     @Builder.Default
     private BigDecimal total = BigDecimal.ZERO;
 
+    // Solo aplican cuando paymentMethod = CASH (obligatorios en ese caso); null para
+    // tarjeta/transferencia, y también null en ventas registradas antes de este feature.
+    // changeGiven = amountReceived - total, siempre calculado por el servidor.
+    @Column(precision = 12, scale = 2)
+    private BigDecimal amountReceived;
+
+    @Column(precision = 12, scale = 2)
+    private BigDecimal changeGiven;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     @Builder.Default

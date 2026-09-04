@@ -7,6 +7,7 @@ import com.boutique.pos.model.PaymentMethod;
 import com.boutique.pos.model.Sale;
 import com.boutique.pos.model.SaleStatus;
 import com.boutique.pos.model.User;
+import com.boutique.pos.service.EscPosTicketService;
 import com.boutique.pos.service.SaleService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -36,6 +37,27 @@ import java.time.LocalDateTime;
 public class SaleController {
 
     private final SaleService saleService;
+    private final EscPosTicketService escPosTicketService;
+
+    /**
+     * Arma el ticket de una venta ya registrada en formato ESC/POS, listo para que el
+     * navegador se lo pase directo a un puente local de impresión (ej. QZ Tray) que hable
+     * con la impresora térmica USB de la caja. El backend nunca toca la impresora — corre
+     * en la nube, sin acceso al hardware local de cada tienda; solo arma el contenido, como
+     * una cadena hexadecimal (ver {@link EscPosTicketService} para el porqué del formato).
+     * Incluye el comando de apertura del cajón al final si la venta fue en efectivo (ver
+     * {@link EscPosTicketService#build}). Requiere acceso a {@code SALES} o {@code POS}.
+     *
+     * @param id    id de la venta a imprimir
+     * @param actor usuario autenticado; la venta debe pertenecer a su tienda
+     */
+    @GetMapping("/{id}/ticket-escpos")
+    @PreAuthorize("@sectionAccess.checkAny('SALES', 'POS')")
+    public ResponseEntity<ApiResponse<String>> ticketEscPos(@PathVariable Long id,
+                                                              @AuthenticationPrincipal User actor) {
+        Sale sale = saleService.findById(id, actor);
+        return ResponseEntity.ok(ApiResponse.ok(escPosTicketService.build(sale), null));
+    }
 
     /**
      * Lista paginada de ventas, con filtros opcionales por rango de fechas,

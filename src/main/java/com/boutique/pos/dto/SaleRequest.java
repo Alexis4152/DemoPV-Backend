@@ -31,6 +31,9 @@ public class SaleRequest {
     private BigDecimal discount;
     // Impuesto de la venta (opcional, se trata como cero si no se envía).
     private BigDecimal tax;
+    // Con cuánto pagó el cliente. Obligatorio cuando paymentMethod = CASH (el servicio
+    // rechaza la venta si falta o es menor al total); se ignora para tarjeta/transferencia.
+    private BigDecimal amountReceived;
     private String notes;
     @NotEmpty @Valid
     private List<SaleItemRequest> items;

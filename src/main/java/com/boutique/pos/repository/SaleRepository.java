@@ -91,4 +91,44 @@ public interface SaleRepository extends JpaRepository<Sale, Long> {
     @Query("SELECT p.id, p.name, p.stock, p.minStock FROM Product p WHERE p.isActive = true AND p.stock <= p.minStock " +
            "AND (:tiendaId IS NULL OR p.tienda.id = :tiendaId) ORDER BY p.stock ASC")
     List<Object[]> lowStockProducts(@Param("tiendaId") Long tiendaId);
+
+    /**
+     * Agrupa las ventas completadas por método de pago dentro de un rango de fechas,
+     * devolviendo {@code [metodoDePago, totalVendido, numeroDeVentas]} por cada método con
+     * al menos una venta. Útil para cuadrar caja (cuánto entró en efectivo vs. tarjeta vs.
+     * transferencia). Mismo patrón de filtros que {@link #totalBetween}.
+     */
+    @Query("SELECT s.paymentMethod, COALESCE(SUM(s.total),0), COUNT(s) " +
+           "FROM Sale s WHERE s.status = 'COMPLETED' AND s.createdAt BETWEEN :from AND :to " +
+           "AND (:tiendaId IS NULL OR s.tienda.id = :tiendaId) " +
+           "GROUP BY s.paymentMethod ORDER BY SUM(s.total) DESC")
+    List<Object[]> salesByPaymentMethod(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to, @Param("tiendaId") Long tiendaId);
+
+    /**
+     * Ranking de vendedores/cajeros por monto total vendido dentro de un rango de fechas,
+     * devolviendo {@code [userId, nombreDelVendedor, totalVendido, numeroDeVentas]} ordenado
+     * de mayor a menor monto. {@code pageable} limita cuántos vendedores se devuelven (ej.
+     * {@code PageRequest.of(0, 5)} para el top 5); usar {@link Pageable#unpaged()} para
+     * traer a todos. Mismo patrón de filtros que {@link #totalBetween}.
+     */
+    @Query("SELECT s.user.id, s.user.name, COALESCE(SUM(s.total),0), COUNT(s) " +
+           "FROM Sale s WHERE s.status = 'COMPLETED' AND s.createdAt BETWEEN :from AND :to " +
+           "AND (:tiendaId IS NULL OR s.tienda.id = :tiendaId) " +
+           "GROUP BY s.user.id, s.user.name ORDER BY SUM(s.total) DESC")
+    List<Object[]> topSellers(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to,
+                               @Param("tiendaId") Long tiendaId, Pageable pageable);
+
+    /**
+     * Agrupa el total vendido por mes dentro de un rango de fechas, devolviendo
+     * {@code [primerDiaDelMes, totalVendidoEseMes, numeroDeVentas]} por cada mes con
+     * ventas — pensado para detectar temporadas altas/bajas cuando el rango seleccionado
+     * cubre varios meses (el desglose por día del reporte de "Ventas por día" se vuelve
+     * difícil de leer en rangos largos). Mismo patrón de filtros que {@link #totalBetween}.
+     */
+    @Query(value = "SELECT date_trunc('month', s.created_at), COALESCE(SUM(s.total),0), COUNT(*) " +
+                   "FROM sales s WHERE s.status = 'COMPLETED' AND s.created_at BETWEEN :from AND :to " +
+                   "AND (:tiendaId IS NULL OR s.tienda_id = :tiendaId) " +
+                   "GROUP BY date_trunc('month', s.created_at) ORDER BY date_trunc('month', s.created_at)",
+           nativeQuery = true)
+    List<Object[]> salesByMonth(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to, @Param("tiendaId") Long tiendaId);
 }

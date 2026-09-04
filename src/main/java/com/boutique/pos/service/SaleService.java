@@ -194,10 +194,29 @@ public class SaleService {
         BigDecimal tax = req.getTax() != null ? req.getTax() : BigDecimal.ZERO;
         BigDecimal total = subtotal.subtract(discount).add(tax);
 
+        // En efectivo, el cajero debe capturar con cuánto pagó el cliente para poder
+        // calcular el cambio a entregar; en tarjeta/transferencia no aplica y se ignora
+        // cualquier valor que llegue en el request. El cambio siempre lo calcula el
+        // servidor (nunca se confía en un "changeGiven" enviado por el cliente).
+        BigDecimal amountReceived = null;
+        BigDecimal changeGiven = null;
+        if (req.getPaymentMethod() == PaymentMethod.CASH) {
+            if (req.getAmountReceived() == null) {
+                throw new IllegalStateException("Debes indicar con cuánto pagó el cliente para cobrar en efectivo");
+            }
+            if (req.getAmountReceived().compareTo(total) < 0) {
+                throw new IllegalStateException("El monto recibido es menor al total de la venta");
+            }
+            amountReceived = req.getAmountReceived();
+            changeGiven = amountReceived.subtract(total);
+        }
+
         sale.setSubtotal(subtotal);
         sale.setDiscount(discount);
         sale.setTax(tax);
         sale.setTotal(total);
+        sale.setAmountReceived(amountReceived);
+        sale.setChangeGiven(changeGiven);
         sale.setItems(items);
 
         Sale saved = saleRepository.save(sale);

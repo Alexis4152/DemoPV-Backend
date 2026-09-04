@@ -140,6 +140,12 @@ public class TicketPdfService {
                 document.add(paragraph("Impuestos: " + money(sale.getTax()), FONT_BODY, Element.ALIGN_RIGHT, 0, 2));
             }
             document.add(paragraph("Total: " + money(sale.getTotal()), FONT_TOTAL, Element.ALIGN_RIGHT, 4, 0));
+            // Recibido/cambio solo aplican a ventas en efectivo; en ventas anteriores a
+            // este feature (o pagadas con tarjeta/transferencia) amountReceived es null.
+            if (sale.getAmountReceived() != null) {
+                document.add(paragraph("Recibido: " + money(sale.getAmountReceived()), FONT_BODY, Element.ALIGN_RIGHT, 4, 0));
+                document.add(paragraph("Cambio: " + money(sale.getChangeGiven()), FONT_BODY_BOLD, Element.ALIGN_RIGHT, 0, 0));
+            }
             addSeparator(document, 10);
 
             // ── Pie: total con letra, artículos vendidos, marca y despedida ────

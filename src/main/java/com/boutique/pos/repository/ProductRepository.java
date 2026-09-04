@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Repositorio de {@link Product}.
@@ -48,6 +49,19 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                                 @Param("lowStock") Boolean lowStock,
                                 @Param("tiendaId") Long tiendaId,
                                 Pageable pageable);
+
+    /**
+     * Busca un producto activo por su código de barras EXACTO, dentro de una tienda.
+     *
+     * <p>A diferencia de {@link #searchActive} (coincidencia parcial, pensada para que un
+     * humano teclee), esta consulta es para los flujos de lector de código de barras: el
+     * escáner manda el código completo de una sola vez, y una coincidencia parcial podría
+     * ser ambigua si un código es substring de otro. {@code tiendaId} nulo indica
+     * SUPER_ADMIN (sin filtrar); cualquier otro valor restringe la búsqueda a esa tienda.</p>
+     */
+    @Query("SELECT p FROM Product p WHERE p.isActive = true AND p.barcode = :barcode " +
+           "AND (:tiendaId IS NULL OR p.tienda.id = :tiendaId)")
+    Optional<Product> findByBarcodeExact(@Param("barcode") String barcode, @Param("tiendaId") Long tiendaId);
 
     /**
      * Lista los productos activos cuyo stock actual es menor o igual a su stock mínimo,
