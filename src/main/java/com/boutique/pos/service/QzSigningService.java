@@ -38,31 +38,48 @@ public class QzSigningService {
     @Value("${app.qz.private-key-path}")
     private String privateKeyPath;
 
+    @Value("${app.qz.certificate-base64}")
+    private String certificateBase64;
+
+    @Value("${app.qz.private-key-base64}")
+    private String privateKeyBase64;
+
     private String certificatePem;
     private PrivateKey privateKey;
 
     /**
-     * Carga el certificado y la llave privada al arrancar. Si los archivos no existen
-     * (instalación nueva sin el par generado todavía), solo deja un aviso en el log: la
+     * Carga el certificado y la llave privada al arrancar. Si viene configurada la variable
+     * en base64 (producción, sin disco persistente para montar archivos), se usa esa; si no,
+     * se leen de las rutas de archivo (desarrollo local, con qz-keys/ en el proyecto). Si
+     * ninguna de las dos está disponible o falla la carga, solo deja un aviso en el log: la
      * impresión de tickets sigue funcionando igual, simplemente QZ Tray seguirá pidiendo
-     * autorización en cada venta hasta que se generen y configuren estos archivos.
+     * autorización en cada venta hasta que se generen y configuren estos archivos/variables.
      */
     @PostConstruct
     void load() {
         try {
-            certificatePem = Files.readString(Path.of(certificatePath));
-            String keyPem = Files.readString(Path.of(privateKeyPath))
+            certificatePem = readPem(certificateBase64, certificatePath);
+            String keyPem = readPem(privateKeyBase64, privateKeyPath)
                     .replace("-----BEGIN PRIVATE KEY-----", "")
                     .replace("-----END PRIVATE KEY-----", "")
                     .replaceAll("\\s", "");
             byte[] keyBytes = Base64.getDecoder().decode(keyPem);
             KeyFactory keyFactory = KeyFactory.getInstance("RSA");
             privateKey = keyFactory.generatePrivate(new PKCS8EncodedKeySpec(keyBytes));
-            log.info("Certificado de firma de QZ Tray cargado desde {}", certificatePath);
+            log.info("Certificado de firma de QZ Tray cargado ({})", certificateBase64.isBlank() ? certificatePath : "variable de entorno base64");
         } catch (Exception e) {
-            log.warn("No se pudo cargar el certificado/llave de QZ Tray ({}): {}. La impresion de tickets sigue funcionando, pero QZ Tray pedira autorizacion en cada venta.",
-                    certificatePath, e.getMessage());
+            log.warn("No se pudo cargar el certificado/llave de QZ Tray: {}. La impresion de tickets sigue funcionando, pero QZ Tray pedira autorizacion en cada venta.",
+                    e.getMessage());
         }
+    }
+
+    /** Prioriza el contenido en base64 (producción); si no viene, lee el archivo (local). */
+    private String readPem(String base64Content, String filePath) throws Exception {
+        if (!base64Content.isBlank()) {
+            return new String(Base64.getDecoder().decode(base64Content), StandardCharsets.UTF_8)
+                    .replace("\r\n", "\n");
+        }
+        return Files.readString(Path.of(filePath));
     }
 
     /** Certificado público en PEM, para que el frontend lo mande vía {@code qz.security.setCertificatePromise}. */
