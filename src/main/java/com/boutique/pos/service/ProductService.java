@@ -109,6 +109,39 @@ public class ProductService {
     }
 
     /**
+     * Total histórico de unidades vendidas de cada producto activo de la tienda del actor
+     * (ver {@link ProductRepository#totalSoldByProduct}), pensado para los filtros
+     * "sin ventas" / "más vendidos" de Inventario. Incluye productos con 0 ventas.
+     *
+     * @param actor usuario que consulta; acota el resultado a su tienda
+     * @return filas crudas del query (id de producto, cantidad total vendida)
+     */
+    public List<Object[]> salesStats(User actor) {
+        return productRepository.totalSoldByProduct(tenantScope.scopeId(actor));
+    }
+
+    /**
+     * Búsqueda paginada de productos activos para Inventario: mismos filtros que {@link
+     * #search} (texto, categoría, stock bajo) más un filtro opcional por historial de
+     * ventas. A diferencia de {@link #findAll}, pagina en el servidor en vez de traer el
+     * catálogo completo — pensado para que Inventario siga respondiendo rápido aunque el
+     * catálogo crezca a miles de productos.
+     *
+     * @param q texto de búsqueda (nombre/código de barras), o null
+     * @param categoryId filtro por categoría, o null para no filtrar
+     * @param lowStock si es true, limita a productos con stock por debajo de su mínimo; null/false no filtra
+     * @param soldFilter {@code "NEVER_SOLD"} (nunca vendido) o {@code "TOP_SELLERS"} (con
+     *                   ventas, de más a menos vendido); cualquier otro valor no filtra
+     * @param pageable paginación solicitada
+     * @param actor usuario que consulta; acota el resultado a su tienda
+     * @return página de productos activos que cumplen los filtros
+     */
+    public Page<Product> searchPage(String q, Long categoryId, Boolean lowStock, String soldFilter, Pageable pageable, User actor) {
+        String normalizedSold = "NEVER_SOLD".equals(soldFilter) || "TOP_SELLERS".equals(soldFilter) ? soldFilter : null;
+        return productRepository.searchActiveWithSales(q, categoryId, lowStock, normalizedSold, tenantScope.scopeId(actor), pageable);
+    }
+
+    /**
      * Da de alta un producto nuevo en la tienda del actor.
      *
      * <p>Aplica valores por defecto cuando no vienen en el request: stock 0, stock

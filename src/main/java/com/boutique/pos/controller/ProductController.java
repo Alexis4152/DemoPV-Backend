@@ -2,6 +2,7 @@ package com.boutique.pos.controller;
 
 import com.boutique.pos.dto.ApiResponse;
 import com.boutique.pos.dto.InventoryAdjustRequest;
+import com.boutique.pos.dto.PageResponse;
 import com.boutique.pos.dto.ProductRequest;
 import com.boutique.pos.model.Product;
 import com.boutique.pos.model.User;
@@ -71,6 +72,50 @@ public class ProductController {
         Pageable pageable = PageRequest.of(page, size);
         Page<Product> result = productService.search(q, categoryId, lowStock, pageable, actor);
         return ResponseEntity.ok(ApiResponse.ok(result.getContent(), null));
+    }
+
+    /**
+     * Búsqueda paginada de productos activos para Inventario, con filtros opcionales por
+     * texto libre, categoría, stock bajo, y ahora también por historial de ventas
+     * ({@code sold=NEVER_SOLD} o {@code sold=TOP_SELLERS}) — a diferencia de {@link #list}
+     * (catálogo completo sin paginar) y {@link #search} (paginado pero sin filtro de
+     * ventas, usado por POS/Dashboard), este endpoint pagina en el servidor y devuelve los
+     * metadatos de paginación completos, para que Inventario no tenga que cargar todo el
+     * catálogo de un jalón conforme crece. Accesible desde {@code INVENTORY}.
+     *
+     * @param q          texto de búsqueda libre (nombre, código de barras), opcional
+     * @param categoryId id de categoría para filtrar, opcional
+     * @param lowStock   si es {@code true}, limita el resultado a productos con stock bajo
+     * @param sold       {@code "NEVER_SOLD"} o {@code "TOP_SELLERS"}, opcional
+     * @param page       número de página (base 0, por defecto 0)
+     * @param size       tamaño de página (por defecto 20)
+     * @param actor      usuario autenticado; determina el filtro por tienda
+     */
+    @GetMapping("/page")
+    @PreAuthorize("@sectionAccess.check('INVENTORY')")
+    public ResponseEntity<ApiResponse<PageResponse<Product>>> page(@RequestParam(required = false) String q,
+                                                                    @RequestParam(required = false) Long categoryId,
+                                                                    @RequestParam(required = false) Boolean lowStock,
+                                                                    @RequestParam(required = false) String sold,
+                                                                    @RequestParam(defaultValue = "0") int page,
+                                                                    @RequestParam(defaultValue = "20") int size,
+                                                                    @AuthenticationPrincipal User actor) {
+        Pageable pageable = PageRequest.of(page, size);
+        Page<Product> result = productService.searchPage(q, categoryId, lowStock, sold, pageable, actor);
+        return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
+    }
+
+    /**
+     * Total histórico de unidades vendidas de cada producto activo (incluye los que nunca
+     * se han vendido, con 0), para alimentar los filtros "sin ventas" / "más vendidos" de
+     * Inventario. Accesible desde {@code INVENTORY}.
+     *
+     * @param actor usuario autenticado; determina el filtro por tienda
+     */
+    @GetMapping("/sales-stats")
+    @PreAuthorize("@sectionAccess.check('INVENTORY')")
+    public ResponseEntity<ApiResponse<List<Object[]>>> salesStats(@AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(productService.salesStats(actor), null));
     }
 
     /**

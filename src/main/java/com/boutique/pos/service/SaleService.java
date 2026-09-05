@@ -300,6 +300,11 @@ public class SaleService {
      * {@link Tienda#getMaxDiscountPercent()}). Ambos son opcionales e independientes: si
      * están definidos, se rechaza el descuento que exceda CUALQUIERA de los dos.
      * <p>
+     * Si el ADMIN no configuró NINGUNO de los dos límites, los descuentos quedan
+     * deshabilitados por completo (no hay un límite "sin restricción" implícito): hay que
+     * fijar al menos uno para poder aplicar descuentos. Esto evita que una tienda recién
+     * creada, donde nadie configuró nada todavía, permita descontar sin ningún tope.
+     * <p>
      * El POS ya hace esta misma validación en el navegador (ver {@code lineDiscount}/
      * {@code resolveDiscountCap} en {@code POS.jsx}) para dar feedback inmediato sin ida y
      * vuelta al servidor; esta es la validación real, para que nadie pueda saltarse el
@@ -310,10 +315,16 @@ public class SaleService {
      *                  traducir el límite en porcentaje a un monto comparable
      * @param productName nombre del producto, solo para el mensaje de error
      * @param tienda tienda del vendedor; si es null (SUPER_ADMIN sin tienda) no aplica límite
-     * @throws IllegalStateException si el descuento excede el límite en monto o en porcentaje
+     * @throws IllegalStateException si el descuento excede el límite en monto o en porcentaje,
+     *         o si la tienda no tiene ningún límite configurado
      */
     private void validateDiscountLimit(BigDecimal discount, BigDecimal lineGross, String productName, Tienda tienda) {
         if (discount.signum() <= 0 || tienda == null) return;
+
+        if (tienda.getMaxDiscountAmount() == null && tienda.getMaxDiscountPercent() == null) {
+            throw new IllegalStateException("Los descuentos están deshabilitados: el administrador debe configurar "
+                    + "un límite de descuento en \"Datos de la tienda\" antes de poder aplicar descuentos.");
+        }
 
         if (tienda.getMaxDiscountAmount() != null && discount.compareTo(tienda.getMaxDiscountAmount()) > 0) {
             throw new IllegalStateException("Ese descuento no está permitido para \"" + productName

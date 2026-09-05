@@ -226,10 +226,19 @@ CREATE INDEX IF NOT EXISTS idx_sales_user          ON sales(user_id);
 CREATE INDEX IF NOT EXISTS idx_sales_created_at    ON sales(created_at);
 CREATE INDEX IF NOT EXISTS idx_sales_tienda        ON sales(tienda_id);
 CREATE INDEX IF NOT EXISTS idx_sale_items_sale     ON sale_items(sale_id);
+-- product_id no tenía índice pese a que 4 consultas de reportes/inventario (top
+-- productos, rentabilidad, ventas por categoría, y el nuevo total vendido por producto
+-- de Inventario) hacen JOIN/GROUP BY sobre esta columna.
+CREATE INDEX IF NOT EXISTS idx_sale_items_product  ON sale_items(product_id);
 CREATE INDEX IF NOT EXISTS idx_inv_movements_prod  ON inventory_movements(product_id);
 CREATE INDEX IF NOT EXISTS idx_cash_cuts_status    ON cash_cuts(status);
 CREATE INDEX IF NOT EXISTS idx_cash_cuts_tienda    ON cash_cuts(tienda_id);
 CREATE INDEX IF NOT EXISTS idx_users_tienda        ON users(tienda_id);
+-- Compuesto: casi todas las consultas de reportes filtran exactamente por esta
+-- combinación (tienda + solo completadas + rango de fechas). Con miles de ventas, esto
+-- rinde mejor que los tres índices sueltos de arriba (tienda/created_at) por separado,
+-- que Postgres solo puede aprovechar de a uno a la vez.
+CREATE INDEX IF NOT EXISTS idx_sales_tienda_status_created ON sales(tienda_id, status, created_at);
 
 -- Tienda por defecto para el primer arranque
 INSERT INTO tiendas (name)
