@@ -2,6 +2,7 @@ package com.boutique.pos.service;
 
 import com.boutique.pos.model.Sale;
 import com.boutique.pos.model.Tienda;
+import com.boutique.pos.model.User;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
@@ -12,13 +13,14 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 /**
- * Envío de correos del sistema: ticket de compra en PDF al cliente y reporte de cierre
- * de caja en Excel al administrador de la tienda.
+ * Envío de correos del sistema: ticket de compra en PDF al cliente, reporte de cierre
+ * de caja en Excel al administrador de la tienda, y el link de recuperación de
+ * contraseña.
  *
- * <p>Ambos envíos son asíncronos ({@code @Async}) y "best effort": un fallo de correo
+ * <p>Todos los envíos son asíncronos ({@code @Async}) y "best effort": un fallo de correo
  * (SMTP caído, dirección inválida, etc.) solo se registra en el log y nunca revierte ni
  * bloquea la operación de negocio que lo disparó (la venta ya quedó registrada, el corte
- * ya quedó cerrado).</p>
+ * ya quedó cerrado, el token de recuperación ya quedó generado).</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -86,6 +88,36 @@ public class EmailService {
             log.info("Reporte de cierre de caja de {} ({} corte(s)) enviado a {}", tienda.getName(), cutCount, toEmail);
         } catch (MessagingException | RuntimeException e) {
             log.error("No se pudo enviar el reporte de cierre de {} a {}: {}", tienda.getName(), toEmail, e.getMessage());
+        }
+    }
+
+    // @Async por el mismo motivo que los otros dos envíos: AuthService ya generó el token y
+    // respondió al frontend (con el mismo mensaje genérico, exista o no el correo) antes de
+    // que este correo termine de mandarse.
+    /**
+     * Envía por correo el link para restablecer la contraseña de un usuario.
+     *
+     * @param user usuario que pidió recuperar su contraseña
+     * @param resetLink URL (del frontend) con el token de un solo uso, vigente 30 minutos
+     */
+    @Async
+    public void sendPasswordResetEmail(User user, String resetLink) {
+        try {
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            helper.setTo(user.getEmail());
+            helper.setSubject("Recupera tu contraseña");
+            helper.setText(
+                    "Hola " + user.getName() + ",\n\n" +
+                    "Recibimos una solicitud para restablecer tu contraseña. Este link es válido por 30 minutos:\n\n" +
+                    resetLink + "\n\n" +
+                    "Si tú no pediste esto, puedes ignorar este correo — tu contraseña sigue siendo la misma."
+            );
+
+            mailSender.send(message);
+            log.info("Correo de recuperación de contraseña enviado a {}", user.getEmail());
+        } catch (MessagingException | RuntimeException e) {
+            log.error("No se pudo enviar el correo de recuperación de contraseña a {}: {}", user.getEmail(), e.getMessage());
         }
     }
 }

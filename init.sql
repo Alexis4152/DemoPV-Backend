@@ -217,6 +217,19 @@ CREATE TABLE IF NOT EXISTS cash_cut_schedule (
     updated_by_user_id  BIGINT REFERENCES users(id)
 );
 
+-- Tokens de un solo uso para el flujo de "olvidé mi contraseña" (ver AuthService en el
+-- backend). Vencen a los 30 minutos de generados y se marcan used=true en cuanto se
+-- usan (o al pedirse uno nuevo, que invalida cualquier anterior sin usar del mismo
+-- usuario) — este script solo crea la estructura, Hibernate/la app maneja el contenido.
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id          BIGSERIAL PRIMARY KEY,
+    token       VARCHAR(64) NOT NULL UNIQUE,
+    user_id     BIGINT NOT NULL REFERENCES users(id),
+    expires_at  TIMESTAMP NOT NULL,
+    used        BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_products_category   ON products(category_id);
 CREATE INDEX IF NOT EXISTS idx_products_barcode    ON products(barcode);
@@ -239,6 +252,9 @@ CREATE INDEX IF NOT EXISTS idx_users_tienda        ON users(tienda_id);
 -- rinde mejor que los tres índices sueltos de arriba (tienda/created_at) por separado,
 -- que Postgres solo puede aprovechar de a uno a la vez.
 CREATE INDEX IF NOT EXISTS idx_sales_tienda_status_created ON sales(tienda_id, status, created_at);
+-- usado por invalidateAllForUser (marcar como usados todos los tokens sin usar de un
+-- usuario) cada vez que pide un nuevo link de recuperación.
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user  ON password_reset_tokens(user_id);
 
 -- Tienda por defecto para el primer arranque
 INSERT INTO tiendas (name)
