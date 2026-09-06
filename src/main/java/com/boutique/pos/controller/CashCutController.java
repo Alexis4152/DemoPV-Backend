@@ -20,6 +20,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -47,6 +48,7 @@ public class CashCutController {
      * @param from   fecha/hora inicial del rango (opcional)
      * @param to     fecha/hora final del rango (opcional)
      * @param status estado del corte a filtrar (opcional)
+     * @param userId cajero dueño del corte a filtrar (opcional, ver {@link #cashiers})
      * @param page   número de página (base 0, por defecto 0)
      * @param size   tamaño de página (por defecto 20)
      * @param actor  usuario autenticado; determina el filtro por tienda
@@ -57,13 +59,34 @@ public class CashCutController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
             @RequestParam(required = false) CashCutStatus status,
+            @RequestParam(required = false) Long userId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @AuthenticationPrincipal User actor) {
         Pageable pageable = PageRequest.of(page, size);
-        Page<CashCut> result = cashCutService.findAll(from, to, status, pageable, actor);
+        Page<CashCut> result = cashCutService.findAll(from, to, status, userId, pageable, actor);
         return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
     }
+
+    /**
+     * Cajeros distintos con al menos un corte de caja en la tienda del actor, para poblar
+     * el filtro "Cajero" del historial — a propósito NO reusa {@code UserController} (que
+     * exige la sección {@code USERS}, que un ADMIN podría no tener habilitada): esta lista
+     * solo trae id/nombre y cuelga del mismo permiso que el propio historial.
+     *
+     * @param actor usuario autenticado; determina el filtro por tienda
+     */
+    @GetMapping("/cashiers")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<List<CashierDto>>> cashiers(@AuthenticationPrincipal User actor) {
+        List<CashierDto> result = cashCutService.listCashiers(actor).stream()
+                .map(row -> new CashierDto((Long) row[0], (String) row[1]))
+                .toList();
+        return ResponseEntity.ok(ApiResponse.ok(result, null));
+    }
+
+    /** Fila mínima {@code (id, nombre)} para el filtro "Cajero" — nunca expone el resto del {@link User}. */
+    public record CashierDto(Long id, String name) {}
 
     // usado también por el widget del Dashboard, por eso admite ambas secciones
     /**

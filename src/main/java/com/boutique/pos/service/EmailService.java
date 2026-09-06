@@ -1,5 +1,7 @@
 package com.boutique.pos.service;
 
+import com.boutique.pos.model.Apartado;
+import com.boutique.pos.model.ApartadoItem;
 import com.boutique.pos.model.Sale;
 import com.boutique.pos.model.Tienda;
 import com.boutique.pos.model.User;
@@ -118,6 +120,85 @@ public class EmailService {
             log.info("Correo de recuperación de contraseña enviado a {}", user.getEmail());
         } catch (MessagingException | RuntimeException e) {
             log.error("No se pudo enviar el correo de recuperación de contraseña a {}: {}", user.getEmail(), e.getMessage());
+        }
+        }
+            // Se manda al crearse (PENDING), que es el momento en que alguien tiene que actuar
+    // (revisar y confirmar o rechazar) — no hay otro aviso automático por correo en el
+    // resto del ciclo de vida del apartado.
+    /**
+     * Avisa por correo a un administrador de la tienda que llegó un apartado nuevo
+     * (estado {@code PENDING}) y necesita revisarlo/confirmarlo.
+     *
+     * @param apartado apartado recién creado, con sus {@link ApartadoItem} ya cargados
+     * @param toEmail correo del administrador a notificar
+     */
+    @Async
+    public void sendApartadoRequestEmail(Apartado apartado, String toEmail) {
+        try {
+            StringBuilder body = new StringBuilder();
+            body.append("Nuevo apartado de ").append(apartado.getCustomerName());
+            if (apartado.getCustomerPhone() != null && !apartado.getCustomerPhone().isBlank()) {
+                body.append(" (tel. ").append(apartado.getCustomerPhone()).append(")");
+            }
+            body.append(".\n\nProductos:\n");
+            for (ApartadoItem item : apartado.getItems()) {
+                body.append("- ").append(item.getQuantity().stripTrailingZeros().toPlainString())
+                        .append(" x ").append(item.getProductName()).append("\n");
+            }
+            body.append("\nEntra al sistema para confirmarlo o cancelarlo.");
+
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            helper.setTo(toEmail);
+            helper.setSubject("Nuevo apartado #" + apartado.getId() + " — " + apartado.getTienda().getName());
+            helper.setText(body.toString());
+
+            mailSender.send(message);
+            log.info("Aviso de apartado {} enviado a {}", apartado.getId(), toEmail);
+        } catch (MessagingException | RuntimeException e) {
+            log.error("No se pudo enviar el aviso del apartado {} a {}: {}", apartado.getId(), toEmail, e.getMessage());
+        }
+    }
+
+    // Se manda al cancelarse (PENDING o ACTIVE → CANCELLED), para que el cliente no se
+    // quede esperando sin saber que su apartado no se concretó. Solo se llama si el
+    // cliente dejó correo al solicitarlo (ver ApartadoService#cancel) — sin eso no hay a
+    // quién avisarle, y no es un requisito para poder cancelar.
+    /**
+     * Avisa por correo al cliente que su apartado fue cancelado, con el motivo que el
+     * cajero/admin haya capturado (opcional).
+     *
+     * @param apartado apartado recién cancelado, con sus {@link ApartadoItem} ya cargados
+     * @param reason motivo capturado al cancelar, o {@code null}/vacío si no se dio ninguno
+     * @param toEmail correo del cliente al que se avisa
+     */
+    @Async
+    public void sendApartadoCancelledEmail(Apartado apartado, String reason, String toEmail) {
+        try {
+            StringBuilder body = new StringBuilder();
+            body.append("Hola ").append(apartado.getCustomerName()).append(",\n\n");
+            body.append("Tu apartado #").append(apartado.getId()).append(" en ")
+                    .append(apartado.getTienda().getName()).append(" fue cancelado y no se pudo concretar.\n\n");
+            body.append("Productos:\n");
+            for (ApartadoItem item : apartado.getItems()) {
+                body.append("- ").append(item.getQuantity().stripTrailingZeros().toPlainString())
+                        .append(" x ").append(item.getProductName()).append("\n");
+            }
+            if (reason != null && !reason.isBlank()) {
+                body.append("\nMotivo: ").append(reason).append("\n");
+            }
+            body.append("\nCualquier duda, contáctanos directamente.");
+
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            helper.setTo(toEmail);
+            helper.setSubject("Tu apartado #" + apartado.getId() + " fue cancelado — " + apartado.getTienda().getName());
+            helper.setText(body.toString());
+
+            mailSender.send(message);
+            log.info("Aviso de cancelación del apartado {} enviado a {}", apartado.getId(), toEmail);
+        } catch (MessagingException | RuntimeException e) {
+            log.error("No se pudo enviar el aviso de cancelación del apartado {} a {}: {}", apartado.getId(), toEmail, e.getMessage());
         }
     }
 }

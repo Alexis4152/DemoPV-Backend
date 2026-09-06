@@ -65,6 +65,9 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/uploads/**").permitAll()
+                        // Vitrina pública de apartados (PublicController): sin login, el
+                        // aislamiento entre tiendas lo da el slug de la URL, no una sesión.
+                        .requestMatchers("/api/public/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .userDetailsService(userDetailsService)

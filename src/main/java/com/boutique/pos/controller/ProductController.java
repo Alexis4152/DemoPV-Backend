@@ -5,7 +5,9 @@ import com.boutique.pos.dto.InventoryAdjustRequest;
 import com.boutique.pos.dto.PageResponse;
 import com.boutique.pos.dto.ProductRequest;
 import com.boutique.pos.model.Product;
+import com.boutique.pos.model.ProductImage;
 import com.boutique.pos.model.User;
+import com.boutique.pos.service.ProductImageService;
 import com.boutique.pos.service.ProductService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +18,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -35,6 +38,7 @@ import java.util.List;
 public class ProductController {
 
     private final ProductService productService;
+    private final ProductImageService productImageService;
 
     /**
      * Lista todos los productos de la tienda del usuario autenticado.
@@ -116,6 +120,19 @@ public class ProductController {
     @PreAuthorize("@sectionAccess.check('INVENTORY')")
     public ResponseEntity<ApiResponse<List<Object[]>>> salesStats(@AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(productService.salesStats(actor), null));
+    }
+
+    /**
+     * Piezas actualmente descontadas del stock por apartados {@code ACTIVE} de cada
+     * producto activo, para la columna "Apartados" de Inventario (no incluye {@code
+     * PENDING}: todavía no descuenta stock real). Accesible desde {@code INVENTORY}.
+     *
+     * @param actor usuario autenticado; determina el filtro por tienda
+     */
+    @GetMapping("/reserved-stats")
+    @PreAuthorize("@sectionAccess.check('INVENTORY')")
+    public ResponseEntity<ApiResponse<List<Object[]>>> reservedStats(@AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(productService.reservedStats(actor), null));
     }
 
     /**
@@ -209,5 +226,47 @@ public class ProductController {
     public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id, @AuthenticationPrincipal User actor) {
         productService.deactivate(id, actor);
         return ResponseEntity.ok(ApiResponse.ok(null, "Producto desactivado"));
+    }
+
+    // ── Fotos del producto (galería para la tienda pública de apartados) ───────────────
+    // Todas validan primero que el producto sea de la tienda del actor (productService.findById(id, actor)
+    // ya lanza si no) antes de tocar nada en ProductImageService.
+
+    /** Fotos de un producto, portada primero. Accesible desde {@code INVENTORY}. */
+    @GetMapping("/{id}/images")
+    @PreAuthorize("@sectionAccess.check('INVENTORY')")
+    public ResponseEntity<ApiResponse<List<ProductImage>>> listImages(@PathVariable Long id, @AuthenticationPrincipal User actor) {
+        Product product = productService.findById(id, actor);
+        return ResponseEntity.ok(ApiResponse.ok(productImageService.list(product.getId()), null));
+    }
+
+    /** Sube una foto nueva para el producto. Solo ADMIN (igual que crear/editar el producto). */
+    @PreAuthorize("hasRole('ADMIN')")
+    @PostMapping(value = "/{id}/images", consumes = "multipart/form-data")
+    public ResponseEntity<ApiResponse<ProductImage>> uploadImage(@PathVariable Long id,
+                                                                  @RequestParam("file") MultipartFile file,
+                                                                  @AuthenticationPrincipal User actor) {
+        Product product = productService.findById(id, actor);
+        return ResponseEntity.ok(ApiResponse.ok(productImageService.upload(product, file), "Foto agregada"));
+    }
+
+    /** Marca una foto como portada del producto. Solo ADMIN. */
+    @PreAuthorize("hasRole('ADMIN')")
+    @PutMapping("/{id}/images/{imageId}/primary")
+    public ResponseEntity<ApiResponse<Void>> setPrimaryImage(@PathVariable Long id, @PathVariable Long imageId,
+                                                              @AuthenticationPrincipal User actor) {
+        Product product = productService.findById(id, actor);
+        productImageService.setPrimary(product, imageId);
+        return ResponseEntity.ok(ApiResponse.ok(null, "Portada actualizada"));
+    }
+
+    /** Borra una foto del producto. Solo ADMIN. */
+    @PreAuthorize("hasRole('ADMIN')")
+    @DeleteMapping("/{id}/images/{imageId}")
+    public ResponseEntity<ApiResponse<Void>> deleteImage(@PathVariable Long id, @PathVariable Long imageId,
+                                                          @AuthenticationPrincipal User actor) {
+        Product product = productService.findById(id, actor);
+        productImageService.delete(product, imageId);
+        return ResponseEntity.ok(ApiResponse.ok(null, "Foto eliminada"));
     }
 }

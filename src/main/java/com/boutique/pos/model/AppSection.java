@@ -24,5 +24,8 @@ public enum AppSection {
     /** Administración de usuarios de la tienda. */
     USERS,
     /** Administración de roles y sus permisos por sección. */
-    ROLES
+    ROLES,
+    /** Apartados: revisar, confirmar, completar y cancelar reservas de productos hechas
+     *  desde la tienda pública de apartados. */
+    APARTADOS
 }

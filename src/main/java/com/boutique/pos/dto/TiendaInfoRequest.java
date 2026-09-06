@@ -40,4 +40,19 @@ public class TiendaInfoRequest {
     @DecimalMin(value = "0", message = "El porcentaje máximo de descuento no puede ser negativo")
     @DecimalMax(value = "100", message = "El porcentaje máximo de descuento no puede ser mayor a 100")
     private BigDecimal maxDiscountPercent;
+
+    // ── Apartados (Tienda.apartadosEnabled/publicSlug/maxApartadoDiscount*/defaultApartadoHours
+    // — se editan desde esta misma pantalla). Mismo patrón que los de venta física de arriba.
+    private Boolean apartadosEnabled;
+
+    private String publicSlug;
+
+    @DecimalMin(value = "0", message = "El monto máximo de descuento de apartado no puede ser negativo")
+    private BigDecimal maxApartadoDiscountAmount;
+
+    @DecimalMin(value = "0", message = "El porcentaje máximo de descuento de apartado no puede ser negativo")
+    @DecimalMax(value = "100", message = "El porcentaje máximo de descuento de apartado no puede ser mayor a 100")
+    private BigDecimal maxApartadoDiscountPercent;
+
+    private Integer defaultApartadoHours;
 }

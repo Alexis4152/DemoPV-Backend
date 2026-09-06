@@ -149,4 +149,46 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                    "GROUP BY p.id",
            nativeQuery = true)
     List<Object[]> totalSoldByProduct(@Param("tiendaId") Long tiendaId);
+
+    /**
+     * Piezas actualmente descontadas del stock por apartados {@code ACTIVE} (ya
+     * confirmados por el cajero/admin) de cada producto activo de la tienda, devolviendo
+     * {@code [productId, cantidadApartada]} — incluye TODOS los productos activos, incluso
+     * los que no tienen ningún apartado {@code ACTIVE} (con {@code cantidadApartada = 0}),
+     * mismo motivo del {@code LEFT JOIN} que en {@link #totalSoldByProduct}. Se excluye a
+     * propósito {@code PENDING}: todavía NO descuenta stock (ver {@code ApartadoService}),
+     * así que contarlo aquí mostraría piezas "apartadas" que en realidad siguen completas
+     * en el inventario — confuso para quien lee la columna de Inventario. También se
+     * excluyen {@code COMPLETED}/{@code CANCELLED}/{@code EXPIRED}: esos ya no tienen nada
+     * pendiente de entregar (el primero ya se vendió, los otros ya liberaron el producto).
+     *
+     * <p>{@code tiendaId} nulo indica SUPER_ADMIN viendo todas las tiendas (no se filtra
+     * por tienda).</p>
+     */
+    @Query(value = "SELECT p.id, COALESCE(SUM(CASE WHEN a.status = 'ACTIVE' THEN ai.quantity ELSE 0 END), 0) " +
+                   "FROM products p " +
+                   "LEFT JOIN apartado_items ai ON ai.product_id = p.id " +
+                   "LEFT JOIN apartados a ON a.id = ai.apartado_id " +
+                   "WHERE p.is_active = true AND (:tiendaId IS NULL OR p.tienda_id = :tiendaId) " +
+                   "GROUP BY p.id",
+           nativeQuery = true)
+    List<Object[]> totalReservedByProduct(@Param("tiendaId") Long tiendaId);
+
+    /**
+     * Catálogo público de apartados de una tienda: productos activos, marcados como
+     * {@code isReservable}, con stock disponible, de la tienda dada — usado por {@code
+     * PublicController}, sin autenticación, así que {@code tiendaId} SIEMPRE viene de un
+     * slug ya resuelto (nunca de una sesión). {@code categoryId} y {@code q} (búsqueda por
+     * nombre, coincidencia parcial sin distinguir mayúsculas — mismo patrón LIKE que {@link
+     * #searchActive}) son ambos opcionales y combinables.
+     */
+    @Query("SELECT p FROM Product p WHERE p.isActive = true AND p.isReservable = true AND p.stock > 0 " +
+           "AND p.tienda.id = :tiendaId " +
+           "AND (:categoryId IS NULL OR p.category.id = :categoryId) " +
+           "AND (:q IS NULL OR LOWER(p.name) LIKE LOWER(CONCAT('%',CAST(:q AS string),'%'))) " +
+           "ORDER BY p.name ASC")
+    Page<Product> findPublicCatalog(@Param("tiendaId") Long tiendaId,
+                                     @Param("categoryId") Long categoryId,
+                                     @Param("q") String q,
+                                     Pageable pageable);
 }

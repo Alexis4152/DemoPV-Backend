@@ -1,5 +1,7 @@
 package com.boutique.pos.dto;
 
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.PositiveOrZero;
@@ -33,4 +35,14 @@ public class ProductRequest {
     private Integer minStock;
     private String unit;
     private Long categoryId;
+    // Si debe salir en la tienda pública de apartados (ver PublicController). Opcional:
+    // null se trata igual que false (no exhibirlo) — ver ProductService.
+    private Boolean isReservable;
+
+    // Descuento promocional PÚBLICO para apartados (precio tachado + con descuento en la
+    // tienda pública) — distinto del límite privado que el cajero aplica al confirmar.
+    // Opcional: null/0 = sin oferta. Validado contra el límite de la tienda al guardar.
+    @DecimalMin(value = "0", message = "El descuento de apartado no puede ser negativo")
+    @DecimalMax(value = "100", message = "El descuento de apartado no puede ser mayor a 100")
+    private BigDecimal apartadoDiscountPercent;
 }

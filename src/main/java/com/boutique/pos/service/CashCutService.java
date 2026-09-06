@@ -76,14 +76,26 @@ public class CashCutService {
      * @param to fecha/hora máxima de apertura (inclusiva); si es null se usa un límite
      *           superior muy lejano, por la misma razón
      * @param status filtro por estado (abierto/cerrado), o null
+     * @param userId filtra al cajero dueño del corte, o null para no filtrar
      * @param pageable paginación y orden solicitados
      * @param actor usuario que consulta; acota el resultado a su tienda
      * @return página de cortes que cumplen los filtros
      */
-    public Page<CashCut> findAll(LocalDateTime from, LocalDateTime to, CashCutStatus status, Pageable pageable, User actor) {
+    public Page<CashCut> findAll(LocalDateTime from, LocalDateTime to, CashCutStatus status, Long userId, Pageable pageable, User actor) {
         LocalDateTime effectiveFrom = from != null ? from : MIN_DATE;
         LocalDateTime effectiveTo = to != null ? to : MAX_DATE;
-        return cashCutRepository.search(tenantScope.scopeId(actor), effectiveFrom, effectiveTo, status, pageable);
+        return cashCutRepository.search(tenantScope.scopeId(actor), effectiveFrom, effectiveTo, status, userId, pageable);
+    }
+
+    /**
+     * Cajeros distintos con al menos un corte de caja en la tienda del actor, para poblar
+     * el filtro "Cajero" del historial (ver {@link CashCutRepository#findDistinctCashiers}).
+     *
+     * @param actor usuario que consulta; acota el resultado a su tienda
+     * @return lista de {@code [id, nombre]} de cada cajero, ordenada por nombre
+     */
+    public List<Object[]> listCashiers(User actor) {
+        return cashCutRepository.findDistinctCashiers(tenantScope.scopeId(actor));
     }
 
     // El corte propio del día de hoy, abierto o ya cerrado — a diferencia de findOpen(),

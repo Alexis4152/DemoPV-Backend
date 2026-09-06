@@ -295,6 +295,107 @@ public class SaleService {
     }
 
     /**
+     * Genera la {@link Sale} real de un {@link Apartado} {@code ACTIVE} que el cliente vino
+     * a recoger y pagar — llamado por {@code ApartadoService#complete}, nunca directamente
+     * desde un controller.
+     * <p>
+     * A diferencia de {@link #create}, NO valida ni descuenta stock ni registra {@link
+     * InventoryMovement} por producto: el stock del apartado ya se descontó al
+     * CONFIRMARLO ({@code ApartadoService#confirm}), así que volver a descontarlo aquí
+     * sería descontarlo dos veces. Los precios/cantidades/descuentos de cada línea ya
+     * quedaron fijos desde el apartado (el descuento, si lo hubo, ya se validó contra el
+     * límite de apartados al confirmar — no el de venta física), así que aquí solo se
+     * copian a {@link SaleItem} tal cual.
+     * <p>
+     * Igual que en {@link #create}, en efectivo es obligatorio {@code amountReceived} (al
+     * menos el total) y el cambio siempre lo calcula el servidor.
+     *
+     * @param apartado apartado {@code ACTIVE} que se está completando, con sus {@link
+     *                 com.boutique.pos.model.ApartadoItem} ya cargados
+     * @param paymentMethod forma de pago con la que el cliente liquida al recogerlo
+     * @param amountReceived con cuánto pagó el cliente; obligatorio si {@code paymentMethod == CASH}
+     * @param customerEmailOverride correo capturado por el cajero al completar (opcional);
+     *                 si viene con algo, se usa para esta venta en vez del correo que el
+     *                 cliente haya dejado al solicitar el apartado (que puede no existir) —
+     *                 no modifica el registro del apartado, solo el de la venta generada
+     * @param actor cajero/admin que completa el apartado; debe tener un corte de caja
+     *              propio abierto, igual que en cualquier venta; queda registrado como
+     *              {@code user} de la venta
+     * @return la venta ya registrada y persistida, con {@code notes} indicando de qué
+     *         apartado proviene
+     * @throws IllegalStateException si el actor no tiene un corte abierto, o si es en
+     *         efectivo y el monto recibido falta o es menor al total
+     */
+    @Transactional
+    public Sale completeFromApartado(Apartado apartado, PaymentMethod paymentMethod, BigDecimal amountReceived, String customerEmailOverride, User actor) {
+        CashCut openCut = cashCutRepository.findFirstByUserIdAndStatus(actor.getId(), CashCutStatus.OPEN)
+                .orElseThrow(() -> new IllegalStateException("Debes abrir un corte de caja antes de completar un apartado"));
+
+        String effectiveEmail = (customerEmailOverride != null && !customerEmailOverride.isBlank())
+                ? customerEmailOverride : apartado.getCustomerEmail();
+
+        Sale sale = new Sale();
+        sale.setUser(actor);
+        sale.setCashCut(openCut);
+        sale.setCustomerName(apartado.getCustomerName());
+        sale.setCustomerEmail(effectiveEmail);
+        sale.setPaymentMethod(paymentMethod);
+        sale.setStatus(SaleStatus.COMPLETED);
+        sale.setNotes("Generada desde el apartado #" + apartado.getId());
+        sale.setTienda(apartado.getTienda());
+
+        List<SaleItem> items = new ArrayList<>();
+        BigDecimal grossSubtotal = BigDecimal.ZERO;
+        BigDecimal itemDiscountTotal = BigDecimal.ZERO;
+
+        for (ApartadoItem ai : apartado.getItems()) {
+            SaleItem item = new SaleItem();
+            item.setSale(sale);
+            item.setProduct(ai.getProduct());
+            item.setProductName(ai.getProductName());
+            item.setQuantity(ai.getQuantity());
+            item.setUnitPrice(ai.getUnitPrice());
+            item.setDiscount(ai.getDiscount());
+            item.setSubtotal(ai.getSubtotal());
+            items.add(item);
+
+            grossSubtotal = grossSubtotal.add(ai.getUnitPrice().multiply(ai.getQuantity()));
+            itemDiscountTotal = itemDiscountTotal.add(ai.getDiscount());
+        }
+
+        BigDecimal total = grossSubtotal.subtract(itemDiscountTotal);
+
+        BigDecimal changeGiven = null;
+        if (paymentMethod == PaymentMethod.CASH) {
+            if (amountReceived == null) {
+                throw new IllegalStateException("Debes indicar con cuánto pagó el cliente para cobrar en efectivo");
+            }
+            if (amountReceived.compareTo(total) < 0) {
+                throw new IllegalStateException("El monto recibido es menor al total del apartado");
+            }
+            changeGiven = amountReceived.subtract(total);
+        } else {
+            amountReceived = null;
+        }
+
+        sale.setSubtotal(grossSubtotal);
+        sale.setDiscount(itemDiscountTotal);
+        sale.setTax(BigDecimal.ZERO);
+        sale.setTotal(total);
+        sale.setAmountReceived(amountReceived);
+        sale.setChangeGiven(changeGiven);
+        sale.setItems(items);
+
+        Sale saved = saleRepository.save(sale);
+
+        if (effectiveEmail != null && !effectiveEmail.isBlank()) {
+            emailService.sendTicketEmail(saved, effectiveEmail);
+        }
+
+        return saved;
+    }
+
+    /**
      * Verifica que el descuento de una línea no exceda ninguno de los límites que el ADMIN
      * haya fijado para la tienda en "Datos de la tienda" ({@link Tienda#getMaxDiscountAmount()}/
      * {@link Tienda#getMaxDiscountPercent()}). Ambos son opcionales e independientes: si

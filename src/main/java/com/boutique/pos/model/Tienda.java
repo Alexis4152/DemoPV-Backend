@@ -60,6 +60,36 @@ public class Tienda {
     @Column(precision = 5, scale = 2)
     private BigDecimal maxDiscountPercent;
 
+    // ── Apartados (reservas) ─────────────────────────────────────────────────
+    // Mismo par que arriba (maxDiscountAmount/Percent) pero para apartados, a propósito
+    // separado: una tienda puede querer condiciones de descuento distintas para incentivar
+    // apartados que las que usa en venta física. Igual de opcionales/independientes.
+    @Column(precision = 12, scale = 2)
+    private BigDecimal maxApartadoDiscountAmount;
+
+    @Column(precision = 5, scale = 2)
+    private BigDecimal maxApartadoDiscountPercent;
+
+    // Apagado por default a propósito: una tienda recién creada, o que nunca configuró
+    // esto, no debe exponer su catálogo públicamente sin que el ADMIN lo decida.
+    @Column(nullable = false)
+    @Builder.Default
+    private Boolean apartadosEnabled = false;
+
+    // Identificador único y amigable en la URL pública (ej. "/apartar/mi-tienda"), editable
+    // por el ADMIN en "Datos de la tienda". Es lo único que distingue de qué tienda es el
+    // catálogo cuando distintas tiendas de distintos dueños comparten el mismo frontend —
+    // no hay login de cliente, todo se resuelve por este slug (ver PublicController).
+    @Column(unique = true, length = 80)
+    private String publicSlug;
+
+    // Cuántas horas dura un apartado a partir de que se CONFIRMA (no desde que se solicita
+    // — mientras está PENDING no corre ningún conteo). El cajero puede capturar un valor
+    // distinto al confirmar uno en particular; este es solo el default sugerido.
+    @Column(nullable = false)
+    @Builder.Default
+    private Integer defaultApartadoHours = 24;
+
     // LAZY: evita el ciclo User→Tienda(EAGER)→createdBy(User)→Tienda→... (User carga su Tienda en EAGER).
     // JsonIgnoreProperties evita además que, al serializar, Jackson expanda role/tienda de
     // este User anidado — sin esto, Tienda.updatedBy→role→tienda→updatedBy→... es un ciclo

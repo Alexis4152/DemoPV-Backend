@@ -6,6 +6,7 @@ import com.boutique.pos.model.MovementType;
 import com.boutique.pos.model.Category;
 import com.boutique.pos.model.InventoryMovement;
 import com.boutique.pos.model.Product;
+import com.boutique.pos.model.Tienda;
 import com.boutique.pos.model.User;
 import com.boutique.pos.repository.InventoryMovementRepository;
 import com.boutique.pos.repository.ProductRepository;
@@ -16,6 +17,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.List;
 
 /**
@@ -121,6 +124,19 @@ public class ProductService {
     }
 
     /**
+     * Piezas actualmente descontadas del stock por apartados {@code ACTIVE} de cada
+     * producto activo de la tienda del actor (ver {@link
+     * ProductRepository#totalReservedByProduct}), para la columna "Apartados" de
+     * Inventario. No incluye {@code PENDING}: todavía no descuenta stock real.
+     *
+     * @param actor usuario que consulta; acota el resultado a su tienda
+     * @return filas crudas del query (id de producto, piezas apartadas)
+     */
+    public List<Object[]> reservedStats(User actor) {
+        return productRepository.totalReservedByProduct(tenantScope.scopeId(actor));
+    }
+
+    /**
      * Búsqueda paginada de productos activos para Inventario: mismos filtros que {@link
      * #search} (texto, categoría, stock bajo) más un filtro opcional por historial de
      * ventas. A diferencia de {@link #findAll}, pagina en el servidor en vez de traer el
@@ -174,6 +190,9 @@ public class ProductService {
         p.setCategory(cat);
         p.setTienda(actor.getTienda());
         p.setIsActive(true);
+        p.setIsReservable(Boolean.TRUE.equals(req.getIsReservable()));
+        validateApartadoDiscountPercent(req.getApartadoDiscountPercent(), req.getPrice(), actor.getTienda());
+        p.setApartadoDiscountPercent(req.getApartadoDiscountPercent());
         p.setCreatedBy(actor);
         Product saved = productRepository.save(p);
 
@@ -210,6 +229,9 @@ public class ProductService {
         p.setMinStock(req.getMinStock() != null ? req.getMinStock() : 5);
         p.setUnit(req.getUnit() != null ? req.getUnit() : "pieza");
         p.setCategory(cat);
+        if (req.getIsReservable() != null) p.setIsReservable(req.getIsReservable());
+        validateApartadoDiscountPercent(req.getApartadoDiscountPercent(), req.getPrice(), p.getTienda());
+        p.setApartadoDiscountPercent(req.getApartadoDiscountPercent());
         p.setUpdatedBy(actor);
         return productRepository.save(p);
     }
@@ -281,6 +303,43 @@ public class ProductService {
         Product existing = productRepository.findByBarcodeExact(barcode, tiendaId).orElse(null);
         if (existing != null && !existing.getId().equals(excludeProductId)) {
             throw new IllegalStateException("Ya existe un producto con ese código de barras: " + existing.getName());
+        }
+    }
+
+    /**
+     * Valida el descuento promocional PÚBLICO de apartados de un producto ({@code
+     * Product.apartadoDiscountPercent}) contra el mismo límite que la tienda fijó para que
+     * el cajero aplique en privado al confirmar ({@link Tienda#getMaxApartadoDiscountAmount()}/
+     * {@link Tienda#getMaxApartadoDiscountPercent()}) — es OTRA vía de aplicar descuento a
+     * un apartado, así que debe respetar el mismo tope, no uno aparte que lo esquive.
+     * <p>
+     * Sin descuento (null o 0) no valida nada. Si la tienda no configuró ningún límite,
+     * los descuentos de apartado están deshabilitados por completo (mismo criterio que
+     * {@code ApartadoService.validateApartadoDiscountLimit}).
+     *
+     * @param percent porcentaje de descuento a validar (0-100), o null/0 para "sin oferta"
+     * @param price precio del producto, usado para traducir el límite en monto a un
+     *              porcentaje comparable
+     * @param tienda tienda del producto; si es null (no debería pasar en la práctica) no valida
+     * @throws IllegalStateException si excede el límite configurado, o si no hay ninguno
+     */
+    private void validateApartadoDiscountPercent(BigDecimal percent, BigDecimal price, Tienda tienda) {
+        if (percent == null || percent.signum() <= 0 || tienda == null) return;
+
+        if (tienda.getMaxApartadoDiscountAmount() == null && tienda.getMaxApartadoDiscountPercent() == null) {
+            throw new IllegalStateException("Los descuentos de apartado están deshabilitados: configura un límite "
+                    + "en \"Datos de la tienda\" antes de poder ofrecer un descuento público.");
+        }
+        if (tienda.getMaxApartadoDiscountPercent() != null && percent.compareTo(tienda.getMaxApartadoDiscountPercent()) > 0) {
+            throw new IllegalStateException("Ese porcentaje de descuento no está permitido, el máximo configurado es "
+                    + tienda.getMaxApartadoDiscountPercent() + "%");
+        }
+        if (tienda.getMaxApartadoDiscountAmount() != null && price != null && price.signum() > 0) {
+            BigDecimal discountAmount = price.multiply(percent).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+            if (discountAmount.compareTo(tienda.getMaxApartadoDiscountAmount()) > 0) {
+                throw new IllegalStateException("Ese descuento no está permitido, equivale a más del monto máximo "
+                        + "configurado (" + tienda.getMaxApartadoDiscountAmount() + ")");
+            }
         }
     }
 

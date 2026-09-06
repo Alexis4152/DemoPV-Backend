@@ -76,6 +76,13 @@ public class TiendaInfoService {
         tienda.setName(req.getName());
         tienda.setMaxDiscountAmount(req.getMaxDiscountAmount());
         tienda.setMaxDiscountPercent(req.getMaxDiscountPercent());
+
+        tienda.setApartadosEnabled(Boolean.TRUE.equals(req.getApartadosEnabled()));
+        tienda.setMaxApartadoDiscountAmount(req.getMaxApartadoDiscountAmount());
+        tienda.setMaxApartadoDiscountPercent(req.getMaxApartadoDiscountPercent());
+        tienda.setDefaultApartadoHours(req.getDefaultApartadoHours() != null ? req.getDefaultApartadoHours() : 24);
+        updateSlug(tienda, req.getPublicSlug());
+
         tienda.setUpdatedBy(actor);
         tiendaRepository.save(tienda);
 
@@ -104,6 +111,40 @@ public class TiendaInfoService {
     private Tienda findTienda(Long tiendaId) {
         return tiendaRepository.findById(tiendaId)
                 .orElseThrow(() -> new IllegalArgumentException("Tienda no encontrada: " + tiendaId));
+    }
+
+    /**
+     * Resuelve y valida el slug público de la tienda ({@code Tienda.publicSlug}, la URL
+     * {@code /apartar/{slug}}). Si el admin no capturó uno, se autogenera a partir del
+     * nombre de la tienda (o se conserva el que ya tenía) — nunca se deja vacío, para que
+     * habilitar apartados no dependa de que alguien piense en un identificador primero.
+     * Si lo escrito choca con el de otra tienda, se rechaza con un mensaje claro en vez de
+     * mutarlo en silencio (el admin lo comparte como link, debe ser exactamente lo que
+     * decidió).
+     *
+     * @throws IllegalStateException si el slug resultante ya está en uso por otra tienda
+     */
+    private void updateSlug(Tienda tienda, String requestedSlug) {
+        String candidate = (requestedSlug != null && !requestedSlug.isBlank())
+                ? slugify(requestedSlug)
+                : (tienda.getPublicSlug() != null && !tienda.getPublicSlug().isBlank()
+                        ? tienda.getPublicSlug()
+                        : slugify(tienda.getName()));
+        if (candidate.isBlank()) candidate = "tienda-" + tienda.getId();
+
+        if (tiendaRepository.existsByPublicSlugIgnoreCaseAndIdNot(candidate, tienda.getId())) {
+            throw new IllegalStateException("El identificador de tienda \"" + candidate + "\" ya está en uso, elige otro.");
+        }
+        tienda.setPublicSlug(candidate);
+    }
+
+    /** Normaliza un texto a un slug de URL: minúsculas, sin acentos, solo letras/números separados por guiones. */
+    private String slugify(String input) {
+        String withoutAccents = java.text.Normalizer.normalize(input, java.text.Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "");
+        return withoutAccents.toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", "-")
+                .replaceAll("^-+|-+$", "");
     }
 
     private void checkAccess(Long tiendaId, User actor) {

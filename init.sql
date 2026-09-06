@@ -14,6 +14,14 @@ CREATE TABLE IF NOT EXISTS tiendas (
     logo_path           VARCHAR(255),
     deleted_at          TIMESTAMP,
     updated_at          TIMESTAMP,
+    max_discount_amount         NUMERIC(12,2),
+    max_discount_percent        NUMERIC(5,2),
+    -- Apartados (reservas) — ver Tienda.java para el detalle de cada campo.
+    max_apartado_discount_amount   NUMERIC(12,2),
+    max_apartado_discount_percent  NUMERIC(5,2),
+    apartados_enabled              BOOLEAN NOT NULL DEFAULT FALSE,
+    public_slug                    VARCHAR(80) UNIQUE,
+    default_apartado_hours         INTEGER NOT NULL DEFAULT 24,
     -- sin FK aquí: sería circular con "users" (users.tienda_id -> tiendas, y estas tres
     -- columnas -> users). Hibernate agrega las 3 foreign keys al arrancar la app, igual
     -- que con users.role_id más abajo.
@@ -66,7 +74,7 @@ CREATE TABLE IF NOT EXISTS role_sections (
     role_id     BIGINT NOT NULL REFERENCES roles(id),
     section     VARCHAR(20) NOT NULL
                     CHECK (section IN ('DASHBOARD','POS','INVENTORY','SALES','CASH_CUTS',
-                                        'REPORTS','USERS','ROLES')),
+                                        'REPORTS','USERS','ROLES','APARTADOS')),
     PRIMARY KEY (role_id, section)
 );
 
@@ -97,6 +105,11 @@ CREATE TABLE IF NOT EXISTS products (
     category_id         BIGINT REFERENCES categories(id) ON DELETE SET NULL,
     tienda_id           BIGINT REFERENCES tiendas(id),
     is_active           BOOLEAN NOT NULL DEFAULT TRUE,
+    -- Si el ADMIN lo marcó para exhibirse en la tienda pública de apartados.
+    is_reservable       BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Descuento promocional PÚBLICO de apartado (se le muestra al cliente, precio tachado
+    -- + con descuento) — distinto del límite privado que el cajero aplica al confirmar.
+    apartado_discount_percent NUMERIC(5,2),
     created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMP NOT NULL DEFAULT NOW(),
     deleted_at          TIMESTAMP,
@@ -228,6 +241,59 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
     expires_at  TIMESTAMP NOT NULL,
     used        BOOLEAN NOT NULL DEFAULT FALSE,
     created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+-- Fotos de un producto (galería), pensadas sobre todo para exhibirlo en la tienda pública
+-- de apartados. Un producto puede tener varias; is_primary marca la portada.
+CREATE TABLE IF NOT EXISTS product_images (
+    id              BIGSERIAL PRIMARY KEY,
+    product_id      BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    path            VARCHAR(255) NOT NULL,
+    is_primary      BOOLEAN NOT NULL DEFAULT FALSE,
+    sort_order      INTEGER NOT NULL DEFAULT 0,
+    created_at      TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Apartado (reserva/"layaway") de uno o más productos, solicitado desde la tienda pública
+-- de una tienda (sin login del cliente) y gestionado por su cajero/admin. Ver Apartado.java
+-- para el ciclo de estados completo (PENDING -> ACTIVE -> COMPLETED/CANCELLED/EXPIRED).
+CREATE TABLE IF NOT EXISTS apartados (
+    id                      BIGSERIAL PRIMARY KEY,
+    tienda_id               BIGINT NOT NULL REFERENCES tiendas(id),
+    customer_name           VARCHAR(150) NOT NULL,
+    customer_phone          VARCHAR(30),
+    customer_email          VARCHAR(150),
+    notes                   TEXT,
+    status                  VARCHAR(15) NOT NULL DEFAULT 'PENDING'
+                                CHECK (status IN ('PENDING','ACTIVE','COMPLETED','CANCELLED','EXPIRED')),
+    subtotal                NUMERIC(12,2) NOT NULL DEFAULT 0,
+    discount                NUMERIC(12,2) NOT NULL DEFAULT 0,
+    total                   NUMERIC(12,2) NOT NULL DEFAULT 0,
+    duration_hours          INTEGER,
+    requested_at            TIMESTAMP NOT NULL DEFAULT NOW(),
+    confirmed_at            TIMESTAMP,
+    expires_at              TIMESTAMP,
+    confirmed_by_user_id    BIGINT REFERENCES users(id),
+    completed_by_user_id    BIGINT REFERENCES users(id),
+    cancelled_by_user_id    BIGINT REFERENCES users(id),
+    cancelled_at            TIMESTAMP,
+    -- Motivo que el cajero/admin escribió al cancelar (opcional) — si el cliente dejó
+    -- correo al solicitar el apartado, es lo que se le manda explicándole por qué no se
+    -- pudo concretar. Ver EmailService#sendApartadoCancelledEmail.
+    cancel_reason           TEXT,
+    -- Id de la venta generada al completarse (recoger y pagar) — sin FK: Sale vive en su
+    -- propia tabla y no necesitamos integridad referencial estricta aquí, solo el dato.
+    sale_id                 BIGINT
+);
+
+CREATE TABLE IF NOT EXISTS apartado_items (
+    id              BIGSERIAL PRIMARY KEY,
+    apartado_id     BIGINT NOT NULL REFERENCES apartados(id) ON DELETE CASCADE,
+    product_id      BIGINT REFERENCES products(id) ON DELETE SET NULL,
+    product_name    VARCHAR(200) NOT NULL,
+    quantity        NUMERIC(10,3) NOT NULL DEFAULT 1,
+    unit_price      NUMERIC(12,2) NOT NULL DEFAULT 0,
+    discount        NUMERIC(12,2) NOT NULL DEFAULT 0,
+    subtotal        NUMERIC(12,2) NOT NULL DEFAULT 0
 );
 
 -- Indexes
@@ -255,6 +321,13 @@ CREATE INDEX IF NOT EXISTS idx_sales_tienda_status_created ON sales(tienda_id, s
 -- usado por invalidateAllForUser (marcar como usados todos los tokens sin usar de un
 -- usuario) cada vez que pide un nuevo link de recuperación.
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user  ON password_reset_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_product_images_product  ON product_images(product_id);
+CREATE INDEX IF NOT EXISTS idx_products_reservable     ON products(tienda_id, is_reservable) WHERE is_reservable = TRUE;
+CREATE INDEX IF NOT EXISTS idx_apartados_tienda_status ON apartados(tienda_id, status);
+-- Usado por ApartadoExpiryJob para encontrar los ACTIVE vencidos sin recorrer toda la tabla.
+CREATE INDEX IF NOT EXISTS idx_apartados_status_expires ON apartados(status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_apartado_items_apartado ON apartado_items(apartado_id);
+CREATE INDEX IF NOT EXISTS idx_apartado_items_product  ON apartado_items(product_id);
 
 -- Tienda por defecto para el primer arranque
 INSERT INTO tiendas (name)
