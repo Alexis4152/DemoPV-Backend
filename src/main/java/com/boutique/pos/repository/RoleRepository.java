@@ -1,6 +1,8 @@
 package com.boutique.pos.repository;
 
 import com.boutique.pos.model.Role;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.List;
 import java.util.Optional;
@@ -37,4 +39,12 @@ public interface RoleRepository extends JpaRepository<Role, Long> {
     List<Role> findAllByIsActiveTrueOrderByNameAsc();
     /** Lista los roles activos (no eliminados) de una tienda, ordenados alfabéticamente. */
     List<Role> findAllByTiendaIdAndIsActiveTrueOrderByNameAsc(Long tiendaId);
+
+    // mismos filtros que las dos anteriores, pero paginados — usados por la pantalla de
+    // administración de Roles (a diferencia de las de arriba, que alimentan selectores que
+    // necesitan el catálogo completo, ej. el filtro/formulario de Usuarios).
+    /** Página de roles activos (no eliminados) del sistema, ordenados alfabéticamente. */
+    Page<Role> findAllByIsActiveTrueOrderByNameAsc(Pageable pageable);
+    /** Página de roles activos (no eliminados) de una tienda, ordenados alfabéticamente. */
+    Page<Role> findAllByTiendaIdAndIsActiveTrueOrderByNameAsc(Long tiendaId, Pageable pageable);
 }

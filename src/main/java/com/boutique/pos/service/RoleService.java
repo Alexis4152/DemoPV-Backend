@@ -9,6 +9,8 @@ import com.boutique.pos.repository.RoleRepository;
 import com.boutique.pos.repository.UserRepository;
 import com.boutique.pos.security.TenantScope;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import java.util.EnumSet;
@@ -43,6 +45,20 @@ public class RoleService {
     public List<Role> findAll(User actor) {
         Long scope = tenantScope.scopeId(actor);
         return scope == null ? roleRepository.findAllByIsActiveTrueOrderByNameAsc() : roleRepository.findAllByTiendaIdAndIsActiveTrueOrderByNameAsc(scope);
+    }
+
+    /**
+     * Igual que {@link #findAll(User)} pero paginado, para la pantalla de administración de
+     * Roles (a diferencia del método anterior, pensado para selectores que necesitan el
+     * catálogo completo, ej. el filtro/formulario de Usuarios).
+     *
+     * @param actor usuario que realiza la consulta
+     * @param pageable página y tamaño solicitados
+     * @return página de roles activos dentro del alcance del actor, ordenados por nombre
+     */
+    public Page<Role> findAll(User actor, Pageable pageable) {
+        Long scope = tenantScope.scopeId(actor);
+        return scope == null ? roleRepository.findAllByIsActiveTrueOrderByNameAsc(pageable) : roleRepository.findAllByTiendaIdAndIsActiveTrueOrderByNameAsc(scope, pageable);
     }
 
     /**

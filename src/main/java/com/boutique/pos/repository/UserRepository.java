@@ -2,6 +2,8 @@ package com.boutique.pos.repository;
 
 import com.boutique.pos.model.Role;
 import com.boutique.pos.model.User;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -48,13 +50,14 @@ public interface UserRepository extends JpaRepository<User, Long> {
            "AND (:roleId IS NULL OR u.role.id = :roleId) " +
            "AND (:isActive IS NULL OR u.isActive = :isActive) " +
            "ORDER BY u.name ASC")
-    List<User> search(@Param("tiendaId") Long tiendaId,
+    Page<User> search(@Param("tiendaId") Long tiendaId,
                        @Param("from") LocalDateTime from,
                        @Param("to") LocalDateTime to,
                        @Param("name") String name,
                        @Param("email") String email,
                        @Param("roleId") Long roleId,
-                       @Param("isActive") Boolean isActive);
+                       @Param("isActive") Boolean isActive,
+                       Pageable pageable);
 
     // para avisarle por correo al/los admin(es) de una tienda cuando se autocierra un corte
     /** Lista los usuarios activos con rol ADMIN de una tienda; usado para notificarles por correo cuando el job autocierra un corte. */

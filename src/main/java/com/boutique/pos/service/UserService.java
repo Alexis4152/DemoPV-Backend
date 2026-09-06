@@ -7,6 +7,8 @@ import com.boutique.pos.repository.TiendaRepository;
 import com.boutique.pos.repository.UserRepository;
 import com.boutique.pos.security.TenantScope;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -50,13 +52,14 @@ public class UserService {
      * @param roleId filtro por id de rol, o null para no filtrar
      * @param isActive filtro por estado activo/inactivo, o null para no filtrar
      * @param actor usuario que realiza la consulta; acota el resultado a su tienda
-     * @return usuarios que cumplen los filtros dentro del alcance del actor
+     * @param pageable página y tamaño solicitados
+     * @return página de usuarios que cumplen los filtros dentro del alcance del actor
      */
-    public List<User> findAll(LocalDateTime from, LocalDateTime to, String name, String email,
-                               Long roleId, Boolean isActive, User actor) {
+    public Page<User> findAll(LocalDateTime from, LocalDateTime to, String name, String email,
+                               Long roleId, Boolean isActive, User actor, Pageable pageable) {
         LocalDateTime effectiveFrom = from != null ? from : MIN_DATE;
         LocalDateTime effectiveTo = to != null ? to : MAX_DATE;
-        return userRepository.search(tenantScope.scopeId(actor), effectiveFrom, effectiveTo, name, email, roleId, isActive);
+        return userRepository.search(tenantScope.scopeId(actor), effectiveFrom, effectiveTo, name, email, roleId, isActive, pageable);
     }
 
     /**

@@ -1,11 +1,15 @@
 package com.boutique.pos.controller;
 
 import com.boutique.pos.dto.ApiResponse;
+import com.boutique.pos.dto.PageResponse;
 import com.boutique.pos.dto.UserRequest;
 import com.boutique.pos.model.User;
 import com.boutique.pos.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -13,7 +17,6 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
-import java.util.List;
 
 /**
  * Controlador de usuarios, expuesto bajo {@code /api/users}.
@@ -41,18 +44,24 @@ public class UserController {
      * @param email    email a filtrar (opcional)
      * @param roleId   id de rol a filtrar (opcional)
      * @param isActive filtra por usuarios activos/inactivos (opcional)
+     * @param page     número de página, 0-based (default 0)
+     * @param size     tamaño de página (default 20)
      * @param actor    usuario autenticado; determina el filtro por tienda
      */
     @GetMapping
-    public ResponseEntity<ApiResponse<List<User>>> list(
+    public ResponseEntity<ApiResponse<PageResponse<User>>> list(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
             @RequestParam(required = false) String name,
             @RequestParam(required = false) String email,
             @RequestParam(required = false) Long roleId,
             @RequestParam(required = false) Boolean isActive,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
             @AuthenticationPrincipal User actor) {
-        return ResponseEntity.ok(ApiResponse.ok(userService.findAll(from, to, name, email, roleId, isActive, actor), null));
+        Pageable pageable = PageRequest.of(page, size);
+        Page<User> result = userService.findAll(from, to, name, email, roleId, isActive, actor, pageable);
+        return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
     }
 
     /**
