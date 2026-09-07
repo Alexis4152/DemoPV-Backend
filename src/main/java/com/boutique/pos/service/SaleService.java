@@ -139,6 +139,13 @@ public class SaleService {
         CashCut openCut = cashCutRepository.findFirstByUserIdAndStatus(actor.getId(), CashCutStatus.OPEN)
                 .orElseThrow(() -> new IllegalStateException("Debes abrir un corte de caja antes de registrar ventas"));
 
+        // La tienda de la venta es la del corte de caja abierto, no la del actor
+        // directamente: para un SUPER_ADMIN (sin tienda propia) es la única fuente
+        // confiable de "en qué tienda está actuando ahora mismo" — el corte ya quedó
+        // fijado a esa tienda al abrirse (ver CashCutService#open), así que no puede
+        // cambiar a media sesión aunque el SUPER_ADMIN cambie de tienda actuante después.
+        Tienda tienda = openCut.getTienda();
+
         Sale sale = new Sale();
         sale.setUser(actor);
         sale.setCashCut(openCut);
@@ -147,7 +154,7 @@ public class SaleService {
         sale.setPaymentMethod(req.getPaymentMethod());
         sale.setStatus(SaleStatus.COMPLETED);
         sale.setNotes(req.getNotes());
-        sale.setTienda(actor.getTienda());
+        sale.setTienda(tienda);
 
         List<SaleItem> items = new ArrayList<>();
         // grossSubtotal: suma de unitPrice*qty de cada línea, SIN restar ningún descuento —
@@ -173,7 +180,7 @@ public class SaleService {
             BigDecimal unitPrice = product.getPrice();
             BigDecimal discount = ir.getDiscount() != null ? ir.getDiscount() : BigDecimal.ZERO;
             BigDecimal lineGross = unitPrice.multiply(qty);
-            validateDiscountLimit(discount, lineGross, product.getName(), actor.getTienda());
+            validateDiscountLimit(discount, lineGross, product.getName(), tienda);
             BigDecimal itemSubtotal = lineGross.subtract(discount);
 
             SaleItem item = new SaleItem();

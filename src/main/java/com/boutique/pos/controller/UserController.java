@@ -24,9 +24,10 @@ import java.time.LocalDateTime;
  * Administra los usuarios (cajeros, vendedores, administradores, etc.) de la
  * tienda del usuario autenticado, incluyendo su asignación de rol. Todos los métodos
  * requieren acceso a la sección {@code USERS} (el {@code @PreAuthorize} de la clase);
- * dar de alta, editar y desactivar usuarios además exigen el rol {@code ADMIN} (ver el
- * {@code @PreAuthorize} de cada uno de esos tres métodos, que repite la sección porque un
- * {@code @PreAuthorize} a nivel de método reemplaza al de la clase en vez de sumarse).
+ * dar de alta, editar y desactivar usuarios además exigen el rol {@code ADMIN} o {@code
+ * SUPER_ADMIN} (ver el {@code @PreAuthorize} de cada uno de esos tres métodos, que repite
+ * la sección porque un {@code @PreAuthorize} a nivel de método reemplaza al de la clase en
+ * vez de sumarse).
  */
 @RestController
 @RequestMapping("/api/users")
@@ -84,11 +85,12 @@ public class UserController {
      * @param req   datos del usuario a crear (incluye el rol asignado)
      * @param actor usuario autenticado que realiza la creación
      */
-    // hasRole('ADMIN') explícito aquí (además del @sectionAccess de la clase, que un
+    // hasAnyRole explícito aquí (además del @sectionAccess de la clase, que un
     // @PreAuthorize a nivel de método REEMPLAZA en vez de sumar) porque cualquiera con la
-    // sección USERS habilitada podía crear/editar/desactivar usuarios — debe ser solo ADMIN.
+    // sección USERS habilitada podía crear/editar/desactivar usuarios — debe ser solo
+    // ADMIN/SUPER_ADMIN.
     @PostMapping
-    @PreAuthorize("@sectionAccess.check('USERS') and hasRole('ADMIN')")
+    @PreAuthorize("@sectionAccess.check('USERS') and hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<ApiResponse<User>> create(@Valid @RequestBody UserRequest req, @AuthenticationPrincipal User actor) {
         // Se checa ANTES de crear/reactivar (que es quien de verdad decide y ejecuta) solo
         // para poder avisarle al admin qué pasó de verdad — ver UserService#create.
@@ -108,7 +110,7 @@ public class UserController {
      * @param actor usuario autenticado que realiza la actualización
      */
     @PutMapping("/{id}")
-    @PreAuthorize("@sectionAccess.check('USERS') and hasRole('ADMIN')")
+    @PreAuthorize("@sectionAccess.check('USERS') and hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<ApiResponse<User>> update(@PathVariable Long id,
                                                      @Valid @RequestBody UserRequest req,
                                                      @AuthenticationPrincipal User actor) {
@@ -122,7 +124,7 @@ public class UserController {
      * @param actor usuario autenticado que realiza la baja
      */
     @DeleteMapping("/{id}")
-    @PreAuthorize("@sectionAccess.check('USERS') and hasRole('ADMIN')")
+    @PreAuthorize("@sectionAccess.check('USERS') and hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id, @AuthenticationPrincipal User actor) {
         userService.deactivate(id, actor);
         return ResponseEntity.ok(ApiResponse.ok(null, "Usuario desactivado"));

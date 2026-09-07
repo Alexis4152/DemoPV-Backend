@@ -37,13 +37,16 @@ public class RoleDataInitializer implements CommandLineRunner {
     private final JdbcTemplate jdbcTemplate;
 
     /**
-     * Orquesta el sembrado inicial: primero crea los roles base si la tabla está vacía, luego
-     * asegura que la cuenta admin por defecto tenga un rol asignado.
+     * Orquesta el sembrado inicial: primero crea los roles base si la tabla está vacía,
+     * luego asegura que exista el rol SUPER_ADMIN (chequeo aparte, no gira sobre "la tabla
+     * está vacía" porque para cuando se agregó este rol la tabla ya casi nunca lo está), y
+     * por último asegura que la cuenta admin por defecto tenga un rol asignado.
      */
     @Override
     @Transactional
     public void run(String... args) {
         seedDefaultRoles();
+        seedSuperAdminRole();
         assignDefaultAdminRole();
     }
 
@@ -79,6 +82,32 @@ public class RoleDataInitializer implements CommandLineRunner {
 
         roleRepository.saveAll(List.of(admin, cashier, seller));
         log.info("Roles sembrados: ADMIN, CASHIER, SELLER");
+    }
+
+    // Chequeo aparte de seedDefaultRoles() (que solo corre con la tabla TOTALMENTE vacía):
+    // este rol se agregó cuando ya casi ninguna base de datos real estaba vacía, así que
+    // necesita su propio guard idempotente ("¿ya existe uno llamado SUPER_ADMIN?") en vez
+    // de colgarse del mismo "count() > 0" de los otros tres.
+    /**
+     * Crea el rol SUPER_ADMIN (usuario de plataforma, sin tienda, con TODAS las secciones
+     * habilitadas — ve y administra cualquier tienda, una a la vez, vía {@code
+     * SelectTienda.jsx} en el frontend) si todavía no existe ninguno con ese nombre. No
+     * crea ningún usuario con este rol — eso sigue siendo un paso manual (dar de alta un
+     * usuario y asignarle este rol desde la pantalla de Usuarios, o directo en la base de
+     * datos), a propósito: quién tiene acceso de plataforma completo es una decisión que
+     * no debe tomar un script de arranque.
+     */
+    private void seedSuperAdminRole() {
+        if (roleRepository.findFirstByNameOrderById("SUPER_ADMIN").isPresent()) return;
+        Role superAdmin = Role.builder()
+                .name("SUPER_ADMIN")
+                .description("Super administrador — plataforma completa, todas las tiendas")
+                .isSystem(true)
+                .tienda(null)
+                .sections(EnumSet.allOf(AppSection.class))
+                .build();
+        roleRepository.save(superAdmin);
+        log.info("Rol sembrado: SUPER_ADMIN");
     }
 
     /**

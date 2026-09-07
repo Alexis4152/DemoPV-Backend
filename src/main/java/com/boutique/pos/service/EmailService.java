@@ -239,4 +239,229 @@ public class EmailService {
             log.error("No se pudo enviar el aviso de cancelación del apartado {} a {}: {}", apartado.getId(), toEmail, e.getMessage());
         }
     }
+
+    /** Lista de productos formateada para el cuerpo de los avisos de apartados ("- 2 x Anillo\n..."), evita repetir el mismo loop en cada método de abajo. */
+    private String productLines(Apartado apartado) {
+        StringBuilder sb = new StringBuilder();
+        for (ApartadoItem item : apartado.getItems()) {
+            sb.append("- ").append(item.getQuantity().stripTrailingZeros().toPlainString())
+                    .append(" x ").append(item.getProductName()).append("\n");
+        }
+        return sb.toString();
+    }
+
+    // Al personal (no al cliente): que un apartado se confirmó, con quién lo confirmó y
+    // hasta cuándo queda vigente — el resto del equipo debe saber que ya se descontó del
+    // inventario y cuándo vence, sin tener que entrar al sistema a revisarlo.
+    /**
+     * Avisa por correo al personal de la tienda que un apartado {@code PENDING} fue
+     * confirmado (pasó a {@code ACTIVE}, ya se descontó del inventario).
+     *
+     * @param apartado apartado recién confirmado, con {@link Apartado#getConfirmedBy()} y
+     *                 {@link Apartado#getExpiresAt()} ya establecidos
+     * @param toEmail correo del miembro del personal a notificar
+     */
+    @Async
+    public void sendApartadoConfirmedStaffEmail(Apartado apartado, String toEmail) {
+        try {
+            StringBuilder body = new StringBuilder();
+            body.append("El apartado #").append(apartado.getId()).append(" de ")
+                    .append(apartado.getCustomerName()).append(" fue confirmado");
+            if (apartado.getConfirmedBy() != null) {
+                body.append(" por ").append(apartado.getConfirmedBy().getName());
+            }
+            body.append(". Ya se descontó del inventario.\n\n");
+            body.append("Productos:\n").append(productLines(apartado));
+            if (apartado.getExpiresAt() != null) {
+                body.append("\nVence: ").append(apartado.getExpiresAt()).append(" — si el cliente no lo recoge antes, se reintegra solo al inventario.");
+            }
+
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            helper.setTo(toEmail);
+            helper.setSubject("Apartado #" + apartado.getId() + " confirmado — " + apartado.getTienda().getName());
+            helper.setText(body.toString());
+
+            mailSender.send(message);
+            log.info("Aviso de confirmación del apartado {} enviado a personal ({})", apartado.getId(), toEmail);
+        } catch (MessagingException | RuntimeException e) {
+            log.error("No se pudo enviar el aviso de confirmación del apartado {} a {}: {}", apartado.getId(), toEmail, e.getMessage());
+        }
+    }
+
+    // Al cliente: que su solicitud ya fue revisada y confirmada, con la fecha límite para
+    // recogerlo — antes de esto, solo veía la pantalla de confirmación al momento de
+    // solicitarlo, sin saber si alguien ya lo había revisado.
+    /**
+     * Avisa por correo al cliente que su apartado fue confirmado por la tienda, y hasta
+     * cuándo tiene para recogerlo.
+     *
+     * @param apartado apartado recién confirmado
+     * @param toEmail correo del cliente al que se avisa
+     */
+    @Async
+    public void sendApartadoConfirmedCustomerEmail(Apartado apartado, String toEmail) {
+        try {
+            StringBuilder body = new StringBuilder();
+            body.append("Hola ").append(apartado.getCustomerName()).append(",\n\n");
+            body.append("¡Buenas noticias! Tu apartado #").append(apartado.getId()).append(" en ")
+                    .append(apartado.getTienda().getName()).append(" fue confirmado.\n\n");
+            body.append("Productos:\n").append(productLines(apartado));
+            if (apartado.getExpiresAt() != null) {
+                body.append("\nTienes hasta el ").append(apartado.getExpiresAt())
+                        .append(" para recogerlo y pagarlo — después de esa fecha, si no lo recoges, se libera automáticamente.");
+            }
+
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            helper.setTo(toEmail);
+            helper.setSubject("Tu apartado #" + apartado.getId() + " fue confirmado — " + apartado.getTienda().getName());
+            helper.setText(body.toString());
+
+            mailSender.send(message);
+            log.info("Aviso de confirmación del apartado {} enviado al cliente ({})", apartado.getId(), toEmail);
+        } catch (MessagingException | RuntimeException e) {
+            log.error("No se pudo enviar el aviso de confirmación del apartado {} a {}: {}", apartado.getId(), toEmail, e.getMessage());
+        }
+    }
+
+    // Al personal: mismo evento que sendApartadoCancelledEmail (al cliente), pero con tono
+    // interno y sin depender de si el cliente dejó correo — el equipo debe enterarse de la
+    // cancelación de todas formas, la haya hecho quien la haya hecho.
+    /**
+     * Avisa por correo al personal de la tienda que un apartado fue cancelado, quién lo
+     * canceló y el motivo capturado (si hubo alguno).
+     *
+     * @param apartado apartado recién cancelado, con {@link Apartado#getCancelledBy()} ya establecido
+     * @param reason motivo capturado al cancelar, o {@code null}/vacío si no se dio ninguno
+     * @param toEmail correo del miembro del personal a notificar
+     */
+    @Async
+    public void sendApartadoCancelledStaffEmail(Apartado apartado, String reason, String toEmail) {
+        try {
+            StringBuilder body = new StringBuilder();
+            body.append("El apartado #").append(apartado.getId()).append(" de ")
+                    .append(apartado.getCustomerName()).append(" fue cancelado");
+            if (apartado.getCancelledBy() != null) {
+                body.append(" por ").append(apartado.getCancelledBy().getName());
+            }
+            body.append(".\n\nProductos:\n").append(productLines(apartado));
+            if (reason != null && !reason.isBlank()) {
+                body.append("\nMotivo: ").append(reason).append("\n");
+            }
+
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            helper.setTo(toEmail);
+            helper.setSubject("Apartado #" + apartado.getId() + " cancelado — " + apartado.getTienda().getName());
+            helper.setText(body.toString());
+
+            mailSender.send(message);
+            log.info("Aviso de cancelación del apartado {} enviado a personal ({})", apartado.getId(), toEmail);
+        } catch (MessagingException | RuntimeException e) {
+            log.error("No se pudo enviar el aviso de cancelación del apartado {} a {} (personal): {}", apartado.getId(), toEmail, e.getMessage());
+        }
+    }
+
+    // Al personal: que el cliente recogió y pagó — al cliente ya le llega su ticket aparte
+    // (ver SaleService#completeFromApartado -> sendTicketEmail), no hace falta duplicarlo aquí.
+    /**
+     * Avisa por correo al personal de la tienda que un apartado fue completado (el
+     * cliente recogió y pagó, se generó la venta correspondiente).
+     *
+     * @param apartado apartado recién completado, con {@link Apartado#getCompletedBy()} y
+     *                 {@link Apartado#getSaleId()} ya establecidos
+     * @param toEmail correo del miembro del personal a notificar
+     */
+    @Async
+    public void sendApartadoCompletedStaffEmail(Apartado apartado, String toEmail) {
+        try {
+            StringBuilder body = new StringBuilder();
+            body.append("El apartado #").append(apartado.getId()).append(" de ")
+                    .append(apartado.getCustomerName()).append(" se completó");
+            if (apartado.getCompletedBy() != null) {
+                body.append(" (lo cobró ").append(apartado.getCompletedBy().getName()).append(")");
+            }
+            if (apartado.getSaleId() != null) {
+                body.append(" — se generó la venta #").append(apartado.getSaleId());
+            }
+            body.append(".\n\nProductos:\n").append(productLines(apartado));
+
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            helper.setTo(toEmail);
+            helper.setSubject("Apartado #" + apartado.getId() + " completado — " + apartado.getTienda().getName());
+            helper.setText(body.toString());
+
+            mailSender.send(message);
+            log.info("Aviso de conclusión del apartado {} enviado a personal ({})", apartado.getId(), toEmail);
+        } catch (MessagingException | RuntimeException e) {
+            log.error("No se pudo enviar el aviso de conclusión del apartado {} a {}: {}", apartado.getId(), toEmail, e.getMessage());
+        }
+    }
+
+    // Al personal: aviso de que ApartadoExpiryJob venció uno automáticamente y ya
+    // reintegró el stock — sin esto, nadie del equipo se entera salvo que entre a revisar
+    // la pantalla de Apartados por su cuenta.
+    /**
+     * Avisa por correo al personal de la tienda que un apartado {@code ACTIVE} venció
+     * automáticamente (el cliente no lo recogió a tiempo) y su stock ya se reintegró.
+     *
+     * @param apartado apartado recién vencido
+     * @param toEmail correo del miembro del personal a notificar
+     */
+    @Async
+    public void sendApartadoExpiredStaffEmail(Apartado apartado, String toEmail) {
+        try {
+            StringBuilder body = new StringBuilder();
+            body.append("El apartado #").append(apartado.getId()).append(" de ")
+                    .append(apartado.getCustomerName()).append(" venció — el cliente no lo recogió a tiempo. ")
+                    .append("El stock ya se reintegró automáticamente al inventario.\n\n");
+            body.append("Productos:\n").append(productLines(apartado));
+
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            helper.setTo(toEmail);
+            helper.setSubject("Apartado #" + apartado.getId() + " venció — " + apartado.getTienda().getName());
+            helper.setText(body.toString());
+
+            mailSender.send(message);
+            log.info("Aviso de vencimiento del apartado {} enviado a personal ({})", apartado.getId(), toEmail);
+        } catch (MessagingException | RuntimeException e) {
+            log.error("No se pudo enviar el aviso de vencimiento del apartado {} a {}: {}", apartado.getId(), toEmail, e.getMessage());
+        }
+    }
+
+    // Al cliente: mismo evento que arriba, en tono orientado a él — solo se llama si dejó
+    // correo al solicitarlo, igual que sendApartadoCancelledEmail.
+    /**
+     * Avisa por correo al cliente que su apartado venció (no lo recogió a tiempo) y el
+     * producto ya se liberó de vuelta al inventario de la tienda.
+     *
+     * @param apartado apartado recién vencido
+     * @param toEmail correo del cliente al que se avisa
+     */
+    @Async
+    public void sendApartadoExpiredCustomerEmail(Apartado apartado, String toEmail) {
+        try {
+            StringBuilder body = new StringBuilder();
+            body.append("Hola ").append(apartado.getCustomerName()).append(",\n\n");
+            body.append("Tu apartado #").append(apartado.getId()).append(" en ")
+                    .append(apartado.getTienda().getName()).append(" venció porque no se recogió a tiempo, ")
+                    .append("así que el producto ya se liberó de vuelta al inventario de la tienda.\n\n");
+            body.append("Productos:\n").append(productLines(apartado));
+            body.append("\nSi todavía te interesa, puedes volver a apartarlo desde el mismo link de siempre.");
+
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            helper.setTo(toEmail);
+            helper.setSubject("Tu apartado #" + apartado.getId() + " venció — " + apartado.getTienda().getName());
+            helper.setText(body.toString());
+
+            mailSender.send(message);
+            log.info("Aviso de vencimiento del apartado {} enviado al cliente ({})", apartado.getId(), toEmail);
+        } catch (MessagingException | RuntimeException e) {
+            log.error("No se pudo enviar el aviso de vencimiento del apartado {} a {} (cliente): {}", apartado.getId(), toEmail, e.getMessage());
+        }
+    }
 }

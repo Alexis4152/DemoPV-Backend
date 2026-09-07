@@ -76,8 +76,9 @@ public class ApartadoService {
      * sentido común, no una reserva real: entre esta solicitud y su confirmación el stock
      * puede cambiar, y quien confirme primero se lo queda — ver {@link #confirm}).
      * <p>
-     * Al crearse, avisa por correo a todos los administradores de la tienda (best effort,
-     * asíncrono): es el único momento del ciclo de vida en el que alguien tiene que actuar.
+     * Al crearse, avisa por correo a todo el personal de la tienda con acceso a Apartados
+     * (best effort, asíncrono, ver {@link #staffToNotify}) — es el momento en que alguien
+     * tiene que revisarlo y decidir si lo confirma o lo cancela.
      *
      * @param slug slug público de la tienda (de la URL)
      * @param req datos de contacto del cliente y productos solicitados
@@ -139,7 +140,9 @@ public class ApartadoService {
         apartado.setTotal(grossSubtotal.subtract(totalDiscount));
 
         Apartado saved = apartadoRepository.save(apartado);
-        notifyAdmins(saved);
+        for (User staff : staffToNotify(saved, null)) {
+            emailService.sendApartadoRequestEmail(saved, staff.getEmail());
+        }
         return saved;
     }
 
@@ -311,6 +314,10 @@ public class ApartadoService {
      * se solicitó) y, si el cajero capturó descuentos, los valida contra el límite de
      * apartados de la tienda ({@link Tienda#getMaxApartadoDiscountAmount()}/{@link
      * Tienda#getMaxApartadoDiscountPercent()} — un límite SEPARADO del de venta física).
+     * <p>
+     * Al confirmarse, avisa por correo al resto del personal con acceso a Apartados (ver
+     * {@link #staffToNotify}, excluye a quien confirmó) y, si el cliente dejó correo al
+     * solicitarlo, también a él (con la fecha límite para recogerlo).
      *
      * @param id id del apartado a confirmar
      * @param req horas de vigencia (o null para usar el default de la tienda) y
@@ -386,13 +393,23 @@ public class ApartadoService {
         apartado.setExpiresAt(apartado.getConfirmedAt().plusHours(durationHours));
         apartado.setConfirmedBy(actor);
         apartado.setStatus(ApartadoStatus.ACTIVE);
-        return apartadoRepository.save(apartado);
+        Apartado saved = apartadoRepository.save(apartado);
+
+        for (User staff : staffToNotify(saved, actor)) {
+            emailService.sendApartadoConfirmedStaffEmail(saved, staff.getEmail());
+        }
+        if (saved.getCustomerEmail() != null && !saved.getCustomerEmail().isBlank()) {
+            emailService.sendApartadoConfirmedCustomerEmail(saved, saved.getCustomerEmail());
+        }
+        return saved;
     }
 
     /**
      * Completa un apartado {@code ACTIVE}: el cliente vino a recoger y pagar. Genera la
      * venta real vía {@link SaleService#completeFromApartado} (sin volver a descontar
      * stock, ya se descontó al confirmar) y marca el apartado como {@code COMPLETED}.
+     * Avisa por correo al resto del personal con acceso a Apartados (excluye a quien lo
+     * completó) — el cliente no recibe un aviso aparte porque ya le llega su ticket.
      *
      * @param id id del apartado a completar
      * @param req forma de pago y, si es efectivo, con cuánto pagó
@@ -414,7 +431,14 @@ public class ApartadoService {
         apartado.setStatus(ApartadoStatus.COMPLETED);
         apartado.setCompletedBy(actor);
         apartado.setSaleId(sale.getId());
-        return apartadoRepository.save(apartado);
+        Apartado saved = apartadoRepository.save(apartado);
+
+        // Al cliente ya le llega su ticket aparte (SaleService#completeFromApartado ->
+        // EmailService#sendTicketEmail), no hace falta duplicarlo aquí — solo al personal.
+        for (User staff : staffToNotify(saved, actor)) {
+            emailService.sendApartadoCompletedStaffEmail(saved, staff.getEmail());
+        }
+        return saved;
     }
 
     /**
@@ -423,10 +447,12 @@ public class ApartadoService {
      * InventoryMovement} de tipo {@code IN}.
      * <p>
      * {@code reason} es opcional (un cajero puede cancelar sin dar motivo) — se guarda en
-     * {@link Apartado#getCancelReason()} para el historial y, si el cliente dejó correo al
-     * solicitar el apartado, se le manda un aviso con ese motivo (best effort, ver {@link
-     * EmailService#sendApartadoCancelledEmail}); sin correo del cliente, simplemente no hay
-     * a quién avisarle.
+     * {@link Apartado#getCancelReason()} para el historial. Avisa por correo al resto del
+     * personal con acceso a Apartados SIEMPRE (excluye a quien canceló, ver {@link
+     * #staffToNotify}) y, si el cliente dejó correo al solicitarlo, también a él con ese
+     * motivo (best effort, ver {@link EmailService#sendApartadoCancelledEmail}); sin
+     * correo del cliente, simplemente no hay cómo avisarle a él, pero el personal se
+     * entera de todas formas.
      *
      * @param id id del apartado a cancelar
      * @param reason motivo para el cliente, opcional
@@ -449,8 +475,12 @@ public class ApartadoService {
         apartado.setCancelledAt(LocalDateTime.now());
         apartado.setCancelReason(reason);
         Apartado saved = apartadoRepository.save(apartado);
-        if (apartado.getCustomerEmail() != null && !apartado.getCustomerEmail().isBlank()) {
-            emailService.sendApartadoCancelledEmail(apartado, reason, apartado.getCustomerEmail());
+
+        for (User staff : staffToNotify(saved, actor)) {
+            emailService.sendApartadoCancelledStaffEmail(saved, reason, staff.getEmail());
+        }
+        if (saved.getCustomerEmail() != null && !saved.getCustomerEmail().isBlank()) {
+            emailService.sendApartadoCancelledEmail(saved, reason, saved.getCustomerEmail());
         }
         return saved;
     }
@@ -488,7 +518,9 @@ public class ApartadoService {
     /**
      * Marca como {@code EXPIRED} todo apartado {@code ACTIVE} cuyo {@link
      * Apartado#getExpiresAt()} ya se cumplió, restituyendo su stock — llamado únicamente
-     * por {@code ApartadoExpiryJob}.
+     * por {@code ApartadoExpiryJob}. Sin actor humano (lo dispara el job programado), así
+     * que avisa a TODO el personal con acceso a Apartados (nadie que excluir) y, si el
+     * cliente dejó correo al solicitarlo, también a él.
      *
      * @return cuántos apartados se vencieron en esta corrida
      */
@@ -498,21 +530,35 @@ public class ApartadoService {
         for (Apartado apartado : overdue) {
             restoreStock(apartado, "vencido", apartado.getConfirmedBy());
             apartado.setStatus(ApartadoStatus.EXPIRED);
-            apartadoRepository.save(apartado);
+            Apartado saved = apartadoRepository.save(apartado);
+
+            for (User staff : staffToNotify(saved, null)) {
+                emailService.sendApartadoExpiredStaffEmail(saved, staff.getEmail());
+            }
+            if (saved.getCustomerEmail() != null && !saved.getCustomerEmail().isBlank()) {
+                emailService.sendApartadoExpiredCustomerEmail(saved, saved.getCustomerEmail());
+            }
         }
         return overdue.size();
     }
 
     /**
-     * Avisa por correo a todos los administradores de la tienda que hay un apartado nuevo
-     * por revisar. Best effort: una tienda sin administradores registrados no revienta la
-     * creación del apartado, simplemente no hay a quién avisarle.
+     * Personal activo de la tienda del apartado con acceso a la sección {@code APARTADOS}
+     * (cualquier rol, no solo ADMIN — un cajero o vendedor con ese acceso también debe
+     * enterarse), para los avisos de cambio de estado. Best effort: una tienda sin nadie
+     * con ese acceso no revienta la operación, simplemente no hay a quién avisarle.
+     *
+     * @param apartado apartado cuyo cambio de estado se va a avisar
+     * @param actor quien hizo la acción (confirmar/completar/cancelar), para EXCLUIRLO de
+     *              su propio aviso — ya sabe lo que acaba de hacer; {@code null} si no hay
+     *              actor humano (creación pública, o el job de vencimiento), en cuyo caso
+     *              se incluye a todos sin excepción
+     * @return el personal a notificar
      */
-    private void notifyAdmins(Apartado apartado) {
-        List<User> admins = userRepository.findAdminsByTiendaId(apartado.getTienda().getId());
-        for (User admin : admins) {
-            emailService.sendApartadoRequestEmail(apartado, admin.getEmail());
-        }
+    private List<User> staffToNotify(Apartado apartado, User actor) {
+        List<User> staff = userRepository.findActiveByTiendaIdAndSection(apartado.getTienda().getId(), AppSection.APARTADOS);
+        if (actor == null) return staff;
+        return staff.stream().filter(u -> !u.getId().equals(actor.getId())).toList();
     }
 
     /**

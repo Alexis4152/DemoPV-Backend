@@ -92,15 +92,21 @@ public class RoleService {
     }
 
     /**
-     * Crea un rol nuevo (no de sistema) dentro de la tienda del actor.
+     * Crea un rol nuevo (no de sistema) dentro de la tienda del actor (la que esté
+     * actuando, si es SUPER_ADMIN — ver {@link TenantScope#tiendaForWrite}).
      *
      * @param req datos del rol: nombre, descripción y secciones habilitadas
-     * @param actor usuario que lo crea; determina la tienda del rol y queda como {@code createdBy}
+     * @param actor usuario que lo crea; queda como {@code createdBy}
      * @return el rol creado
      * @throws IllegalArgumentException si ya existe un rol con ese nombre en la misma tienda
+     * @throws IllegalStateException si es SUPER_ADMIN sin ninguna tienda elegida para actuar
      */
     public Role create(RoleRequest req, User actor) {
-        Long tiendaId = actor.getTienda() != null ? actor.getTienda().getId() : null;
+        Tienda tienda = tenantScope.tiendaForWrite(actor);
+        if (tienda == null && tenantScope.isSuperAdmin(actor)) {
+            throw new IllegalStateException("Elige una tienda para poder crear un rol");
+        }
+        Long tiendaId = tienda != null ? tienda.getId() : null;
         if (roleRepository.existsByNameAndTiendaId(req.getName(), tiendaId)) {
             throw new IllegalArgumentException("Ya existe un rol con ese nombre en tu tienda");
         }
@@ -108,7 +114,7 @@ public class RoleService {
         r.setName(req.getName());
         r.setDescription(req.getDescription());
         r.setIsSystem(false);
-        r.setTienda(actor.getTienda());
+        r.setTienda(tienda);
         r.setSections(sanitizeSections(req.getSections(), false));
         r.setCreatedBy(actor);
         return roleRepository.save(r);

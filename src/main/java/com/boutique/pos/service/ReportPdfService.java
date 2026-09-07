@@ -3,6 +3,7 @@ package com.boutique.pos.service;
 import com.boutique.pos.model.PaymentMethod;
 import com.boutique.pos.model.Tienda;
 import com.boutique.pos.model.User;
+import com.boutique.pos.security.TenantScope;
 import com.lowagie.text.*;
 import com.lowagie.text.pdf.PdfPCell;
 import com.lowagie.text.pdf.PdfPTable;
@@ -50,6 +51,7 @@ public class ReportPdfService {
     private static final Font FONT_BODY_BOLD = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9);
 
     private final ReportService reportService;
+    private final TenantScope tenantScope;
 
     /**
      * Genera el PDF completo del reporte para el rango {@code [from, to]} de la tienda del
@@ -71,7 +73,10 @@ public class ReportPdfService {
             PdfWriter.getInstance(document, out);
             document.open();
 
-            Tienda tienda = actor.getTienda();
+            // tiendaForWrite (a pesar del nombre, pensado para escritura) también sirve
+            // aquí de lectura: es "la tienda que el actor representa ahora mismo" — para
+            // un SUPER_ADMIN, la que eligió actuar, en vez de siempre null.
+            Tienda tienda = tenantScope.tiendaForWrite(actor);
             document.add(paragraph(tienda != null ? tienda.getName() : "Punto de Venta Demo", FONT_TITLE, Element.ALIGN_LEFT, 0, 2));
             document.add(paragraph("Reporte de ventas: " + DAY_FMT.format(from) + " al " + DAY_FMT.format(to), FONT_SUBTITLE, Element.ALIGN_LEFT, 0, 0));
             document.add(paragraph("Generado el " + DAY_FMT.format(LocalDate.now()), FONT_SUBTITLE, Element.ALIGN_LEFT, 0, 14));

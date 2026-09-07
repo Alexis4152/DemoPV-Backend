@@ -7,6 +7,7 @@ import com.boutique.pos.model.PaymentMethod;
 import com.boutique.pos.model.CashCut;
 import com.boutique.pos.model.Sale;
 import com.boutique.pos.model.SaleStatus;
+import com.boutique.pos.model.Tienda;
 import com.boutique.pos.model.User;
 import com.boutique.pos.repository.CashCutRepository;
 import com.boutique.pos.repository.SaleRepository;
@@ -160,18 +161,26 @@ public class CashCutService {
     /**
      * Abre un corte de caja nuevo para el actor, con su fondo inicial.
      *
-     * <p>Un usuario que no sea ADMIN solo puede abrir un corte por día; un ADMIN puede
-     * abrir varios el mismo día (por ejemplo, para cubrir turnos o corregir un cierre
-     * anterior).</p>
+     * <p>Un usuario que no sea ADMIN/SUPER_ADMIN solo puede abrir un corte por día; un
+     * ADMIN (o un SUPER_ADMIN actuando como tal) puede abrir varios el mismo día (por
+     * ejemplo, para cubrir turnos o corregir un cierre anterior). El corte queda en la
+     * tienda que el actor esté actuando (ver {@link TenantScope#tiendaForWrite}) — para un
+     * SUPER_ADMIN sin tienda elegida, esto lanza {@code IllegalStateException} en vez de
+     * guardar un corte sin tienda.</p>
      *
      * @param req datos de apertura: monto del fondo inicial y notas opcionales
-     * @param actor usuario que abre el corte; queda como dueño del corte y determina su tienda
+     * @param actor usuario que abre el corte; queda como dueño del corte
      * @return el corte recién abierto, en estado {@code OPEN}
-     * @throws IllegalStateException si el actor no es ADMIN y ya abrió un corte hoy
+     * @throws IllegalStateException si el actor no es ADMIN/SUPER_ADMIN y ya abrió un
+     *         corte hoy, o si es SUPER_ADMIN sin ninguna tienda elegida para actuar
      */
     @Transactional
     public CashCut open(CashCutRequest req, User actor) {
-        if (!ADMIN.equals(actor.getRole().getName())) {
+        Tienda tienda = tenantScope.tiendaForWrite(actor);
+        if (tienda == null && tenantScope.isSuperAdmin(actor)) {
+            throw new IllegalStateException("Elige una tienda para poder abrir un corte de caja");
+        }
+        if (!ADMIN.equals(actor.getRole().getName()) && !tenantScope.isSuperAdmin(actor)) {
             LocalDateTime startOfDay = LocalDate.now().atStartOfDay();
             LocalDateTime endOfDay = startOfDay.plusDays(1);
             if (cashCutRepository.existsByUserIdAndOpenedAtBetween(actor.getId(), startOfDay, endOfDay)) {
@@ -181,7 +190,7 @@ public class CashCutService {
         }
         CashCut cut = new CashCut();
         cut.setUser(actor);
-        cut.setTienda(actor.getTienda());
+        cut.setTienda(tienda);
         cut.setOpeningAmount(req.getAmount());
         cut.setStatus(CashCutStatus.OPEN);
         cut.setNotes(req.getNotes());

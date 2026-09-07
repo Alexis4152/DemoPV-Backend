@@ -167,15 +167,21 @@ public class ProductService {
      * salió ese stock.</p>
      *
      * @param req datos del producto nuevo, incluyendo el id de su categoría
-     * @param actor usuario que lo crea; determina la tienda del producto; queda
-     *              registrado como {@code createdBy}
+     * @param actor usuario que lo crea; determina la tienda del producto (la que esté
+     *              actuando, si es SUPER_ADMIN — ver {@link TenantScope#tiendaForWrite});
+     *              queda registrado como {@code createdBy}
      * @return el producto creado
      * @throws IllegalArgumentException si la categoría no existe o no pertenece a la
      *         tienda del actor
+     * @throws IllegalStateException si es SUPER_ADMIN sin ninguna tienda elegida para actuar
      */
     public Product create(ProductRequest req, User actor) {
+        Tienda tienda = tenantScope.tiendaForWrite(actor);
+        if (tienda == null && tenantScope.isSuperAdmin(actor)) {
+            throw new IllegalStateException("Elige una tienda para poder crear un producto");
+        }
         Category cat = categoryService.findById(req.getCategoryId(), actor);
-        Long tiendaId = actor.getTienda() != null ? actor.getTienda().getId() : null;
+        Long tiendaId = tienda != null ? tienda.getId() : null;
         validateBarcodeUnique(req.getBarcode(), tiendaId, null);
 
         Product p = new Product();
@@ -188,10 +194,10 @@ public class ProductService {
         p.setMinStock(req.getMinStock() != null ? req.getMinStock() : 5);
         p.setUnit(req.getUnit() != null ? req.getUnit() : "pieza");
         p.setCategory(cat);
-        p.setTienda(actor.getTienda());
+        p.setTienda(tienda);
         p.setIsActive(true);
         p.setIsReservable(Boolean.TRUE.equals(req.getIsReservable()));
-        validateApartadoDiscountPercent(req.getApartadoDiscountPercent(), req.getPrice(), actor.getTienda());
+        validateApartadoDiscountPercent(req.getApartadoDiscountPercent(), req.getPrice(), tienda);
         p.setApartadoDiscountPercent(req.getApartadoDiscountPercent());
         p.setCreatedBy(actor);
         Product saved = productRepository.save(p);

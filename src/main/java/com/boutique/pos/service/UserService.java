@@ -264,8 +264,11 @@ public class UserService {
         return sb.toString();
     }
 
-    // SUPER_ADMIN puede asignar cualquier tienda (o dejar sin tienda); cualquier otro rol
-    // siempre da de alta usuarios dentro de su propia tienda, sin importar lo que venga en el request.
+    // SUPER_ADMIN: si el request trae una tienda explícita se respeta esa (permite, p. ej.,
+    // "mover" a alguien a una tienda distinta de la que está actuando); si no, cae en la
+    // tienda que esté actuando (ver TenantScope#tiendaForWrite). Cualquier otro rol
+    // siempre da de alta usuarios dentro de su propia tienda, sin importar lo que venga en
+    // el request.
     /**
      * Determina a qué tienda queda asignado un usuario nuevo, según el rol del actor
      * que lo está creando (ver regla de negocio en el comentario anterior).
@@ -273,11 +276,12 @@ public class UserService {
      * @param req request de alta, con la tienda solicitada (solo se respeta para SUPER_ADMIN)
      * @param actor usuario que da de alta al nuevo usuario
      * @return la tienda resuelta para el usuario nuevo (puede ser null solo si el actor
-     *         es SUPER_ADMIN y no especificó tienda)
+     *         es SUPER_ADMIN, no especificó tienda en el request, Y tampoco tiene
+     *         ninguna tienda eligiendo actuar)
      */
     private Tienda resolveTiendaForWrite(UserRequest req, User actor) {
         if (tenantScope.isSuperAdmin(actor)) {
-            return req.getTiendaId() != null ? resolveTienda(req.getTiendaId()) : null;
+            return req.getTiendaId() != null ? resolveTienda(req.getTiendaId()) : tenantScope.tiendaForWrite(actor);
         }
         return actor.getTienda();
     }

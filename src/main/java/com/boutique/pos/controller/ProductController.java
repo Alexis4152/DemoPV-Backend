@@ -174,7 +174,7 @@ public class ProductController {
      * @param actor usuario autenticado que realiza la creación
      */
     @PostMapping
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<ApiResponse<Product>> create(@Valid @RequestBody ProductRequest req,
                                                         @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(productService.create(req, actor), "Producto creado"));
@@ -189,7 +189,7 @@ public class ProductController {
      * @param actor usuario autenticado que realiza la actualización
      */
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<ApiResponse<Product>> update(@PathVariable Long id,
                                                         @Valid @RequestBody ProductRequest req,
                                                         @AuthenticationPrincipal User actor) {
@@ -222,7 +222,7 @@ public class ProductController {
      * @param actor usuario autenticado que realiza la baja
      */
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id, @AuthenticationPrincipal User actor) {
         productService.deactivate(id, actor);
         return ResponseEntity.ok(ApiResponse.ok(null, "Producto desactivado"));
@@ -241,7 +241,7 @@ public class ProductController {
     }
 
     /** Sube una foto nueva para el producto. Solo ADMIN (igual que crear/editar el producto). */
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     @PostMapping(value = "/{id}/images", consumes = "multipart/form-data")
     public ResponseEntity<ApiResponse<ProductImage>> uploadImage(@PathVariable Long id,
                                                                   @RequestParam("file") MultipartFile file,
@@ -251,7 +251,7 @@ public class ProductController {
     }
 
     /** Marca una foto como portada del producto. Solo ADMIN. */
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     @PutMapping("/{id}/images/{imageId}/primary")
     public ResponseEntity<ApiResponse<Void>> setPrimaryImage(@PathVariable Long id, @PathVariable Long imageId,
                                                               @AuthenticationPrincipal User actor) {
@@ -261,7 +261,7 @@ public class ProductController {
     }
 
     /** Borra una foto del producto. Solo ADMIN. */
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
     @DeleteMapping("/{id}/images/{imageId}")
     public ResponseEntity<ApiResponse<Void>> deleteImage(@PathVariable Long id, @PathVariable Long imageId,
                                                           @AuthenticationPrincipal User actor) {

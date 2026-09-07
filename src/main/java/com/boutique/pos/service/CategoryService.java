@@ -2,6 +2,7 @@ package com.boutique.pos.service;
 
 import com.boutique.pos.dto.CategoryRequest;
 import com.boutique.pos.model.Category;
+import com.boutique.pos.model.Tienda;
 import com.boutique.pos.model.User;
 import com.boutique.pos.repository.CategoryRepository;
 import com.boutique.pos.security.TenantScope;
@@ -70,18 +71,23 @@ public class CategoryService {
     }
 
     /**
-     * Crea una categoría nueva, asignada automáticamente a la tienda del actor.
+     * Crea una categoría nueva, asignada automáticamente a la tienda del actor (la que
+     * esté actuando, si es SUPER_ADMIN — ver {@link TenantScope#tiendaForWrite}).
      *
      * @param req datos de la categoría (nombre, descripción)
-     * @param actor usuario que la crea; queda registrado como {@code createdBy} y su
-     *              tienda determina la tienda de la categoría
+     * @param actor usuario que la crea; queda registrado como {@code createdBy}
      * @return la categoría creada
+     * @throws IllegalStateException si es SUPER_ADMIN sin ninguna tienda elegida para actuar
      */
     public Category create(CategoryRequest req, User actor) {
+        Tienda tienda = tenantScope.tiendaForWrite(actor);
+        if (tienda == null && tenantScope.isSuperAdmin(actor)) {
+            throw new IllegalStateException("Elige una tienda para poder crear una categoría");
+        }
         Category cat = new Category();
         cat.setName(req.getName());
         cat.setDescription(req.getDescription());
-        cat.setTienda(actor.getTienda());
+        cat.setTienda(tienda);
         cat.setCreatedBy(actor);
         return categoryRepository.save(cat);
     }
