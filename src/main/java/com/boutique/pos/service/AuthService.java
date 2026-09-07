@@ -67,6 +67,11 @@ public class AuthService {
                 new UsernamePasswordAuthenticationToken(req.getEmail(), req.getPassword())
         );
         User user = (User) auth.getPrincipal();
+        if (user.getRole() == null) {
+            // Usuario sin rol asignado (típicamente uno insertado a mano en la base sin
+            // role_id) — sin esto, el .getRole().getName() de abajo truena con NPE crudo.
+            throw new IllegalStateException("Tu cuenta no tiene un rol asignado, contacta a tu administrador");
+        }
         String token = jwtTokenProvider.generateToken(user);
         return LoginResponse.builder()
                 .token(token)

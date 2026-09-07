@@ -101,9 +101,16 @@ public class User implements UserDetails {
     /**
      * Expone el {@link Role} del usuario como una única {@link GrantedAuthority} de Spring
      * Security, con el prefijo {@code "ROLE_"} seguido del nombre del rol (ej. "ROLE_ADMIN").
+     *
+     * <p>Sin rol asignado ({@code role == null} — un usuario creado a mano en la base sin
+     * {@code role_id}, o justo en la ventana entre un alta y la asignación de su rol)
+     * devuelve una lista vacía en vez de tronar con {@code NullPointerException}: sin
+     * autoridades, Spring Security simplemente le niega el acceso a cualquier endpoint que
+     * exija un rol, en vez de una excepción cruda con nombres de clases internas.</p>
      */
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
+        if (role == null) return List.of();
         return List.of(new SimpleGrantedAuthority("ROLE_" + role.getName()));
     }
 

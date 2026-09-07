@@ -37,7 +37,7 @@ public class TenantScope {
      *         tienda propia, con visibilidad total)
      */
     public boolean isSuperAdmin(User actor) {
-        return "SUPER_ADMIN".equals(actor.getRole().getName());
+        return actor.getRole() != null && "SUPER_ADMIN".equals(actor.getRole().getName());
     }
 
     /**
