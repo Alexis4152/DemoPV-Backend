@@ -76,6 +76,7 @@ public class AuthService {
                 .role(user.getRole().getName())
                 .sections(user.getRole().getSections().stream().map(Enum::name).toList())
                 .tienda(user.getTienda())
+                .mustChangePassword(user.getMustChangePassword())
                 .build();
     }
 
@@ -140,6 +141,27 @@ public class AuthService {
         userRepository.save(user);
         resetToken.setUsed(true);
         passwordResetTokenRepository.save(resetToken);
+    }
+
+    /**
+     * Cambia la contraseña del usuario ya autenticado, exigiendo la actual como
+     * comprobante de identidad. Apaga {@code mustChangePassword} si estaba prendido —
+     * es la salida de la pantalla obligatoria que ve un usuario recién dado de alta por
+     * un admin (ver {@code UserService#create}).
+     *
+     * @param actor usuario autenticado que cambia su propia contraseña
+     * @param currentPassword contraseña actual, para verificar identidad
+     * @param newPassword nueva contraseña elegida
+     * @throws IllegalArgumentException si {@code currentPassword} no coincide con la actual
+     */
+    @Transactional
+    public void changePassword(User actor, String currentPassword, String newPassword) {
+        if (!passwordEncoder.matches(currentPassword, actor.getPassword())) {
+            throw new IllegalArgumentException("La contraseña actual no es correcta");
+        }
+        actor.setPassword(passwordEncoder.encode(newPassword));
+        actor.setMustChangePassword(false);
+        userRepository.save(actor);
     }
 
     /** Genera un token aleatorio criptográficamente seguro, codificado en base64 URL-safe. */

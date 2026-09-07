@@ -18,8 +18,11 @@ public class UserRequest {
     private String name;
     @Email @NotBlank
     private String email;
-    // Opcional en actualización (si no se envía, la contraseña actual no cambia);
-    // requerida en la práctica al crear un usuario nuevo.
+    // Solo aplica en actualización, y es opcional (si no se envía, la contraseña actual no
+    // cambia) — es la vía para que un ADMIN le resetee la contraseña a alguien manualmente.
+    // Al CREAR un usuario este campo se ignora siempre: la contraseña inicial nunca la
+    // captura quien lo da de alta, el backend genera una temporal y se la manda por correo
+    // (ver UserService#create).
     private String password;
     @NotNull
     private Long roleId;

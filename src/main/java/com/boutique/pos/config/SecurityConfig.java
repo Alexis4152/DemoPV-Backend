@@ -63,6 +63,11 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // Excepción DENTRO de /api/auth/**, declarada antes que el permitAll
+                        // de abajo (gana la regla más específica que aparezca primero): a
+                        // diferencia de login/forgot-password/reset-password (anónimos por
+                        // diseño), cambiar la propia contraseña sí exige sesión.
+                        .requestMatchers("/api/auth/change-password").authenticated()
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/uploads/**").permitAll()
                         // Vitrina pública de apartados (PublicController): sin login, el

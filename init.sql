@@ -37,6 +37,9 @@ CREATE TABLE IF NOT EXISTS users (
     password            VARCHAR(255) NOT NULL,
     tienda_id           BIGINT REFERENCES tiendas(id),
     is_active           BOOLEAN NOT NULL DEFAULT TRUE,
+    -- true cuando un admin lo dio de alta con una contraseña temporal generada por el
+    -- sistema (mandada por correo) y todavía no la cambia — ver AuthService#changePassword.
+    must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
     created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMP NOT NULL DEFAULT NOW(),
     deleted_at          TIMESTAMP,

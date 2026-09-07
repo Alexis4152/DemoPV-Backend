@@ -58,6 +58,15 @@ public class User implements UserDetails {
     @Builder.Default
     private Boolean isActive = true;
 
+    // true cuando el admin lo dio de alta con una contraseña temporal generada por el
+    // sistema (ver UserService#create) — el frontend debe forzar la pantalla de "cambia tu
+    // contraseña" antes de dejarlo usar el resto de la app. Se apaga en AuthService#changePassword.
+    // NOT NULL DEFAULT FALSE: los usuarios que ya existían antes de este campo no deben
+    // quedar bloqueados de la nada.
+    @Column(nullable = false)
+    @Builder.Default
+    private Boolean mustChangePassword = false;
+
     // LAZY (a diferencia del resto de relaciones de esta clase) porque User se referencia
     // a sí mismo aquí — en EAGER, Hibernate encadena el join User→createdBy→createdBy→...
     // sin límite y Postgres truena con "límite de profundidad de stack alcanzado". Por el

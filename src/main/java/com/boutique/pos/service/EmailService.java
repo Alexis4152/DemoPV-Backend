@@ -121,8 +121,46 @@ public class EmailService {
         } catch (MessagingException | RuntimeException e) {
             log.error("No se pudo enviar el correo de recuperación de contraseña a {}: {}", user.getEmail(), e.getMessage());
         }
+    }
+
+    // @Async por el mismo motivo que el resto: el usuario ya quedó creado y UserController
+    // ya le respondió al admin que lo dio de alta antes de que este correo termine de mandarse.
+    /**
+     * Envía por correo la contraseña temporal generada al dar de alta un usuario nuevo
+     * (ver {@code UserService#create}). El usuario debe poder iniciar sesión con ella de
+     * inmediato; el frontend es quien lo obliga a cambiarla justo después (ver
+     * {@code User#getMustChangePassword()}), este correo no lo menciona como un link de un
+     * solo uso — es una contraseña real, solo temporal.
+     *
+     * @param user usuario recién creado
+     * @param tempPassword contraseña temporal en texto plano, generada al azar
+     * @param loginLink URL (del frontend, ya resuelta según el entorno) a la pantalla de login
+     */
+    @Async
+    public void sendNewUserPasswordEmail(User user, String tempPassword, String loginLink) {
+        try {
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            helper.setTo(user.getEmail());
+            helper.setSubject("Tu cuenta en Nexora POS");
+            helper.setText(
+                    "Hola " + user.getName() + ",\n\n" +
+                    "Se creó una cuenta para ti en el sistema. Estos son tus datos de acceso:\n\n" +
+                    "Correo: " + user.getEmail() + "\n" +
+                    "Contraseña temporal: " + tempPassword + "\n\n" +
+                    "Inicia sesión aquí:\n" + loginLink + "\n\n" +
+                    "Al iniciar sesión por primera vez se te va a pedir que la cambies por una de tu elección.\n\n" +
+                    "Si tú no esperabas este correo, contacta a tu administrador."
+            );
+
+            mailSender.send(message);
+            log.info("Contraseña temporal enviada a {} (usuario nuevo)", user.getEmail());
+        } catch (MessagingException | RuntimeException e) {
+            log.error("No se pudo enviar la contraseña temporal a {}: {}", user.getEmail(), e.getMessage());
         }
-            // Se manda al crearse (PENDING), que es el momento en que alguien tiene que actuar
+    }
+
+    // Se manda al crearse (PENDING), que es el momento en que alguien tiene que actuar
     // (revisar y confirmar o rechazar) — no hay otro aviso automático por correo en el
     // resto del ciclo de vida del apartado.
     /**
