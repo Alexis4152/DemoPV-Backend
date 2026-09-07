@@ -8,7 +8,9 @@ import com.boutique.pos.model.InventoryMovement;
 import com.boutique.pos.model.Product;
 import com.boutique.pos.model.Tienda;
 import com.boutique.pos.model.User;
+import com.boutique.pos.model.ProductImage;
 import com.boutique.pos.repository.InventoryMovementRepository;
+import com.boutique.pos.repository.ProductImageRepository;
 import com.boutique.pos.repository.ProductRepository;
 import com.boutique.pos.security.TenantScope;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
+import java.util.Map;
 
 /**
  * CRUD de productos y control de inventario, con aislamiento por tienda (multi-tenancy).
@@ -38,10 +41,14 @@ public class ProductService {
     private final ProductRepository productRepository;
     private final CategoryService categoryService;
     private final InventoryMovementRepository movementRepository;
+    private final ProductImageRepository productImageRepository;
     private final TenantScope tenantScope;
 
     /**
-     * Búsqueda paginada de productos activos, con filtros combinables.
+     * Búsqueda paginada de productos activos, con filtros combinables. Cada producto trae
+     * ya resuelta su foto de portada ({@link Product#getPrimaryImage()}, ver {@link
+     * #withPrimaryImages}) — el buscador del Punto de Venta la usa para su vista "con
+     * imágenes"; el resto de callers simplemente la ignoran.
      *
      * @param q texto de búsqueda (nombre/código de barras, según implemente el repositorio), o null
      * @param categoryId filtro por categoría, o null para no filtrar
@@ -51,7 +58,27 @@ public class ProductService {
      * @return página de productos activos que cumplen los filtros
      */
     public Page<Product> search(String q, Long categoryId, Boolean lowStock, Pageable pageable, User actor) {
-        return productRepository.searchActive(q, categoryId, lowStock, tenantScope.scopeId(actor), pageable);
+        Page<Product> page = productRepository.searchActive(q, categoryId, lowStock, tenantScope.scopeId(actor), pageable);
+        withPrimaryImages(page.getContent());
+        return page;
+    }
+
+    /**
+     * Rellena {@link Product#getPrimaryImage()} en bloque para toda una lista de productos
+     * ya cargados — un solo query a {@code product_images} para todos, nunca uno por
+     * producto. Modifica los objetos recibidos en su lugar (no regresa nada nuevo) porque
+     * {@code primaryImage} es un campo transitorio de la propia entidad, no una columna.
+     *
+     * @param products productos ya obtenidos (ej. el contenido de una página); se ignora si viene vacía
+     */
+    private void withPrimaryImages(List<Product> products) {
+        if (products.isEmpty()) return;
+        List<Long> ids = products.stream().map(Product::getId).toList();
+        Map<Long, String> byProduct = productImageRepository
+                .findByProductIdInOrderByIsPrimaryDescSortOrderAsc(ids).stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        img -> img.getProduct().getId(), ProductImage::getPath, (first, second) -> first));
+        products.forEach(p -> p.setPrimaryImage(byProduct.get(p.getId())));
     }
 
     /**

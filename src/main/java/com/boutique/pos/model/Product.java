@@ -114,4 +114,19 @@ public class Product {
 
     @UpdateTimestamp
     private LocalDateTime updatedAt;
+
+    // NO es una columna de "products" — las fotos viven aparte en product_images (ver
+    // ProductImage), porque un producto puede tener varias. Este campo transitorio solo
+    // se llena bajo demanda, en bloque para toda una página de resultados (nunca un query
+    // por producto), cuando el caller sí necesita mostrar la portada de cada uno — ver
+    // ProductService#withPrimaryImages, usado por el buscador del Punto de Venta para su
+    // vista "con imágenes". Queda en null en cualquier otra respuesta que no lo llene.
+    //
+    // OJO: es "transient" de Java (la palabra clave), NO @jakarta.persistence.Transient.
+    // Con la anotación, jackson-datatype-hibernate6 (ver pom.xml) OCULTA el campo del JSON
+    // por completo aunque tenga valor — trata cualquier @Transient de JPA como "no
+    // serializable salvo que se pida explícito", pensado para evitar disparar la carga de
+    // un proxy perezoso al serializar. La palabra clave logra lo mismo para Hibernate
+    // (JPA también la reconoce como "no persistir esto") sin que ese módulo la intercepte.
+    private transient String primaryImage;
 }
