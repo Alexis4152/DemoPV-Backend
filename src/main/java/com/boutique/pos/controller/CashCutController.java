@@ -54,7 +54,7 @@ public class CashCutController {
      * @param actor  usuario autenticado; determina el filtro por tienda
      */
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
     public ResponseEntity<ApiResponse<PageResponse<CashCut>>> list(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
@@ -77,7 +77,7 @@ public class CashCutController {
      * @param actor usuario autenticado; determina el filtro por tienda
      */
     @GetMapping("/cashiers")
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
     public ResponseEntity<ApiResponse<List<CashierDto>>> cashiers(@AuthenticationPrincipal User actor) {
         List<CashierDto> result = cashCutService.listCashiers(actor).stream()
                 .map(row -> new CashierDto((Long) row[0], (String) row[1]))

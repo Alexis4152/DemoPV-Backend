@@ -70,11 +70,16 @@ public class TenantDataInitializer implements CommandLineRunner {
         return tienda;
     }
 
+    // Roles "de plataforma": sus usuarios deben permanecer sin tienda propia (operan sobre
+    // la que elijan actuar, ver TenantScope) — nunca se les debe asignar la tienda por
+    // defecto aquí. Compartida con migrateSharedRolesToTiendas() más abajo, mismo motivo.
+    private static final List<String> PLATFORM_ROLE_NAMES = List.of("SUPER_ADMIN", "SUPERVISOR");
+
     /**
      * Asigna {@code defaultTienda} a todos los registros con {@code tienda_id} nulo en las
-     * tablas listadas en {@link #TABLES_TO_BACKFILL}, y a los usuarios sin tienda que no sean
-     * SUPER_ADMIN (esas cuentas deben permanecer sin tienda, ya que operan a nivel
-     * plataforma).
+     * tablas listadas en {@link #TABLES_TO_BACKFILL}, y a los usuarios sin tienda que no
+     * tengan un rol de plataforma ({@link #PLATFORM_ROLE_NAMES} — esas cuentas deben
+     * permanecer sin tienda, ya que operan a nivel plataforma).
      */
     private void backfillTiendaId(Tienda defaultTienda) {
         for (String table : TABLES_TO_BACKFILL) {
@@ -84,11 +89,11 @@ public class TenantDataInitializer implements CommandLineRunner {
                 log.info("Migrados {} registros de '{}' a la tienda por defecto", updated, table);
             }
         }
-        // Users are handled separately: SUPER_ADMIN accounts must stay tienda-less,
+        // Users are handled separately: platform-role accounts must stay tienda-less,
         // everyone else without a tienda yet is assigned to the default one.
         int updatedUsers = jdbcTemplate.update(
                 "UPDATE users SET tienda_id = ? WHERE tienda_id IS NULL " +
-                        "AND role_id NOT IN (SELECT id FROM roles WHERE name = 'SUPER_ADMIN')",
+                        "AND role_id NOT IN (SELECT id FROM roles WHERE name IN ('SUPER_ADMIN', 'SUPERVISOR'))",
                 defaultTienda.getId());
         if (updatedUsers > 0) {
             log.info("Migrados {} usuarios a la tienda por defecto", updatedUsers);
@@ -97,8 +102,10 @@ public class TenantDataInitializer implements CommandLineRunner {
 
     /**
      * Migra los roles que todavía no pertenecen a ninguna tienda (creados antes de que
-     * existiera el multi-tienda) a un modelo de un rol independiente por tienda. El rol
-     * SUPER_ADMIN se excluye a propósito porque es global por diseño.
+     * existiera el multi-tienda) a un modelo de un rol independiente por tienda. Los roles
+     * de plataforma (SUPER_ADMIN, SUPERVISOR) se excluyen a propósito porque son globales
+     * por diseño — de lo contrario esta migración los "adoptaría" como si fueran roles
+     * legados compartidos y los repartiría (o peor, los fusionaría) entre las tiendas.
      */
     // Un solo evento, la primera vez que hay más de una tienda: los roles ADMIN/CASHIER/SELLER
     // (y cualquier otro que se haya creado antes de que existiera el multi-tienda) eran
@@ -110,7 +117,7 @@ public class TenantDataInitializer implements CommandLineRunner {
         if (tiendas.isEmpty()) return;
 
         List<Role> tiendaLessRoles = roleRepository.findAllByTiendaIsNull();
-        tiendaLessRoles.removeIf(r -> "SUPER_ADMIN".equals(r.getName())); // ese sí es global, se queda sin tienda
+        tiendaLessRoles.removeIf(r -> PLATFORM_ROLE_NAMES.contains(r.getName()));
 
         if (tiendaLessRoles.isEmpty()) return; // ya migrado, o no había nada que migrar
 

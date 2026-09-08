@@ -39,12 +39,26 @@ public class RoleService {
      * Lista los roles activos visibles para el actor: los de su tienda, o todos si es
      * SUPER_ADMIN.
      *
+     * <p>Cuando el actor es SUPER_ADMIN, además suma el rol de plataforma SUPERVISOR (que
+     * al no pertenecer a ninguna tienda —igual que SUPER_ADMIN mismo— nunca aparecería en
+     * un listado acotado a la tienda que esté actuando) para que el selector de rol al dar
+     * de alta un usuario en Usuarios.jsx pueda ofrecerlo — es la única forma de crear una
+     * cuenta Supervisor desde la aplicación en vez de a mano en la base de datos.</p>
+     *
      * @param actor usuario que realiza la consulta
      * @return roles activos dentro del alcance del actor, ordenados por nombre
      */
     public List<Role> findAll(User actor) {
         Long scope = tenantScope.scopeId(actor);
-        return scope == null ? roleRepository.findAllByIsActiveTrueOrderByNameAsc() : roleRepository.findAllByTiendaIdAndIsActiveTrueOrderByNameAsc(scope);
+        List<Role> roles = scope == null
+                ? new java.util.ArrayList<>(roleRepository.findAllByIsActiveTrueOrderByNameAsc())
+                : new java.util.ArrayList<>(roleRepository.findAllByTiendaIdAndIsActiveTrueOrderByNameAsc(scope));
+        if (tenantScope.isSuperAdmin(actor)) {
+            roleRepository.findFirstByNameAndTiendaIsNullOrderById("SUPERVISOR")
+                    .filter(supervisor -> roles.stream().noneMatch(r -> r.getId().equals(supervisor.getId())))
+                    .ifPresent(roles::add);
+        }
+        return roles;
     }
 
     /**
@@ -84,6 +98,13 @@ public class RoleService {
      */
     public Role findById(Long id, User actor) {
         Role r = findById(id);
+        // SUPER_ADMIN puede resolver CUALQUIER rol por id, sin importar de qué tienda sea
+        // ni cuál tenga elegida como "actuante" — incluye a los roles de plataforma
+        // (SUPERVISOR) que de otra forma nunca calificarían (tienda=null no calza con
+        // ninguna tienda concreta). No es una escalada de privilegio nueva: SUPER_ADMIN ya
+        // puede mandar cualquier tiendaId explícito al dar de alta un usuario (ver
+        // UserService#resolveTiendaForWrite), esto solo evita un rechazo inconsistente.
+        if (tenantScope.isSuperAdmin(actor)) return r;
         Long scope = tenantScope.scopeId(actor);
         if (scope != null && (r.getTienda() == null || !scope.equals(r.getTienda().getId()))) {
             throw new IllegalArgumentException("Rol no encontrado: " + id);
@@ -103,7 +124,7 @@ public class RoleService {
      */
     public Role create(RoleRequest req, User actor) {
         Tienda tienda = tenantScope.tiendaForWrite(actor);
-        if (tienda == null && tenantScope.isSuperAdmin(actor)) {
+        if (tienda == null && tenantScope.isPlatformActor(actor)) {
             throw new IllegalStateException("Elige una tienda para poder crear un rol");
         }
         Long tiendaId = tienda != null ? tienda.getId() : null;

@@ -5,6 +5,8 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
+import java.util.List;
+
 /**
  * Payload para crear o actualizar un {@code User} ({@code POST}/{@code PUT /api/users/**},
  * requiere acceso a la sección USERS). El usuario queda ligado a la tienda del actor que
@@ -29,4 +31,9 @@ public class UserRequest {
     private Boolean isActive;
     // solo aplica si quien crea/edita es SUPER_ADMIN; para el resto se ignora y se usa su propia tienda
     private Long tiendaId;
+    // Solo aplica si el rol elegido es SUPERVISOR y quien crea/edita es SUPER_ADMIN (para
+    // cualquier otro caso se ignora) — reemplaza POR COMPLETO el conjunto de tiendas que
+    // este Supervisor administra (ver Tienda#getSupervisor()/UserService#applySupervisedTiendas):
+    // null = no tocar la asignación actual; lista vacía = quitarle todas.
+    private List<Long> supervisedTiendaIds;
 }

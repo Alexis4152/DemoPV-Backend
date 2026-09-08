@@ -81,7 +81,7 @@ public class CategoryService {
      */
     public Category create(CategoryRequest req, User actor) {
         Tienda tienda = tenantScope.tiendaForWrite(actor);
-        if (tienda == null && tenantScope.isSuperAdmin(actor)) {
+        if (tienda == null && tenantScope.isPlatformActor(actor)) {
             throw new IllegalStateException("Elige una tienda para poder crear una categoría");
         }
         Category cat = new Category();

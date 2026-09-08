@@ -12,6 +12,7 @@ import com.boutique.pos.model.ProductImage;
 import com.boutique.pos.repository.InventoryMovementRepository;
 import com.boutique.pos.repository.ProductImageRepository;
 import com.boutique.pos.repository.ProductRepository;
+import com.boutique.pos.repository.TiendaRepository;
 import com.boutique.pos.security.TenantScope;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -42,6 +43,7 @@ public class ProductService {
     private final CategoryService categoryService;
     private final InventoryMovementRepository movementRepository;
     private final ProductImageRepository productImageRepository;
+    private final TiendaRepository tiendaRepository;
     private final TenantScope tenantScope;
 
     /**
@@ -59,6 +61,38 @@ public class ProductService {
      */
     public Page<Product> search(String q, Long categoryId, Boolean lowStock, Pageable pageable, User actor) {
         Page<Product> page = productRepository.searchActive(q, categoryId, lowStock, tenantScope.scopeId(actor), pageable);
+        withPrimaryImages(page.getContent());
+        return page;
+    }
+
+    /**
+     * Busca un producto por nombre/código en las tiendas "hermanas" de la del actor — las
+     * que comparten el mismo SUPERVISOR (ver {@code TiendaRepository#findSiblingTiendas}),
+     * sin incluir la propia. A propósito NO usa {@link TenantScope#scopeId}: esa regla es
+     * "solo SUPER_ADMIN/SUPERVISOR ven más de una tienda", pero esta consulta es exactamente
+     * la EXCEPCIÓN — cualquier rol (cajero, vendedor, admin) puede usarla para saber si una
+     * sucursal del mismo grupo tiene existencias antes de mandar a un cliente para allá, sin
+     * que eso le dé visibilidad sobre nada más de esas tiendas (ni sus ventas, ni sus
+     * usuarios, ni editar su catálogo).
+     *
+     * @param q texto de búsqueda (nombre o código de barras) — a diferencia de {@link
+     *          #search}, no puede venir vacío: sin texto no tendría sentido listar el
+     *          catálogo completo de tiendas ajenas
+     * @param actor usuario que consulta; su tienda actual (ver {@link
+     *              TenantScope#tiendaForWrite}) determina el grupo de tiendas hermanas
+     * @param pageable paginación solicitada
+     * @return productos con stock disponible (&gt;0) en tiendas hermanas que calzan con
+     *         {@code q}, o una página vacía si el actor no tiene tienda elegida o esa
+     *         tienda no tiene supervisor asignado (sin "hermanas" con quién comparar)
+     */
+    public Page<Product> searchSiblingStock(String q, User actor, Pageable pageable) {
+        if (q == null || q.isBlank()) return Page.empty(pageable);
+        Tienda myTienda = tenantScope.tiendaForWrite(actor);
+        if (myTienda == null) return Page.empty(pageable);
+        List<Tienda> siblings = tiendaRepository.findSiblingTiendas(myTienda.getId());
+        if (siblings.isEmpty()) return Page.empty(pageable);
+        List<Long> siblingIds = siblings.stream().map(Tienda::getId).toList();
+        Page<Product> page = productRepository.searchAcrossTiendas(siblingIds, q, pageable);
         withPrimaryImages(page.getContent());
         return page;
     }
@@ -204,7 +238,7 @@ public class ProductService {
      */
     public Product create(ProductRequest req, User actor) {
         Tienda tienda = tenantScope.tiendaForWrite(actor);
-        if (tienda == null && tenantScope.isSuperAdmin(actor)) {
+        if (tienda == null && tenantScope.isPlatformActor(actor)) {
             throw new IllegalStateException("Elige una tienda para poder crear un producto");
         }
         Category cat = categoryService.findById(req.getCategoryId(), actor);
@@ -288,7 +322,7 @@ public class ProductService {
      */
     @Transactional
     public Product adjustStock(Long id, InventoryAdjustRequest req, User actor) {
-        if (req.getQuantity() < 0 && !"ADMIN".equals(actor.getRole().getName())) {
+        if (req.getQuantity() < 0 && !tenantScope.isAdminLevel(actor)) {
             throw new IllegalStateException("Solo un administrador puede quitar piezas del inventario");
         }
         Product p = findById(id, actor);

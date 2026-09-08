@@ -1,6 +1,7 @@
 package com.boutique.pos.exception;
 
 import com.boutique.pos.dto.ApiResponse;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -13,6 +14,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import java.util.stream.Collectors;
 
 @RestControllerAdvice
+@Slf4j
 public class GlobalExceptionHandler {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -43,8 +45,13 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.error("Acceso denegado"));
     }
 
+    // Cualquier RuntimeException no cubierta por un handler más específico de arriba —
+    // antes se le mandaba al cliente el mensaje crudo sin dejar rastro en el log del
+    // servidor, así que un 500 real (bug, no un error de negocio esperado) no dejaba forma
+    // de diagnosticarlo después del hecho.
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<ApiResponse<Void>> handleRuntime(RuntimeException ex) {
+        log.error("Error no controlado", ex);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(ApiResponse.error(ex.getMessage()));
     }
 }

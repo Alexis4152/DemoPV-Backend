@@ -1,7 +1,6 @@
 package com.boutique.pos.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -69,21 +68,28 @@ public class User implements UserDetails {
 
     // LAZY (a diferencia del resto de relaciones de esta clase) porque User se referencia
     // a sí mismo aquí — en EAGER, Hibernate encadena el join User→createdBy→createdBy→...
-    // sin límite y Postgres truena con "límite de profundidad de stack alcanzado". Por el
-    // mismo motivo, JsonIgnoreProperties evita que Jackson expanda role/tienda/los propios
-    // createdBy-updatedBy-deletedBy de este User anidado al serializar (User→role→tienda→
-    // updatedBy(User)→role→... sería un ciclo infinito).
-    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
+    // sin límite y Postgres truena con "límite de profundidad de stack alcanzado".
+    //
+    // @JsonIgnore (no @JsonIgnoreProperties como en Product/Tienda/etc.) a propósito: aquí
+    // el valor puede ser EL MISMO objeto que se está serializando (ej. un admin editando su
+    // propia cuenta deja updatedBy=él mismo) — Jackson detecta ese caso como "referencia
+    // directa a sí mismo" y truena con InvalidDefinitionException sin importar qué tan
+    // acotado esté @JsonIgnoreProperties, porque el chequeo es "¿este valor ES el bean que
+    // estoy serializando?", no "¿hasta dónde debo recorrerlo?". Pasó de verdad: tronaba
+    // /api/users completo para todos en cuanto alguien editaba su propio usuario. Ninguna
+    // pantalla del frontend lee createdBy/updatedBy/deletedBy de un User, así que ocultarlos
+    // del todo no quita nada.
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by_user_id")
     private User createdBy;
 
-    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "updated_by_user_id")
     private User updatedBy;
 
-    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "deleted_by_user_id")
     private User deletedBy;

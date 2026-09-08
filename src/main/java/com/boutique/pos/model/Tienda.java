@@ -90,6 +90,17 @@ public class Tienda {
     @Builder.Default
     private Integer defaultApartadoHours = 24;
 
+    // Usuario con rol SUPERVISOR ("Supervisor de tiendas") a cargo de esta tienda, o null si
+    // no tiene ninguno asignado todavía. Es la relación INVERSA a User.tienda: mientras un
+    // usuario normal cuelga de una sola tienda, un Supervisor no tiene tienda propia (igual
+    // que SUPER_ADMIN) y en cambio puede tener VARIAS tiendas apuntándolo a él aquí — de ahí
+    // que la relación viva de este lado (Tienda→supervisor) y no al revés. Ver TenantScope,
+    // que es quien realmente decide qué puede ver/hacer un Supervisor con esto.
+    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "supervisor_id")
+    private User supervisor;
+
     // LAZY: evita el ciclo User→Tienda(EAGER)→createdBy(User)→Tienda→... (User carga su Tienda en EAGER).
     // JsonIgnoreProperties evita además que, al serializar, Jackson expanda role/tienda de
     // este User anidado — sin esto, Tienda.updatedBy→role→tienda→updatedBy→... es un ciclo

@@ -125,7 +125,7 @@ public class SaleController {
      * @param actor usuario autenticado que realiza la cancelación
      */
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
     public ResponseEntity<ApiResponse<Sale>> cancel(@PathVariable Long id, @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(saleService.cancel(id, actor), "Venta cancelada"));
     }

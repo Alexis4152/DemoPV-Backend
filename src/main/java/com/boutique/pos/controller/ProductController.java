@@ -110,6 +110,28 @@ public class ProductController {
     }
 
     /**
+     * Busca stock disponible de un producto en las tiendas "hermanas" de la del actor (el
+     * mismo SUPERVISOR), sin exponer nada más de ellas. Accesible para cualquier rol con la
+     * sección {@code INVENTORY} habilitada (cajero, vendedor, admin...), no solo SUPER_ADMIN/
+     * SUPERVISOR — ver {@link ProductService#searchSiblingStock}.
+     *
+     * @param q      texto de búsqueda (nombre o código de barras), obligatorio
+     * @param page   número de página (base 0, por defecto 0)
+     * @param size   tamaño de página (por defecto 20)
+     * @param actor  usuario autenticado; determina el grupo de tiendas hermanas
+     */
+    @GetMapping("/sibling-stock")
+    @PreAuthorize("@sectionAccess.check('INVENTORY')")
+    public ResponseEntity<ApiResponse<PageResponse<Product>>> siblingStock(@RequestParam String q,
+                                                                            @RequestParam(defaultValue = "0") int page,
+                                                                            @RequestParam(defaultValue = "20") int size,
+                                                                            @AuthenticationPrincipal User actor) {
+        Pageable pageable = PageRequest.of(page, size);
+        Page<Product> result = productService.searchSiblingStock(q, actor, pageable);
+        return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
+    }
+
+    /**
      * Total histórico de unidades vendidas de cada producto activo (incluye los que nunca
      * se han vendido, con 0), para alimentar los filtros "sin ventas" / "más vendidos" de
      * Inventario. Accesible desde {@code INVENTORY}.
@@ -174,7 +196,7 @@ public class ProductController {
      * @param actor usuario autenticado que realiza la creación
      */
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
     public ResponseEntity<ApiResponse<Product>> create(@Valid @RequestBody ProductRequest req,
                                                         @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(productService.create(req, actor), "Producto creado"));
@@ -189,7 +211,7 @@ public class ProductController {
      * @param actor usuario autenticado que realiza la actualización
      */
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
     public ResponseEntity<ApiResponse<Product>> update(@PathVariable Long id,
                                                         @Valid @RequestBody ProductRequest req,
                                                         @AuthenticationPrincipal User actor) {
@@ -222,7 +244,7 @@ public class ProductController {
      * @param actor usuario autenticado que realiza la baja
      */
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
     public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id, @AuthenticationPrincipal User actor) {
         productService.deactivate(id, actor);
         return ResponseEntity.ok(ApiResponse.ok(null, "Producto desactivado"));
@@ -241,7 +263,7 @@ public class ProductController {
     }
 
     /** Sube una foto nueva para el producto. Solo ADMIN (igual que crear/editar el producto). */
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
     @PostMapping(value = "/{id}/images", consumes = "multipart/form-data")
     public ResponseEntity<ApiResponse<ProductImage>> uploadImage(@PathVariable Long id,
                                                                   @RequestParam("file") MultipartFile file,
@@ -251,7 +273,7 @@ public class ProductController {
     }
 
     /** Marca una foto como portada del producto. Solo ADMIN. */
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
     @PutMapping("/{id}/images/{imageId}/primary")
     public ResponseEntity<ApiResponse<Void>> setPrimaryImage(@PathVariable Long id, @PathVariable Long imageId,
                                                               @AuthenticationPrincipal User actor) {
@@ -261,7 +283,7 @@ public class ProductController {
     }
 
     /** Borra una foto del producto. Solo ADMIN. */
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
     @DeleteMapping("/{id}/images/{imageId}")
     public ResponseEntity<ApiResponse<Void>> deleteImage(@PathVariable Long id, @PathVariable Long imageId,
                                                           @AuthenticationPrincipal User actor) {

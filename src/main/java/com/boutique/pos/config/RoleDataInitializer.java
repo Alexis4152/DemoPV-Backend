@@ -47,6 +47,7 @@ public class RoleDataInitializer implements CommandLineRunner {
     public void run(String... args) {
         seedDefaultRoles();
         seedSuperAdminRole();
+        seedSupervisorRole();
         assignDefaultAdminRole();
     }
 
@@ -98,7 +99,7 @@ public class RoleDataInitializer implements CommandLineRunner {
      * no debe tomar un script de arranque.
      */
     private void seedSuperAdminRole() {
-        if (roleRepository.findFirstByNameOrderById("SUPER_ADMIN").isPresent()) return;
+        if (roleRepository.findFirstByNameAndTiendaIsNullOrderById("SUPER_ADMIN").isPresent()) return;
         Role superAdmin = Role.builder()
                 .name("SUPER_ADMIN")
                 .description("Super administrador — plataforma completa, todas las tiendas")
@@ -108,6 +109,29 @@ public class RoleDataInitializer implements CommandLineRunner {
                 .build();
         roleRepository.save(superAdmin);
         log.info("Rol sembrado: SUPER_ADMIN");
+    }
+
+    // Mismo patrón idempotente que seedSuperAdminRole(): chequeo propio por nombre, no por
+    // count() de la tabla completa.
+    /**
+     * Crea el rol SUPERVISOR ("Supervisor de tiendas": usuario de plataforma, sin tienda
+     * propia, con TODAS las secciones habilitadas — ve y administra el SUBCONJUNTO de
+     * tiendas que tenga asignadas, vía {@link com.boutique.pos.model.Tienda#getSupervisor()})
+     * si todavía no existe ninguno con ese nombre. Igual que con SUPER_ADMIN, no crea ningún
+     * usuario con este rol ni le asigna tiendas — eso lo decide el SUPER_ADMIN (o el propio
+     * Supervisor, al dar de alta una tienda nueva) desde la aplicación.
+     */
+    private void seedSupervisorRole() {
+        if (roleRepository.findFirstByNameAndTiendaIsNullOrderById("SUPERVISOR").isPresent()) return;
+        Role supervisor = Role.builder()
+                .name("SUPERVISOR")
+                .description("Supervisor de tiendas — administra el grupo de tiendas que tenga asignado")
+                .isSystem(true)
+                .tienda(null)
+                .sections(EnumSet.allOf(AppSection.class))
+                .build();
+        roleRepository.save(supervisor);
+        log.info("Rol sembrado: SUPERVISOR");
     }
 
     /**

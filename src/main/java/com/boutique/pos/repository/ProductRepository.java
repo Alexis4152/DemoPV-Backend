@@ -103,6 +103,22 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                                 Pageable pageable);
 
     /**
+     * Busca productos activos CON STOCK por nombre/código, pero en un CONJUNTO de tiendas
+     * en vez de una sola — usado por {@code ProductService#searchSiblingStock} para que
+     * cualquier rol (no solo SUPER_ADMIN/SUPERVISOR) pueda ver si una sucursal hermana
+     * (mismo SUPERVISOR, ver {@code TiendaRepository#findSiblingTiendas}) tiene existencias
+     * de un producto, sin poder ver ni tocar nada más de esas tiendas. {@code q} es
+     * obligatorio a propósito (a diferencia de {@link #searchActive}): sin texto, listar el
+     * catálogo completo de varias tiendas ajenas no tendría sentido para este caso de uso.
+     */
+    @Query("SELECT p FROM Product p WHERE p.isActive = true AND p.stock > 0 AND p.tienda.id IN :tiendaIds " +
+           "AND (LOWER(p.name) LIKE LOWER(CONCAT('%',CAST(:q AS string),'%')) OR LOWER(p.barcode) LIKE LOWER(CONCAT('%',CAST(:q AS string),'%'))) " +
+           "ORDER BY p.tienda.name ASC, p.name ASC")
+    Page<Product> searchAcrossTiendas(@Param("tiendaIds") List<Long> tiendaIds,
+                                       @Param("q") String q,
+                                       Pageable pageable);
+
+    /**
      * Busca un producto activo por su código de barras EXACTO, dentro de una tienda.
      *
      * <p>A diferencia de {@link #searchActive} (coincidencia parcial, pensada para que un
