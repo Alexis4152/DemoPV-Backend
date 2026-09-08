@@ -22,8 +22,12 @@ CREATE TABLE IF NOT EXISTS tiendas (
     apartados_enabled              BOOLEAN NOT NULL DEFAULT FALSE,
     public_slug                    VARCHAR(80) UNIQUE,
     default_apartado_hours         INTEGER NOT NULL DEFAULT 24,
-    -- sin FK aquí: sería circular con "users" (users.tienda_id -> tiendas, y estas tres
-    -- columnas -> users). Hibernate agrega las 3 foreign keys al arrancar la app, igual
+    -- Usuario con rol SUPERVISOR a cargo de esta tienda (null = sin asignar). Ver
+    -- TenantScope/Tienda.java: relación inversa a users.tienda_id (un Supervisor no tiene
+    -- tienda propia, pero puede tener VARIAS tiendas apuntándolo aquí).
+    supervisor_id       BIGINT,
+    -- sin FK aquí: sería circular con "users" (users.tienda_id -> tiendas, y estas cuatro
+    -- columnas -> users). Hibernate agrega las 4 foreign keys al arrancar la app, igual
     -- que con users.role_id más abajo.
     created_by_user_id  BIGINT,
     updated_by_user_id  BIGINT,
