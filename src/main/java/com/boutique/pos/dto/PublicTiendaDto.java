@@ -15,4 +15,9 @@ public class PublicTiendaDto {
     private String name;
     private String logoPath;
     private String primaryColor;
+
+    /** {@code Tienda#getDefaultApartadoHours()} — horas que dura un apartado ya
+     *  confirmado, para que el cliente sepa de entrada cuánto plazo tendría para
+     *  recogerlo y pagarlo si la tienda lo confirma. No es un dato sensible. */
+    private Integer defaultApartadoHours;
 }

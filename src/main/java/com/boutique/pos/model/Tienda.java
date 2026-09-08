@@ -100,6 +100,20 @@ public class Tienda {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "supervisor_id")
     private User supervisor;
+    // Meta de venta diaria que el ADMIN fija para su tienda (pantalla "Datos de la
+    // tienda"), usada por el Dashboard para mostrar el % de avance del día contra esta
+    // meta. Opcional: null = sin meta definida (el Dashboard solo muestra la venta del
+    // día, sin porcentaje).
+    @Column(precision = 12, scale = 2)
+    private BigDecimal dailySalesGoal;
+
+    // Segundos entre cada actualización automática (polling) de Apartados y el Dashboard
+    // — así ambos módulos se refrescan solos sin que alguien tenga que recargar la
+    // página o volver a entrar. Ajustable por el ADMIN en "Datos de la tienda"; 20s de
+    // default, un punto medio razonable entre "se siente vivo" y no saturar la API.
+    @Column(nullable = false)
+    @Builder.Default
+    private Integer pollingIntervalSeconds = 20;
 
     // LAZY: evita el ciclo User→Tienda(EAGER)→createdBy(User)→Tienda→... (User carga su Tienda en EAGER).
     // JsonIgnoreProperties evita además que, al serializar, Jackson expanda role/tienda de

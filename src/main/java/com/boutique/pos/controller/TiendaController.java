@@ -7,6 +7,7 @@ import com.boutique.pos.dto.TiendaThemeRequest;
 import com.boutique.pos.model.Tienda;
 import com.boutique.pos.model.TiendaInfo;
 import com.boutique.pos.model.User;
+import com.boutique.pos.service.ApartadoPromoPdfService;
 import com.boutique.pos.service.TiendaInfoService;
 import com.boutique.pos.service.TiendaLogoService;
 import com.boutique.pos.service.TiendaService;
@@ -42,6 +43,7 @@ public class TiendaController {
     private final TiendaService tiendaService;
     private final TiendaInfoService tiendaInfoService;
     private final TiendaLogoService tiendaLogoService;
+    private final ApartadoPromoPdfService apartadoPromoPdfService;
 
     /**
      * Lista las tiendas visibles para el actor: todas si es SUPER_ADMIN, o solo las que
@@ -169,6 +171,41 @@ public class TiendaController {
     /**
      * Sube o reemplaza el logo de una tienda. Accesible para el ADMIN de esa misma tienda o
      * para SUPER_ADMIN/SUPERVISOR sobre las suyas.
+     * Genera un PDF promocional de una sola página con el QR de la vitrina pública de
+     * apartados de la tienda (ver {@link ApartadoPromoPdfService}), para imprimir o
+     * compartir. Mismo candado de acceso que {@code /info}: el ADMIN de esa tienda o
+     * SUPER_ADMIN.
+     *
+     * @param id  identificador de la tienda
+     * @param url URL pública completa de su vitrina (ej. {@code https://.../apartar/mi-tienda}),
+     *            armada por el frontend — el backend no conoce su propio dominio público
+     * @param actor usuario autenticado
+     * @throws IllegalStateException si la tienda no tiene los apartados habilitados (con
+     *         su slug definido) — no tiene caso generar un QR a un link que no funciona
+     */
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    @GetMapping("/{id}/apartados-promo.pdf")
+    public ResponseEntity<byte[]> apartadosPromoPdf(
+            @PathVariable Long id,
+            @RequestParam String url,
+            @AuthenticationPrincipal User actor
+    ) {
+        TiendaInfo info = tiendaInfoService.get(id, actor);
+        Tienda tienda = info.getTienda();
+        if (!Boolean.TRUE.equals(tienda.getApartadosEnabled()) || tienda.getPublicSlug() == null || tienda.getPublicSlug().isBlank()) {
+            throw new IllegalStateException("Habilita la tienda pública de apartados antes de generar el PDF promocional");
+        }
+        byte[] pdf = apartadoPromoPdfService.generate(tienda, url);
+        String filename = "apartados-" + tienda.getPublicSlug() + ".pdf";
+        return ResponseEntity.ok()
+                .header("Content-Type", "application/pdf")
+                .header("Content-Disposition", "attachment; filename=\"" + filename + "\"")
+                .body(pdf);
+    }
+
+    /**
+     * Sube o reemplaza el logo de una tienda. Accesible para el ADMIN de esa
+     * misma tienda o para SUPER_ADMIN.
      *
      * @param id    identificador de la tienda
      * @param file  archivo de imagen del logo (multipart/form-data)

@@ -33,6 +33,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
@@ -201,6 +202,7 @@ public class ApartadoService {
                 .name(tienda.getName())
                 .logoPath(tienda.getLogoPath())
                 .primaryColor(tienda.getPrimaryColor())
+                .defaultApartadoHours(tienda.getDefaultApartadoHours())
                 .build();
     }
 
@@ -302,7 +304,43 @@ public class ApartadoService {
         if (scope != null && (a.getTienda() == null || !scope.equals(a.getTienda().getId()))) {
             throw new IllegalArgumentException("Apartado no encontrado: " + id);
         }
+        // Solo tiene sentido mientras sigue PENDING: es antes de confirmar cuando el
+        // cajero necesita saber qué tan libre está de verdad el stock (ver el método).
+        if (a.getStatus() == ApartadoStatus.PENDING) {
+            populateAvailableStock(a);
+        }
         return a;
+    }
+
+    /**
+     * Calcula, por línea, {@link ApartadoItem#getAvailableStock()}: el stock actual del
+     * producto menos lo que ya reclaman OTRAS solicitudes {@code PENDING} del mismo
+     * producto ({@link ApartadoRepository#sumPendingQuantityByProductExcluding}) — sin
+     * esto, el cajero vería el stock crudo (todavía no descontado para NINGÚN PENDING) y
+     * podría pensar que hay más disponible de lo que en realidad queda si hay más de una
+     * solicitud compitiendo por el mismo producto.
+     *
+     * @param apartado apartado {@code PENDING} cuyas líneas se anotan in-place
+     */
+    private void populateAvailableStock(Apartado apartado) {
+        List<Long> productIds = apartado.getItems().stream()
+                .map(ApartadoItem::getProduct)
+                .filter(Objects::nonNull)
+                .map(Product::getId)
+                .distinct()
+                .toList();
+        if (productIds.isEmpty()) return;
+
+        Map<Long, BigDecimal> pendingByProduct = apartadoRepository
+                .sumPendingQuantityByProductExcluding(apartado.getId(), productIds).stream()
+                .collect(Collectors.toMap(r -> ((Number) r[0]).longValue(), r -> (BigDecimal) r[1]));
+
+        for (ApartadoItem item : apartado.getItems()) {
+            Product product = item.getProduct();
+            if (product == null) continue;
+            BigDecimal claimedByOthers = pendingByProduct.getOrDefault(product.getId(), BigDecimal.ZERO);
+            item.setAvailableStock(Math.max(product.getStock() - claimedByOthers.intValue(), 0));
+        }
     }
 
     /**
@@ -439,6 +477,52 @@ public class ApartadoService {
             emailService.sendApartadoCompletedStaffEmail(saved, staff.getEmail());
         }
         return saved;
+    }
+
+    /**
+     * Quita UNA línea de un apartado {@code PENDING} — pensado para cuando, entre que se
+     * solicitó y se revisa, el producto se vendió por otro lado y ya no queda ninguna
+     * pieza ({@link ApartadoItem#getAvailableStock()} en 0): en vez de tener que cancelar
+     * el apartado completo, el cajero quita solo esa línea y confirma el resto. No toca
+     * stock (un {@code PENDING} nunca lo descontó) ni manda avisos automáticos — el
+     * frontend le recuerda al cajero contactar al cliente él mismo.
+     *
+     * @param apartadoId id del apartado
+     * @param itemId id de la línea a quitar
+     * @param actor cajero/admin que quita la línea
+     * @return el apartado ya sin esa línea, con sus totales recalculados
+     * @throws IllegalArgumentException si el apartado o la línea no existen (o no
+     *         pertenecen a la tienda del actor / a ese apartado)
+     * @throws IllegalStateException si el apartado ya no está {@code PENDING}, o si es la
+     *         única línea que le queda (para eso está cancelar el apartado completo)
+     */
+    @Transactional
+    public Apartado removeItem(Long apartadoId, Long itemId, User actor) {
+        Apartado apartado = findById(apartadoId, actor);
+        if (apartado.getStatus() != ApartadoStatus.PENDING) {
+            throw new IllegalStateException("Solo se pueden quitar productos de un apartado pendiente");
+        }
+        if (apartado.getItems().size() <= 1) {
+            throw new IllegalStateException("No puedes quitar el único producto de este apartado; cancélalo completo si ya no aplica");
+        }
+        ApartadoItem toRemove = apartado.getItems().stream()
+                .filter(i -> i.getId().equals(itemId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Producto no encontrado en este apartado: " + itemId));
+
+        apartado.getItems().remove(toRemove);
+
+        BigDecimal subtotal = BigDecimal.ZERO;
+        BigDecimal discount = BigDecimal.ZERO;
+        for (ApartadoItem item : apartado.getItems()) {
+            subtotal = subtotal.add(item.getUnitPrice().multiply(item.getQuantity()));
+            discount = discount.add(item.getDiscount());
+        }
+        apartado.setSubtotal(subtotal);
+        apartado.setDiscount(discount);
+        apartado.setTotal(subtotal.subtract(discount));
+
+        return apartadoRepository.save(apartado);
     }
 
     /**

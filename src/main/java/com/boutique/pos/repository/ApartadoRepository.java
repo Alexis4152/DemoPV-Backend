@@ -57,4 +57,22 @@ public interface ApartadoRepository extends JpaRepository<Apartado, Long> {
 
     /** Todos los apartados {@code ACTIVE} cuyo plazo ya venció — usado por {@code ApartadoExpiryJob}. */
     List<Apartado> findAllByStatusAndExpiresAtBefore(ApartadoStatus status, LocalDateTime now);
+
+    /**
+     * Piezas de cada producto (de los {@code productIds} dados) ya reclamadas por OTRAS
+     * solicitudes {@code PENDING} (excluyendo {@code excludeApartadoId}) — estas todavía
+     * NO descontaron stock real (eso solo pasa al confirmar), así que sin este dato el
+     * stock crudo del producto parece más libre de lo que en realidad está si hay más de
+     * una solicitud pendiente compitiendo por él. Usado por {@code
+     * ApartadoService#populateAvailableStock} para la pantalla de confirmación.
+     *
+     * @return filas {@code [productId, piezasReclamadas]}
+     */
+    @Query(value = "SELECT ai.product_id, COALESCE(SUM(ai.quantity), 0) " +
+                   "FROM apartado_items ai JOIN apartados a ON a.id = ai.apartado_id " +
+                   "WHERE a.status = 'PENDING' AND a.id <> :excludeApartadoId AND ai.product_id IN (:productIds) " +
+                   "GROUP BY ai.product_id",
+           nativeQuery = true)
+    List<Object[]> sumPendingQuantityByProductExcluding(@Param("excludeApartadoId") Long excludeApartadoId,
+                                                          @Param("productIds") List<Long> productIds);
 }

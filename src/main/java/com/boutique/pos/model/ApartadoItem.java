@@ -54,4 +54,13 @@ public class ApartadoItem {
     @Column(nullable = false, precision = 12, scale = 2)
     @Builder.Default
     private BigDecimal subtotal = BigDecimal.ZERO;
+
+    // NO es una columna de "apartado_items" — igual que Product.primaryImage, es
+    // "transient" de Java (no @jakarta.persistence.Transient, que jackson-datatype-hibernate6
+    // ocultaría del JSON) para que sí viaje al frontend sin persistirse. Piezas del
+    // producto que de verdad quedan libres para confirmar ESTE apartado: su stock actual
+    // menos lo que ya reclaman OTRAS solicitudes PENDING del mismo producto (ver
+    // ApartadoService#populateAvailableStock). Solo se llena al consultar un apartado por
+    // id mientras sigue PENDING; en cualquier otra respuesta (ej. el listado) queda null.
+    private transient Integer availableStock;
 }

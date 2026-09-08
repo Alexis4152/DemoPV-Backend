@@ -2,6 +2,8 @@ package com.boutique.pos.dto;
 
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
@@ -55,4 +57,16 @@ public class TiendaInfoRequest {
     private BigDecimal maxApartadoDiscountPercent;
 
     private Integer defaultApartadoHours;
+
+    // Meta de venta diaria (Tienda.dailySalesGoal — se edita desde esta misma pantalla).
+    // Opcional: null quita la meta (el Dashboard deja de mostrar el % de avance).
+    @DecimalMin(value = "0", message = "La meta de venta diaria no puede ser negativa")
+    private BigDecimal dailySalesGoal;
+
+    // Segundos entre cada actualización automática de Apartados y el Dashboard
+    // (Tienda.pollingIntervalSeconds — se edita desde esta misma pantalla). Acotado para
+    // evitar tanto saturar la API (muy bajo) como que se sienta "muerto" (muy alto).
+    @Min(value = 5, message = "El intervalo de actualización no puede ser menor a 5 segundos")
+    @Max(value = 300, message = "El intervalo de actualización no puede ser mayor a 300 segundos")
+    private Integer pollingIntervalSeconds;
 }

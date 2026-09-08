@@ -90,6 +90,20 @@ public class ApartadoController {
     }
 
     /**
+     * Quita una línea de un apartado {@code PENDING} (ver {@link ApartadoService#removeItem}) —
+     * ej. el producto se agotó antes de que se revisara la solicitud, y el cajero prefiere
+     * quitar solo esa línea en vez de cancelar todo el apartado.
+     */
+    @DeleteMapping("/{id}/items/{itemId}")
+    @PreAuthorize("@sectionAccess.check('APARTADOS')")
+    public ResponseEntity<ApiResponse<Apartado>> removeItem(
+            @PathVariable Long id,
+            @PathVariable Long itemId,
+            @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(apartadoService.removeItem(id, itemId, actor), "Producto quitado del apartado"));
+    }
+
+    /**
      * Completa un apartado {@code ACTIVE}: el cliente recogió y pagó, se genera la venta
      * real (ver {@link ApartadoService#complete}).
      */

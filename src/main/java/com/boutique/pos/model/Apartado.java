@@ -116,8 +116,14 @@ public class Apartado {
     /** Id de la {@link Sale} generada al completarse (recoger y pagar). Null hasta entonces. */
     private Long saleId;
 
-    /** Líneas (productos y cantidades) que componen el apartado. */
-    @OneToMany(mappedBy = "apartado", cascade = CascadeType.ALL, fetch = FetchType.EAGER)
+    /**
+     * Líneas (productos y cantidades) que componen el apartado. {@code orphanRemoval}
+     * porque {@link com.boutique.pos.service.ApartadoService#removeItem} quita una línea
+     * directamente de esta colección (ej. el producto se agotó mientras seguía {@code
+     * PENDING}) y espera que eso borre la fila de {@code apartado_items}, no solo que la
+     * desvincule.
+     */
+    @OneToMany(mappedBy = "apartado", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
     @JsonManagedReference
     @Builder.Default
     private List<ApartadoItem> items = new ArrayList<>();

@@ -81,6 +81,8 @@ public class TiendaInfoService {
         tienda.setMaxApartadoDiscountAmount(req.getMaxApartadoDiscountAmount());
         tienda.setMaxApartadoDiscountPercent(req.getMaxApartadoDiscountPercent());
         tienda.setDefaultApartadoHours(req.getDefaultApartadoHours() != null ? req.getDefaultApartadoHours() : 24);
+        tienda.setDailySalesGoal(req.getDailySalesGoal());
+        tienda.setPollingIntervalSeconds(req.getPollingIntervalSeconds() != null ? req.getPollingIntervalSeconds() : 20);
         updateSlug(tienda, req.getPublicSlug());
 
         tienda.setUpdatedBy(actor);

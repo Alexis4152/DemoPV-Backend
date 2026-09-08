@@ -28,6 +28,13 @@ CREATE TABLE IF NOT EXISTS tiendas (
     supervisor_id       BIGINT,
     -- sin FK aquí: sería circular con "users" (users.tienda_id -> tiendas, y estas cuatro
     -- columnas -> users). Hibernate agrega las 4 foreign keys al arrancar la app, igual
+    -- Meta de venta diaria (opcional) — ver Tienda.java. Alimenta el % de avance de la
+    -- tarjeta "Venta diaria" del Dashboard.
+    daily_sales_goal                NUMERIC(12,2),
+    -- Segundos entre cada actualización automática de Apartados y el Dashboard.
+    polling_interval_seconds       INTEGER NOT NULL DEFAULT 20,
+    -- sin FK aquí: sería circular con "users" (users.tienda_id -> tiendas, y estas tres
+    -- columnas -> users). Hibernate agrega las 3 foreign keys al arrancar la app, igual
     -- que con users.role_id más abajo.
     created_by_user_id  BIGINT,
     updated_by_user_id  BIGINT,
