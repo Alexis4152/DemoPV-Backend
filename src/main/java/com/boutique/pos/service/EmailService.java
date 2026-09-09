@@ -2,22 +2,37 @@ package com.boutique.pos.service;
 
 import com.boutique.pos.model.Apartado;
 import com.boutique.pos.model.ApartadoItem;
+import com.boutique.pos.model.MailConfig;
 import com.boutique.pos.model.Sale;
 import com.boutique.pos.model.Tienda;
 import com.boutique.pos.model.User;
 import jakarta.mail.MessagingException;
+import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
+import java.io.UnsupportedEncodingException;
+import java.util.Properties;
+
 /**
  * Envío de correos del sistema: ticket de compra en PDF al cliente, reporte de cierre
- * de caja en Excel al administrador de la tienda, y el link de recuperación de
- * contraseña.
+ * de caja en Excel al administrador de la tienda, avisos de apartados, y el link de
+ * recuperación de contraseña.
+ *
+ * <p>La cuenta SMTP con la que sale TODO se lee de {@link MailConfig} (vía {@link
+ * MailConfigService#getEntity()}) en cada envío, en vez del bean {@code JavaMailSender}
+ * autoconfigurado por Spring desde application.properties — así un SUPER_ADMIN puede
+ * rotar la contraseña o cambiar de cuenta desde {@code /api/admin/mail-config} sin
+ * reiniciar el backend. Es una sola cuenta para toda la plataforma: Gmail no permite
+ * mandar con un remitente real distinto al autenticado, así que el correo propio que cada
+ * tienda configura ({@link Tienda#getContactEmail()}) se usa como "Responder a", nunca
+ * como remitente — ver {@link #applySenderAndReplyTo}.</p>
  *
  * <p>Todos los envíos son asíncronos ({@code @Async}) y "best effort": un fallo de correo
  * (SMTP caído, dirección inválida, etc.) solo se registra en el log y nunca revierte ni
@@ -29,8 +44,45 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class EmailService {
 
-    private final JavaMailSender mailSender;
+    private final MailConfigService mailConfigService;
     private final TicketPdfService ticketPdfService;
+
+    /** Arma un {@link JavaMailSender} de un solo uso con las credenciales vigentes en {@link MailConfig}. */
+    private JavaMailSender buildSender(MailConfig cfg) {
+        JavaMailSenderImpl sender = new JavaMailSenderImpl();
+        sender.setHost(cfg.getSmtpHost());
+        sender.setPort(cfg.getSmtpPort());
+        sender.setUsername(cfg.getSmtpUsername());
+        sender.setPassword(cfg.getSmtpPassword());
+        Properties props = sender.getJavaMailProperties();
+        props.put("mail.transport.protocol", "smtp");
+        props.put("mail.smtp.auth", "true");
+        props.put("mail.smtp.starttls.enable", "true");
+        return sender;
+    }
+
+    /**
+     * Pone el remitente (siempre la cuenta autenticada en {@code cfg}, con el nombre de la
+     * tienda como texto visible) y, si la tienda capturó un correo propio, lo pone como
+     * "Responder a" — para que si el cliente le da "Responder" al ticket, le llegue
+     * directo a la tienda y no a la cuenta centralizada de la plataforma.
+     *
+     * @param tienda tienda dueña del correo, o {@code null} si no aplica (ej. un
+     *               SUPER_ADMIN pidiendo recuperar su contraseña) — en ese caso se usa
+     *               "Nexora POS" como nombre visible y no se pone "Responder a".
+     */
+    private void applySenderAndReplyTo(MimeMessageHelper helper, MailConfig cfg, Tienda tienda) throws MessagingException {
+        String display = (tienda != null && tienda.getName() != null && !tienda.getName().isBlank())
+                ? tienda.getName() : "Nexora POS";
+        try {
+            helper.setFrom(new InternetAddress(cfg.getSmtpUsername(), display));
+        } catch (UnsupportedEncodingException e) {
+            helper.setFrom(cfg.getSmtpUsername());
+        }
+        if (tienda != null && tienda.getContactEmail() != null && !tienda.getContactEmail().isBlank()) {
+            helper.setReplyTo(tienda.getContactEmail());
+        }
+    }
 
     // @Async: la venta ya se registró y se le respondió al vendedor; el correo se manda
     // en segundo plano y si falla (SMTP mal configurado, correo inválido, etc.) solo
@@ -43,17 +95,24 @@ public class EmailService {
      */
     @Async
     public void sendTicketEmail(Sale sale, String toEmail) {
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite el ticket de la venta {}", sale.getId());
+            return;
+        }
         try {
             byte[] pdf = ticketPdfService.generate(sale);
 
-            MimeMessage message = mailSender.createMimeMessage();
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            applySenderAndReplyTo(helper, cfg, sale.getTienda());
             helper.setTo(toEmail);
             helper.setSubject("Tu ticket de compra #" + sale.getId());
             helper.setText("Gracias por tu compra. Adjuntamos tu ticket en PDF.");
             helper.addAttachment("ticket-" + sale.getId() + ".pdf", new org.springframework.core.io.ByteArrayResource(pdf));
 
-            mailSender.send(message);
+            sender.send(message);
             log.info("Ticket de la venta {} enviado a {}", sale.getId(), toEmail);
         } catch (MessagingException | RuntimeException e) {
             log.error("No se pudo enviar el ticket de la venta {} a {}: {}", sale.getId(), toEmail, e.getMessage());
@@ -74,9 +133,16 @@ public class EmailService {
      */
     @Async
     public void sendCashCutReportEmail(Tienda tienda, int cutCount, byte[] excelBytes, String toEmail) {
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite el reporte de cierre de {}", tienda.getName());
+            return;
+        }
         try {
-            MimeMessage message = mailSender.createMimeMessage();
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            applySenderAndReplyTo(helper, cfg, tienda);
             helper.setTo(toEmail);
             helper.setSubject("Reporte de cierre de caja — " + tienda.getName());
             helper.setText(
@@ -86,7 +152,7 @@ public class EmailService {
             helper.addAttachment("cierre-caja-" + tienda.getId() + ".xlsx",
                     new org.springframework.core.io.ByteArrayResource(excelBytes));
 
-            mailSender.send(message);
+            sender.send(message);
             log.info("Reporte de cierre de caja de {} ({} corte(s)) enviado a {}", tienda.getName(), cutCount, toEmail);
         } catch (MessagingException | RuntimeException e) {
             log.error("No se pudo enviar el reporte de cierre de {} a {}: {}", tienda.getName(), toEmail, e.getMessage());
@@ -104,9 +170,16 @@ public class EmailService {
      */
     @Async
     public void sendPasswordResetEmail(User user, String resetLink) {
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite la recuperación de contraseña de {}", user.getEmail());
+            return;
+        }
         try {
-            MimeMessage message = mailSender.createMimeMessage();
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            applySenderAndReplyTo(helper, cfg, user.getTienda());
             helper.setTo(user.getEmail());
             helper.setSubject("Recupera tu contraseña");
             helper.setText(
@@ -116,7 +189,7 @@ public class EmailService {
                     "Si tú no pediste esto, puedes ignorar este correo — tu contraseña sigue siendo la misma."
             );
 
-            mailSender.send(message);
+            sender.send(message);
             log.info("Correo de recuperación de contraseña enviado a {}", user.getEmail());
         } catch (MessagingException | RuntimeException e) {
             log.error("No se pudo enviar el correo de recuperación de contraseña a {}: {}", user.getEmail(), e.getMessage());
@@ -138,9 +211,16 @@ public class EmailService {
      */
     @Async
     public void sendNewUserPasswordEmail(User user, String tempPassword, String loginLink) {
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite la contraseña temporal de {}", user.getEmail());
+            return;
+        }
         try {
-            MimeMessage message = mailSender.createMimeMessage();
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            applySenderAndReplyTo(helper, cfg, user.getTienda());
             helper.setTo(user.getEmail());
             helper.setSubject("Tu cuenta en Nexora POS");
             helper.setText(
@@ -153,7 +233,7 @@ public class EmailService {
                     "Si tú no esperabas este correo, contacta a tu administrador."
             );
 
-            mailSender.send(message);
+            sender.send(message);
             log.info("Contraseña temporal enviada a {} (usuario nuevo)", user.getEmail());
         } catch (MessagingException | RuntimeException e) {
             log.error("No se pudo enviar la contraseña temporal a {}: {}", user.getEmail(), e.getMessage());
@@ -172,26 +252,29 @@ public class EmailService {
      */
     @Async
     public void sendApartadoRequestEmail(Apartado apartado, String toEmail) {
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite el aviso del apartado {}", apartado.getId());
+            return;
+        }
         try {
             StringBuilder body = new StringBuilder();
             body.append("Nuevo apartado de ").append(apartado.getCustomerName());
             if (apartado.getCustomerPhone() != null && !apartado.getCustomerPhone().isBlank()) {
                 body.append(" (tel. ").append(apartado.getCustomerPhone()).append(")");
             }
-            body.append(".\n\nProductos:\n");
-            for (ApartadoItem item : apartado.getItems()) {
-                body.append("- ").append(item.getQuantity().stripTrailingZeros().toPlainString())
-                        .append(" x ").append(item.getProductName()).append("\n");
-            }
+            body.append(".\n\nProductos:\n").append(productLines(apartado));
             body.append("\nEntra al sistema para confirmarlo o cancelarlo.");
 
-            MimeMessage message = mailSender.createMimeMessage();
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            applySenderAndReplyTo(helper, cfg, apartado.getTienda());
             helper.setTo(toEmail);
             helper.setSubject("Nuevo apartado #" + apartado.getId() + " — " + apartado.getTienda().getName());
             helper.setText(body.toString());
 
-            mailSender.send(message);
+            sender.send(message);
             log.info("Aviso de apartado {} enviado a {}", apartado.getId(), toEmail);
         } catch (MessagingException | RuntimeException e) {
             log.error("No se pudo enviar el aviso del apartado {} a {}: {}", apartado.getId(), toEmail, e.getMessage());
@@ -212,28 +295,31 @@ public class EmailService {
      */
     @Async
     public void sendApartadoCancelledEmail(Apartado apartado, String reason, String toEmail) {
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite el aviso de cancelación del apartado {}", apartado.getId());
+            return;
+        }
         try {
             StringBuilder body = new StringBuilder();
             body.append("Hola ").append(apartado.getCustomerName()).append(",\n\n");
             body.append("Tu apartado #").append(apartado.getId()).append(" en ")
                     .append(apartado.getTienda().getName()).append(" fue cancelado y no se pudo concretar.\n\n");
-            body.append("Productos:\n");
-            for (ApartadoItem item : apartado.getItems()) {
-                body.append("- ").append(item.getQuantity().stripTrailingZeros().toPlainString())
-                        .append(" x ").append(item.getProductName()).append("\n");
-            }
+            body.append("Productos:\n").append(productLines(apartado));
             if (reason != null && !reason.isBlank()) {
                 body.append("\nMotivo: ").append(reason).append("\n");
             }
             body.append("\nCualquier duda, contáctanos directamente.");
 
-            MimeMessage message = mailSender.createMimeMessage();
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            applySenderAndReplyTo(helper, cfg, apartado.getTienda());
             helper.setTo(toEmail);
             helper.setSubject("Tu apartado #" + apartado.getId() + " fue cancelado — " + apartado.getTienda().getName());
             helper.setText(body.toString());
 
-            mailSender.send(message);
+            sender.send(message);
             log.info("Aviso de cancelación del apartado {} enviado a {}", apartado.getId(), toEmail);
         } catch (MessagingException | RuntimeException e) {
             log.error("No se pudo enviar el aviso de cancelación del apartado {} a {}: {}", apartado.getId(), toEmail, e.getMessage());
@@ -263,6 +349,11 @@ public class EmailService {
      */
     @Async
     public void sendApartadoConfirmedStaffEmail(Apartado apartado, String toEmail) {
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite el aviso de confirmación del apartado {}", apartado.getId());
+            return;
+        }
         try {
             StringBuilder body = new StringBuilder();
             body.append("El apartado #").append(apartado.getId()).append(" de ")
@@ -276,13 +367,15 @@ public class EmailService {
                 body.append("\nVence: ").append(apartado.getExpiresAt()).append(" — si el cliente no lo recoge antes, se reintegra solo al inventario.");
             }
 
-            MimeMessage message = mailSender.createMimeMessage();
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            applySenderAndReplyTo(helper, cfg, apartado.getTienda());
             helper.setTo(toEmail);
             helper.setSubject("Apartado #" + apartado.getId() + " confirmado — " + apartado.getTienda().getName());
             helper.setText(body.toString());
 
-            mailSender.send(message);
+            sender.send(message);
             log.info("Aviso de confirmación del apartado {} enviado a personal ({})", apartado.getId(), toEmail);
         } catch (MessagingException | RuntimeException e) {
             log.error("No se pudo enviar el aviso de confirmación del apartado {} a {}: {}", apartado.getId(), toEmail, e.getMessage());
@@ -301,6 +394,11 @@ public class EmailService {
      */
     @Async
     public void sendApartadoConfirmedCustomerEmail(Apartado apartado, String toEmail) {
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite el aviso de confirmación del apartado {} al cliente", apartado.getId());
+            return;
+        }
         try {
             StringBuilder body = new StringBuilder();
             body.append("Hola ").append(apartado.getCustomerName()).append(",\n\n");
@@ -312,13 +410,15 @@ public class EmailService {
                         .append(" para recogerlo y pagarlo — después de esa fecha, si no lo recoges, se libera automáticamente.");
             }
 
-            MimeMessage message = mailSender.createMimeMessage();
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            applySenderAndReplyTo(helper, cfg, apartado.getTienda());
             helper.setTo(toEmail);
             helper.setSubject("Tu apartado #" + apartado.getId() + " fue confirmado — " + apartado.getTienda().getName());
             helper.setText(body.toString());
 
-            mailSender.send(message);
+            sender.send(message);
             log.info("Aviso de confirmación del apartado {} enviado al cliente ({})", apartado.getId(), toEmail);
         } catch (MessagingException | RuntimeException e) {
             log.error("No se pudo enviar el aviso de confirmación del apartado {} a {}: {}", apartado.getId(), toEmail, e.getMessage());
@@ -338,6 +438,11 @@ public class EmailService {
      */
     @Async
     public void sendApartadoCancelledStaffEmail(Apartado apartado, String reason, String toEmail) {
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite el aviso de cancelación del apartado {} al personal", apartado.getId());
+            return;
+        }
         try {
             StringBuilder body = new StringBuilder();
             body.append("El apartado #").append(apartado.getId()).append(" de ")
@@ -350,13 +455,15 @@ public class EmailService {
                 body.append("\nMotivo: ").append(reason).append("\n");
             }
 
-            MimeMessage message = mailSender.createMimeMessage();
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            applySenderAndReplyTo(helper, cfg, apartado.getTienda());
             helper.setTo(toEmail);
             helper.setSubject("Apartado #" + apartado.getId() + " cancelado — " + apartado.getTienda().getName());
             helper.setText(body.toString());
 
-            mailSender.send(message);
+            sender.send(message);
             log.info("Aviso de cancelación del apartado {} enviado a personal ({})", apartado.getId(), toEmail);
         } catch (MessagingException | RuntimeException e) {
             log.error("No se pudo enviar el aviso de cancelación del apartado {} a {} (personal): {}", apartado.getId(), toEmail, e.getMessage());
@@ -375,6 +482,11 @@ public class EmailService {
      */
     @Async
     public void sendApartadoCompletedStaffEmail(Apartado apartado, String toEmail) {
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite el aviso de conclusión del apartado {}", apartado.getId());
+            return;
+        }
         try {
             StringBuilder body = new StringBuilder();
             body.append("El apartado #").append(apartado.getId()).append(" de ")
@@ -387,13 +499,15 @@ public class EmailService {
             }
             body.append(".\n\nProductos:\n").append(productLines(apartado));
 
-            MimeMessage message = mailSender.createMimeMessage();
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            applySenderAndReplyTo(helper, cfg, apartado.getTienda());
             helper.setTo(toEmail);
             helper.setSubject("Apartado #" + apartado.getId() + " completado — " + apartado.getTienda().getName());
             helper.setText(body.toString());
 
-            mailSender.send(message);
+            sender.send(message);
             log.info("Aviso de conclusión del apartado {} enviado a personal ({})", apartado.getId(), toEmail);
         } catch (MessagingException | RuntimeException e) {
             log.error("No se pudo enviar el aviso de conclusión del apartado {} a {}: {}", apartado.getId(), toEmail, e.getMessage());
@@ -412,6 +526,11 @@ public class EmailService {
      */
     @Async
     public void sendApartadoExpiredStaffEmail(Apartado apartado, String toEmail) {
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite el aviso de vencimiento del apartado {}", apartado.getId());
+            return;
+        }
         try {
             StringBuilder body = new StringBuilder();
             body.append("El apartado #").append(apartado.getId()).append(" de ")
@@ -419,13 +538,15 @@ public class EmailService {
                     .append("El stock ya se reintegró automáticamente al inventario.\n\n");
             body.append("Productos:\n").append(productLines(apartado));
 
-            MimeMessage message = mailSender.createMimeMessage();
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            applySenderAndReplyTo(helper, cfg, apartado.getTienda());
             helper.setTo(toEmail);
             helper.setSubject("Apartado #" + apartado.getId() + " venció — " + apartado.getTienda().getName());
             helper.setText(body.toString());
 
-            mailSender.send(message);
+            sender.send(message);
             log.info("Aviso de vencimiento del apartado {} enviado a personal ({})", apartado.getId(), toEmail);
         } catch (MessagingException | RuntimeException e) {
             log.error("No se pudo enviar el aviso de vencimiento del apartado {} a {}: {}", apartado.getId(), toEmail, e.getMessage());
@@ -443,6 +564,11 @@ public class EmailService {
      */
     @Async
     public void sendApartadoExpiredCustomerEmail(Apartado apartado, String toEmail) {
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite el aviso de vencimiento del apartado {} al cliente", apartado.getId());
+            return;
+        }
         try {
             StringBuilder body = new StringBuilder();
             body.append("Hola ").append(apartado.getCustomerName()).append(",\n\n");
@@ -452,13 +578,15 @@ public class EmailService {
             body.append("Productos:\n").append(productLines(apartado));
             body.append("\nSi todavía te interesa, puedes volver a apartarlo desde el mismo link de siempre.");
 
-            MimeMessage message = mailSender.createMimeMessage();
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            applySenderAndReplyTo(helper, cfg, apartado.getTienda());
             helper.setTo(toEmail);
             helper.setSubject("Tu apartado #" + apartado.getId() + " venció — " + apartado.getTienda().getName());
             helper.setText(body.toString());
 
-            mailSender.send(message);
+            sender.send(message);
             log.info("Aviso de vencimiento del apartado {} enviado al cliente ({})", apartado.getId(), toEmail);
         } catch (MessagingException | RuntimeException e) {
             log.error("No se pudo enviar el aviso de vencimiento del apartado {} a {} (cliente): {}", apartado.getId(), toEmail, e.getMessage());

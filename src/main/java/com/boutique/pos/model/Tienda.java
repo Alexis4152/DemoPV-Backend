@@ -115,6 +115,16 @@ public class Tienda {
     @Builder.Default
     private Integer pollingIntervalSeconds = 20;
 
+    // Correo de contacto de ESTA tienda, editable por su ADMIN (o SUPERVISOR/SUPER_ADMIN)
+    // en "Datos de la tienda" — es lo único de la configuración de correo que un cliente
+    // puede tocar. Nunca se usa como remitente real (Gmail no deja mandar con un "De:"
+    // distinto a la cuenta autenticada en MailConfig): EmailService lo pone como
+    // "Responder a", así que si el comprador contesta un ticket, le llega a esta tienda y
+    // no a la cuenta de correo centralizada de la plataforma. null = sin correo propio
+    // configurado, los correos de esta tienda no llevan "Responder a".
+    @Column(name = "contact_email", length = 150)
+    private String contactEmail;
+
     // LAZY: evita el ciclo User→Tienda(EAGER)→createdBy(User)→Tienda→... (User carga su Tienda en EAGER).
     // JsonIgnoreProperties evita además que, al serializar, Jackson expanda role/tienda de
     // este User anidado — sin esto, Tienda.updatedBy→role→tienda→updatedBy→... es un ciclo

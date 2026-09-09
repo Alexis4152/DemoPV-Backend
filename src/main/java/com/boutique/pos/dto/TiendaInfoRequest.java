@@ -2,6 +2,7 @@ package com.boutique.pos.dto;
 
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -33,6 +34,11 @@ public class TiendaInfoRequest {
     private String paginaWeb;
     private String redesSociales;
     private String notasAdicionales;
+
+    // Tienda.contactEmail — se usa como "Responder a" en los tickets/avisos que salen de
+    // esta tienda (ver EmailService). Vacío/null = sin correo propio configurado.
+    @Email(message = "El correo de contacto no es válido")
+    private String contactEmail;
 
     // Límites de descuento por línea de venta (Tienda.maxDiscountAmount/maxDiscountPercent
     // — se editan desde esta misma pantalla). Opcionales: null quita el límite en ese criterio.
