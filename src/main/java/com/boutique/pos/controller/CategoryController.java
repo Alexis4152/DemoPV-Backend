@@ -2,16 +2,22 @@ package com.boutique.pos.controller;
 
 import com.boutique.pos.dto.ApiResponse;
 import com.boutique.pos.dto.CategoryRequest;
+import com.boutique.pos.dto.PageResponse;
 import com.boutique.pos.model.Category;
 import com.boutique.pos.model.User;
 import com.boutique.pos.service.CategoryService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -39,6 +45,37 @@ public class CategoryController {
     @PreAuthorize("@sectionAccess.checkAny('INVENTORY', 'POS')")
     public ResponseEntity<ApiResponse<List<Category>>> list(@AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(categoryService.findAll(actor), null));
+    }
+
+    /**
+     * Búsqueda paginada de categorías con filtros combinables (nombre, estado, rango de
+     * fecha de alta), para la pantalla de administración de Categorías — a diferencia de
+     * {@link #list}, que trae el catálogo activo completo sin paginar (usado por los
+     * selectores de Inventario/POS). Reservado a ADMIN/SUPER_ADMIN/SUPERVISOR, igual que
+     * crear/editar/eliminar: es una pantalla administrativa, no de consulta operativa.
+     *
+     * @param from fecha de alta mínima (inclusiva), opcional
+     * @param to fecha de alta máxima (inclusiva), opcional
+     * @param name filtro por nombre (parcial), opcional
+     * @param isActive filtro por estado activo/inactivo, opcional
+     * @param page número de página (base 0, por defecto 0)
+     * @param size tamaño de página (por defecto 20)
+     * @param actor usuario autenticado; determina el filtro por tienda
+     */
+    @GetMapping("/page")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    public ResponseEntity<ApiResponse<PageResponse<Category>>> page(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
+            @RequestParam(required = false) String name,
+            @RequestParam(required = false) Boolean isActive,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @AuthenticationPrincipal User actor
+    ) {
+        Pageable pageable = PageRequest.of(page, size);
+        Page<Category> result = categoryService.search(from, to, name, isActive, actor, pageable);
+        return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
     }
 
     /**

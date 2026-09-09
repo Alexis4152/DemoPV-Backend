@@ -183,24 +183,60 @@ public class TiendaController {
      * @throws IllegalStateException si la tienda no tiene los apartados habilitados (con
      *         su slug definido) — no tiene caso generar un QR a un link que no funciona
      */
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
     @GetMapping("/{id}/apartados-promo.pdf")
     public ResponseEntity<byte[]> apartadosPromoPdf(
             @PathVariable Long id,
             @RequestParam String url,
             @AuthenticationPrincipal User actor
     ) {
-        TiendaInfo info = tiendaInfoService.get(id, actor);
-        Tienda tienda = info.getTienda();
-        if (!Boolean.TRUE.equals(tienda.getApartadosEnabled()) || tienda.getPublicSlug() == null || tienda.getPublicSlug().isBlank()) {
-            throw new IllegalStateException("Habilita la tienda pública de apartados antes de generar el PDF promocional");
-        }
+        Tienda tienda = tiendaForPromo(id, actor);
         byte[] pdf = apartadoPromoPdfService.generate(tienda, url);
         String filename = "apartados-" + tienda.getPublicSlug() + ".pdf";
         return ResponseEntity.ok()
                 .header("Content-Type", "application/pdf")
                 .header("Content-Disposition", "attachment; filename=\"" + filename + "\"")
                 .body(pdf);
+    }
+
+    /**
+     * Genera SOLO el código QR (sin el resto de la hoja) que apunta a la vitrina pública de
+     * apartados de la tienda, como imagen PNG independiente — para cuando alguien solo
+     * quiere el código para pegarlo en un diseño propio, en vez de la hoja completa de
+     * {@link #apartadosPromoPdf}. Mismo candado de acceso y misma validación.
+     *
+     * @param id  identificador de la tienda
+     * @param url URL pública completa de su vitrina, armada por el frontend
+     * @param actor usuario autenticado
+     * @throws IllegalStateException si la tienda no tiene los apartados habilitados
+     */
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    @GetMapping("/{id}/apartados-qr.png")
+    public ResponseEntity<byte[]> apartadosQrPng(
+            @PathVariable Long id,
+            @RequestParam String url,
+            @AuthenticationPrincipal User actor
+    ) {
+        Tienda tienda = tiendaForPromo(id, actor);
+        byte[] png = apartadoPromoPdfService.generateQrOnly(url);
+        String filename = "qr-" + tienda.getPublicSlug() + ".png";
+        return ResponseEntity.ok()
+                .header("Content-Type", "image/png")
+                .header("Content-Disposition", "attachment; filename=\"" + filename + "\"")
+                .body(png);
+    }
+
+    // Compartida por apartadosPromoPdf y apartadosQrPng: resuelve la tienda (validando
+    // acceso vía TiendaInfoService.get, mismo candado que /info) y exige que su vitrina
+    // pública de apartados ya esté habilitada — no tiene caso generar un QR a un link que
+    // todavía no funciona.
+    private Tienda tiendaForPromo(Long id, User actor) {
+        TiendaInfo info = tiendaInfoService.get(id, actor);
+        Tienda tienda = info.getTienda();
+        if (!Boolean.TRUE.equals(tienda.getApartadosEnabled()) || tienda.getPublicSlug() == null || tienda.getPublicSlug().isBlank()) {
+            throw new IllegalStateException("Habilita la tienda pública de apartados antes de generar el PDF/QR promocional");
+        }
+        return tienda;
     }
 
     /**

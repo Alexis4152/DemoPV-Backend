@@ -248,7 +248,7 @@ public class ProductService {
         Product p = new Product();
         p.setName(req.getName());
         p.setDescription(req.getDescription());
-        p.setBarcode(req.getBarcode());
+        p.setBarcode(normalizeBarcode(req.getBarcode()));
         p.setPrice(req.getPrice());
         p.setCost(req.getCost() != null ? req.getCost() : java.math.BigDecimal.ZERO);
         p.setStock(req.getStock() != null ? req.getStock() : 0);
@@ -290,7 +290,7 @@ public class ProductService {
 
         p.setName(req.getName());
         p.setDescription(req.getDescription());
-        p.setBarcode(req.getBarcode());
+        p.setBarcode(normalizeBarcode(req.getBarcode()));
         p.setPrice(req.getPrice());
         p.setCost(req.getCost() != null ? req.getCost() : java.math.BigDecimal.ZERO);
         p.setMinStock(req.getMinStock() != null ? req.getMinStock() : 5);
@@ -365,6 +365,24 @@ public class ProductService {
      *                         editar, para no chocar contra sí mismo); {@code null} al crear
      * @throws IllegalStateException si otro producto activo de la tienda ya usa ese código
      */
+    // Sin esto, un formulario que deja el campo vacío manda "" (no null), y DOS productos
+    // con barcode="" chocan de verdad contra el UNIQUE(tienda_id, barcode) de la base de
+    // datos — a diferencia de NULL, que Postgres nunca considera igual a otro NULL, "" sí
+    // se considera igual a otro "". validateBarcodeUnique ya saltaba la validación de
+    // aplicación para un código en blanco (esa parte estaba bien), pero guardaba el valor
+    // en blanco tal cual, dejando que la base de datos lo rechazara igual en el segundo
+    // producto sin código. Guardar NULL en vez de "" es lo que de verdad permite "todos
+    // los que sean" sin código de barras, que es la regla de negocio real.
+    /**
+     * Normaliza un código de barras capturado en un formulario: cadena vacía o solo
+     * espacios se convierte a {@code null} para que la base de datos SÍ permita varios
+     * productos sin código (ver {@code UNIQUE(tienda_id, barcode)}); cualquier otro valor
+     * se regresa tal cual.
+     */
+    private String normalizeBarcode(String barcode) {
+        return (barcode == null || barcode.isBlank()) ? null : barcode;
+    }
+
     private void validateBarcodeUnique(String barcode, Long tiendaId, Long excludeProductId) {
         if (barcode == null || barcode.isBlank()) return;
         Product existing = productRepository.findByBarcodeExact(barcode, tiendaId).orElse(null);

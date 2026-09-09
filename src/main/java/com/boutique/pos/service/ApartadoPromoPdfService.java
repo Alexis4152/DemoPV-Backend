@@ -101,6 +101,26 @@ public class ApartadoPromoPdfService {
         return out.toByteArray();
     }
 
+    /**
+     * Genera SOLO el QR (sin el resto de la hoja) como PNG independiente — para el botón
+     * "Descargar QR" de {@code TiendaController}, pensado para cuando alguien solo quiere
+     * el código para pegarlo en un diseño propio en vez de la hoja completa de {@link
+     * #generate}. Traduce cualquier falla de generación a {@code IllegalStateException},
+     * igual que {@link #generate}, para que el controller no tenga que declarar las
+     * excepciones checadas de ZXing/IO.
+     *
+     * @param content contenido a codificar (la URL pública de la vitrina)
+     * @return el QR como PNG, listo para descargarse
+     * @throws IllegalStateException si ZXing o la codificación del PNG fallan
+     */
+    public byte[] generateQrOnly(String content) {
+        try {
+            return qrPngBytes(content);
+        } catch (WriterException | IOException e) {
+            throw new IllegalStateException("No se pudo generar el QR", e);
+        }
+    }
+
     /** Codifica {@code content} como QR y lo devuelve ya como bytes de un PNG. */
     private byte[] qrPngBytes(String content) throws WriterException, IOException {
         Map<EncodeHintType, Object> hints = new EnumMap<>(EncodeHintType.class);

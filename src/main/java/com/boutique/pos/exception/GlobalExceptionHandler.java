@@ -10,6 +10,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.util.stream.Collectors;
 
@@ -43,6 +44,18 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<ApiResponse<Void>> handleAccessDenied(AccessDeniedException ex) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.error("Acceso denegado"));
+    }
+
+    // Se dispara ANTES de llegar al controller (y por lo tanto antes de que
+    // TiendaLogoService/ProductImageService puedan dar su propio mensaje con el límite
+    // exacto de cada uno) solo si el archivo supera el techo global de
+    // spring.servlet.multipart.max-file-size — un caso ya bastante extremo dado el margen
+    // que ese techo deja sobre el límite real de cada servicio (ver application.properties).
+    // Sin este handler, Spring devuelve una página de error genérica en vez del mismo
+    // formato {success, message} que espera el frontend.
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiResponse<Void>> handleUploadTooLarge(MaxUploadSizeExceededException ex) {
+        return ResponseEntity.badRequest().body(ApiResponse.error("El archivo es demasiado pesado"));
     }
 
     // Cualquier RuntimeException no cubierta por un handler más específico de arriba —
