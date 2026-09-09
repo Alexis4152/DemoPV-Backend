@@ -2,6 +2,7 @@ package com.boutique.pos.config;
 
 import com.boutique.pos.security.CustomUserDetailsService;
 import com.boutique.pos.security.JwtAuthFilter;
+import com.boutique.pos.security.RestAuthenticationEntryPoint;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -44,6 +45,7 @@ public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
     private final CustomUserDetailsService userDetailsService;
+    private final RestAuthenticationEntryPoint restAuthenticationEntryPoint;
 
     @Value("${app.cors.allowed-origins}")
     private String allowedOrigins;
@@ -62,12 +64,17 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .exceptionHandling(ex -> ex.authenticationEntryPoint(restAuthenticationEntryPoint))
                 .authorizeHttpRequests(auth -> auth
-                        // Excepción DENTRO de /api/auth/**, declarada antes que el permitAll
+                        // Excepciones DENTRO de /api/auth/**, declaradas antes que el permitAll
                         // de abajo (gana la regla más específica que aparezca primero): a
-                        // diferencia de login/forgot-password/reset-password (anónimos por
-                        // diseño), cambiar la propia contraseña sí exige sesión.
-                        .requestMatchers("/api/auth/change-password").authenticated()
+                        // diferencia de login/refresh/logout/forgot-password/reset-password
+                        // (anónimos por diseño), cambiar la propia contraseña y "quién soy"
+                        // sí exigen sesión — /me en particular la necesita para que un token
+                        // inválido/vencido dispare el 401 real de restAuthenticationEntryPoint
+                        // (y con él, el refresh transparente del frontend) en vez de responder
+                        // 200 con data null vía @AuthenticationPrincipal.
+                        .requestMatchers("/api/auth/change-password", "/api/auth/me").authenticated()
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/uploads/**").permitAll()
                         // Vitrina pública de apartados (PublicController): sin login, el
