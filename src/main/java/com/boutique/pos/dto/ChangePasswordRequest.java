@@ -18,7 +18,9 @@ public class ChangePasswordRequest {
     @NotBlank
     private String currentPassword;
 
+    // 72 como tope porque BCrypt trunca en silencio cualquier byte de más allá del 72
+    // (mismo motivo que UserRequest.password/ResetPasswordRequest.newPassword).
     @NotBlank
-    @Size(min = 6, message = "La nueva contraseña debe tener al menos 6 caracteres")
+    @Size(min = 6, max = 72, message = "La nueva contraseña debe tener entre 6 y 72 caracteres")
     private String newPassword;
 }

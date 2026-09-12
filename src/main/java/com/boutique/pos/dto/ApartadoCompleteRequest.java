@@ -1,7 +1,10 @@
 package com.boutique.pos.dto;
 
 import com.boutique.pos.model.PaymentMethod;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -17,14 +20,20 @@ public class ApartadoCompleteRequest {
     @NotNull
     private PaymentMethod paymentMethod;
 
-    /** Con cuánto pagó el cliente; obligatorio si {@code paymentMethod = CASH} (igual que en {@link SaleRequest}). */
+    // Con cuánto pagó el cliente; obligatorio si paymentMethod = CASH (igual que en
+    // SaleRequest). Máximo alineado a sales.amount_received NUMERIC(12,2) — la venta real
+    // que genera este endpoint usa esa misma columna.
+    @DecimalMax(value = "9999999999.99", message = "El número es excesivamente grande — el máximo permitido es 9,999,999,999.99")
     private BigDecimal amountReceived;
 
     /**
      * Correo para mandar el ticket digital, opcional — sobreescribe (solo para esta venta,
      * no el registro del apartado) el correo que el cliente haya dejado al solicitarlo por
      * la tienda pública. Pensado para cuando no dejó ninguno ahí pero sí quiere su ticket
-     * por correo al recogerlo, o quiere que se le mande a uno distinto.
+     * por correo al recogerlo, o quiere que se le mande a uno distinto. Máximo alineado a
+     * sales.customer_email VARCHAR(150) (mismo destino que en SaleRequest).
      */
+    @Email
+    @Size(max = 150, message = "El correo no puede tener más de 150 caracteres")
     private String customerEmail;
 }

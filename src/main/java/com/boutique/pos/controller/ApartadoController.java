@@ -9,6 +9,7 @@ import com.boutique.pos.model.Apartado;
 import com.boutique.pos.model.ApartadoStatus;
 import com.boutique.pos.model.User;
 import com.boutique.pos.service.ApartadoService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -84,7 +85,7 @@ public class ApartadoController {
     @PreAuthorize("@sectionAccess.check('APARTADOS')")
     public ResponseEntity<ApiResponse<Apartado>> confirm(
             @PathVariable Long id,
-            @RequestBody(required = false) ApartadoConfirmRequest req,
+            @Valid @RequestBody(required = false) ApartadoConfirmRequest req,
             @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(apartadoService.confirm(id, req, actor), "Apartado confirmado"));
     }
@@ -111,7 +112,7 @@ public class ApartadoController {
     @PreAuthorize("@sectionAccess.check('APARTADOS')")
     public ResponseEntity<ApiResponse<Apartado>> complete(
             @PathVariable Long id,
-            @RequestBody ApartadoCompleteRequest req,
+            @Valid @RequestBody ApartadoCompleteRequest req,
             @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(apartadoService.complete(id, req, actor), "Apartado completado"));
     }
@@ -125,7 +126,7 @@ public class ApartadoController {
     @PreAuthorize("@sectionAccess.check('APARTADOS')")
     public ResponseEntity<ApiResponse<Apartado>> cancel(
             @PathVariable Long id,
-            @RequestBody(required = false) ApartadoCancelRequest req,
+            @Valid @RequestBody(required = false) ApartadoCancelRequest req,
             @AuthenticationPrincipal User actor) {
         String reason = req != null ? req.getReason() : null;
         return ResponseEntity.ok(ApiResponse.ok(apartadoService.cancel(id, reason, actor), "Apartado cancelado"));

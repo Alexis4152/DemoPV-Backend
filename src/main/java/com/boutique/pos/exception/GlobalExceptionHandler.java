@@ -12,18 +12,43 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
-import java.util.stream.Collectors;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @RestControllerAdvice
 @Slf4j
 public class GlobalExceptionHandler {
 
+    // `message` se mantiene como los mensajes unidos con ", " (mismo formato de siempre,
+    // no rompe ninguna pantalla que solo lea ese campo); `data` ahora trae un mapa
+    // "nombre de campo del DTO" -> mensaje, para que un formulario pueda mostrar cada
+    // error justo debajo de su input correspondiente (ver Inventory.jsx#handleSave) en vez
+    // de un bloque genérico. Si un campo tiene más de una violación, se queda con la
+    // primera (LinkedHashMap#putIfAbsent) — mostrar dos mensajes en el mismo campo a la vez
+    // no aporta, y así se preserva el orden en que Spring las reportó.
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<ApiResponse<Void>> handleValidation(MethodArgumentNotValidException ex) {
-        String msg = ex.getBindingResult().getFieldErrors().stream()
-                .map(FieldError::getDefaultMessage)
-                .collect(Collectors.joining(", "));
-        return ResponseEntity.badRequest().body(ApiResponse.error(msg));
+    public ResponseEntity<ApiResponse<Map<String, String>>> handleValidation(MethodArgumentNotValidException ex) {
+        Map<String, String> fieldErrors = new LinkedHashMap<>();
+        for (FieldError fe : ex.getBindingResult().getFieldErrors()) {
+            fieldErrors.putIfAbsent(fe.getField(), fe.getDefaultMessage());
+        }
+        String msg = String.join(", ", fieldErrors.values());
+        return ResponseEntity.badRequest().body(
+                ApiResponse.<Map<String, String>>builder().success(false).message(msg).data(fieldErrors).build());
+    }
+
+    // Mismo formato { campo: mensaje } que handleValidation de arriba, pero para errores
+    // de negocio que no vienen de @Valid (ej. "ese código de barras ya lo usa otro
+    // producto" — ver ProductService#validateBarcodeUnique). Así el frontend los muestra
+    // debajo de su input correspondiente con el mismo código, sin distinguir el origen.
+    @ExceptionHandler(FieldConflictException.class)
+    public ResponseEntity<ApiResponse<Map<String, String>>> handleFieldConflict(FieldConflictException ex) {
+        return ResponseEntity.badRequest().body(
+                ApiResponse.<Map<String, String>>builder()
+                        .success(false)
+                        .message(ex.getMessage())
+                        .data(Map.of(ex.getField(), ex.getMessage()))
+                        .build());
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

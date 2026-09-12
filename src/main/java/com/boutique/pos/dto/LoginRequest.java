@@ -11,7 +11,9 @@ import lombok.Data;
  */
 @Data
 public class LoginRequest {
-    @Email @NotBlank
+    // Mensaje propio en vez del default de Jakarta ("debe ser una dirección de correo
+    // electrónico con formato correcto") — mismo texto que valida el frontend (Login.jsx).
+    @Email(message = "El correo no tiene un formato válido") @NotBlank
     private String email;
     @NotBlank
     private String password;

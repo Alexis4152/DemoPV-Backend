@@ -2,6 +2,7 @@ package com.boutique.pos.service;
 
 import com.boutique.pos.dto.InventoryAdjustRequest;
 import com.boutique.pos.dto.ProductRequest;
+import com.boutique.pos.exception.FieldConflictException;
 import com.boutique.pos.model.MovementType;
 import com.boutique.pos.model.Category;
 import com.boutique.pos.model.InventoryMovement;
@@ -317,8 +318,9 @@ public class ProductService {
      * @param actor usuario que hace el ajuste; debe tener acceso a la tienda del
      *              producto; queda registrado en el movimiento de inventario
      * @return el producto con el stock ya actualizado
-     * @throws IllegalStateException si un no-ADMIN intenta quitar piezas, o si el
-     *         ajuste dejaría el stock en negativo
+     * @throws IllegalStateException si un no-ADMIN intenta quitar piezas
+     * @throws FieldConflictException (campo {@code quantity}) si el ajuste dejaría el
+     *         stock en negativo, o si el stock resultante desbordaría un {@code int}
      */
     @Transactional
     public Product adjustStock(Long id, InventoryAdjustRequest req, User actor) {
@@ -327,8 +329,19 @@ public class ProductService {
         }
         Product p = findById(id, actor);
         int previous = p.getStock();
-        int newStock = previous + req.getQuantity();
-        if (newStock < 0) throw new IllegalStateException("Stock insuficiente");
+        // En long, NO en int: "previous + quantity" con aritmética int normal se desborda
+        // en silencio si la suma pasa de Integer.MAX_VALUE (ENV: envuelve a un negativo
+        // grande), lo que antes disparaba "Stock insuficiente" con un valor de entrada
+        // alto — un mensaje totalmente equivocado para lo que en realidad es un
+        // desbordamiento, no falta de stock.
+        long newStockLong = (long) previous + req.getQuantity();
+        if (newStockLong < 0) {
+            throw new FieldConflictException("quantity", "Stock insuficiente");
+        }
+        if (newStockLong > Integer.MAX_VALUE) {
+            throw new FieldConflictException("quantity", "El número es excesivamente grande — el máximo permitido es 2,147,483,647");
+        }
+        int newStock = (int) newStockLong;
         p.setStock(newStock);
         productRepository.save(p);
 
@@ -363,7 +376,9 @@ public class ProductService {
      * @param tiendaId tienda contra la que se valida
      * @param excludeProductId id del propio producto a excluir de la validación (al
      *                         editar, para no chocar contra sí mismo); {@code null} al crear
-     * @throws IllegalStateException si otro producto activo de la tienda ya usa ese código
+     * @throws FieldConflictException (campo {@code barcode}) si otro producto activo de la
+     *         tienda ya usa ese código — así el frontend lo muestra debajo de ese input
+     *         específico, en vez de como un error genérico del formulario
      */
     // Sin esto, un formulario que deja el campo vacío manda "" (no null), y DOS productos
     // con barcode="" chocan de verdad contra el UNIQUE(tienda_id, barcode) de la base de
@@ -387,7 +402,7 @@ public class ProductService {
         if (barcode == null || barcode.isBlank()) return;
         Product existing = productRepository.findByBarcodeExact(barcode, tiendaId).orElse(null);
         if (existing != null && !existing.getId().equals(excludeProductId)) {
-            throw new IllegalStateException("Ya existe un producto con ese código de barras: " + existing.getName());
+            throw new FieldConflictException("barcode", "Ya existe un producto con ese código de barras: " + existing.getName());
         }
     }
 

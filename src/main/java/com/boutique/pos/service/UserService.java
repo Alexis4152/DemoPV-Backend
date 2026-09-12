@@ -1,6 +1,7 @@
 package com.boutique.pos.service;
 
 import com.boutique.pos.dto.UserRequest;
+import com.boutique.pos.exception.FieldConflictException;
 import com.boutique.pos.model.CashCutStatus;
 import com.boutique.pos.model.Role;
 import com.boutique.pos.model.Tienda;
@@ -242,14 +243,14 @@ public class UserService {
      * @param actor usuario que lo da de alta/reactiva; queda registrado como {@code
      *              createdBy} (alta nueva) o {@code updatedBy} (reactivación)
      * @return el usuario creado o reactivado
-     * @throws IllegalArgumentException si el correo ya está registrado y ACTIVO
+     * @throws FieldConflictException (campo {@code email}) si el correo ya está registrado y ACTIVO
      */
     public User create(UserRequest req, User actor) {
         Optional<User> existing = userRepository.findByEmail(req.getEmail());
         if (existing.isPresent()) {
             User found = existing.get();
             if (Boolean.TRUE.equals(found.getIsActive())) {
-                throw new IllegalArgumentException("El correo ya está registrado");
+                throw new FieldConflictException("email", "El correo ya está registrado");
             }
             return reactivate(found, req, actor);
         }
@@ -331,7 +332,7 @@ public class UserService {
      * @param actor usuario que hace el cambio; debe tener acceso a la tienda del usuario
      *              objetivo; queda registrado como {@code updatedBy}
      * @return el usuario actualizado
-     * @throws IllegalArgumentException si el correo ya lo usa OTRO usuario
+     * @throws FieldConflictException (campo {@code email}) si el correo ya lo usa OTRO usuario
      * @throws AccessDeniedException si un SUPERVISOR intenta mover al usuario a una tienda
      *         que no administra
      * @throws IllegalStateException si el usuario tiene un corte de caja abierto y se le
@@ -342,10 +343,16 @@ public class UserService {
         assertCanManage(u, actor);
         userRepository.findByEmail(req.getEmail())
                 .filter(existing -> !existing.getId().equals(u.getId()))
-                .ifPresent(existing -> { throw new IllegalArgumentException("El correo ya está registrado"); });
+                .ifPresent(existing -> { throw new FieldConflictException("email", "El correo ya está registrado"); });
         u.setName(req.getName());
         u.setEmail(req.getEmail());
         if (req.getPassword() != null && !req.getPassword().isBlank()) {
+            // Longitud validada AQUÍ, no con @Size en UserRequest — ver el porqué en ese
+            // DTO: este es el único punto donde el campo password de verdad se usa.
+            int len = req.getPassword().length();
+            if (len < 6 || len > 72) {
+                throw new FieldConflictException("password", "La contraseña debe tener entre 6 y 72 caracteres");
+            }
             u.setPassword(passwordEncoder.encode(req.getPassword()));
             u.setMustChangePassword(true);
         }
