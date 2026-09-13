@@ -1,12 +1,14 @@
 package com.boutique.pos.controller;
 
 import com.boutique.pos.dto.ApiResponse;
+import com.boutique.pos.dto.BulkImportResult;
 import com.boutique.pos.dto.InventoryAdjustRequest;
 import com.boutique.pos.dto.PageResponse;
 import com.boutique.pos.dto.ProductRequest;
 import com.boutique.pos.model.Product;
 import com.boutique.pos.model.ProductImage;
 import com.boutique.pos.model.User;
+import com.boutique.pos.service.ProductBulkImportService;
 import com.boutique.pos.service.ProductImageService;
 import com.boutique.pos.service.ProductService;
 import jakarta.validation.Valid;
@@ -39,6 +41,7 @@ public class ProductController {
 
     private final ProductService productService;
     private final ProductImageService productImageService;
+    private final ProductBulkImportService productBulkImportService;
 
     /**
      * Lista todos los productos de la tienda del usuario autenticado.
@@ -290,5 +293,38 @@ public class ProductController {
         Product product = productService.findById(id, actor);
         productImageService.delete(product, imageId);
         return ResponseEntity.ok(ApiResponse.ok(null, "Foto eliminada"));
+    }
+
+    // ── Carga masiva de productos por Excel ────────────────────────────────────────────
+
+    /**
+     * Descarga la plantilla (.xlsx) de carga masiva, con las columnas esperadas y una fila
+     * de ejemplo. Disponible para ADMIN/SUPER_ADMIN/SUPERVISOR — es de solo lectura, sin
+     * ningún riesgo, a diferencia de la carga real (ver {@link #bulkImport}).
+     */
+    @GetMapping("/bulk-import/template")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    public ResponseEntity<byte[]> bulkImportTemplate() {
+        byte[] xlsx = productBulkImportService.buildTemplate();
+        return ResponseEntity.ok()
+                .header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                .header("Content-Disposition", "attachment; filename=\"plantilla-carga-masiva-productos.xlsx\"")
+                .body(xlsx);
+    }
+
+    /**
+     * Procesa un archivo de carga masiva de productos, creando uno por cada fila válida y
+     * reportando el resto como errores (sin tumbar la carga completa por una fila mala).
+     * Restringido a SUPER_ADMIN.
+     */
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @PostMapping(value = "/bulk-import", consumes = "multipart/form-data")
+    public ResponseEntity<ApiResponse<BulkImportResult>> bulkImport(@RequestParam("file") MultipartFile file,
+                                                                     @AuthenticationPrincipal User actor) {
+        BulkImportResult result = productBulkImportService.importFile(file, actor);
+        String message = result.getErrorCount() == 0
+                ? result.getCreated() + " producto(s) creado(s) correctamente"
+                : result.getCreated() + " producto(s) creado(s), " + result.getErrorCount() + " con error";
+        return ResponseEntity.ok(ApiResponse.ok(result, message));
     }
 }

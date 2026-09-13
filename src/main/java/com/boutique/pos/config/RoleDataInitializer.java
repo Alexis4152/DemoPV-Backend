@@ -99,7 +99,11 @@ public class RoleDataInitializer implements CommandLineRunner {
      * no debe tomar un script de arranque.
      */
     private void seedSuperAdminRole() {
-        if (roleRepository.findFirstByNameAndTiendaIsNullOrderById("SUPER_ADMIN").isPresent()) return;
+        Role existing = roleRepository.findFirstByNameAndTiendaIsNullOrderById("SUPER_ADMIN").orElse(null);
+        if (existing != null) {
+            backfillSectionsIfEmpty(existing);
+            return;
+        }
         Role superAdmin = Role.builder()
                 .name("SUPER_ADMIN")
                 .description("Super administrador — plataforma completa, todas las tiendas")
@@ -109,6 +113,23 @@ public class RoleDataInitializer implements CommandLineRunner {
                 .build();
         roleRepository.save(superAdmin);
         log.info("Rol sembrado: SUPER_ADMIN");
+    }
+
+    // Detectado en producción: una fila SUPER_ADMIN de antes de que este rol tuviera
+    // secciones (o sembrada por algún otro camino) se quedaba con `role_sections` vacío
+    // para siempre — el guard idempotente de arriba nunca la volvía a tocar una vez que
+    // existía, así que ese usuario solo veía el submenú "Configuración" (lo único que no
+    // depende de `hasSection` en el frontend) sin importar cuántas veces se reiniciara el
+    // backend. Se corrige solo en cada arranque en vez de requerir una migración manual.
+    /**
+     * Si el rol ya existe pero se quedó sin ninguna sección asignada (dato corrupto/legado,
+     * nunca un estado válido para SUPER_ADMIN o SUPERVISOR), lo rellena con todas.
+     */
+    private void backfillSectionsIfEmpty(Role role) {
+        if (!role.getSections().isEmpty()) return;
+        role.setSections(EnumSet.allOf(AppSection.class));
+        roleRepository.save(role);
+        log.warn("Rol {} tenía 0 secciones asignadas — se rellenó con todas", role.getName());
     }
 
     // Mismo patrón idempotente que seedSuperAdminRole(): chequeo propio por nombre, no por
@@ -122,7 +143,11 @@ public class RoleDataInitializer implements CommandLineRunner {
      * Supervisor, al dar de alta una tienda nueva) desde la aplicación.
      */
     private void seedSupervisorRole() {
-        if (roleRepository.findFirstByNameAndTiendaIsNullOrderById("SUPERVISOR").isPresent()) return;
+        Role existing = roleRepository.findFirstByNameAndTiendaIsNullOrderById("SUPERVISOR").orElse(null);
+        if (existing != null) {
+            backfillSectionsIfEmpty(existing);
+            return;
+        }
         Role supervisor = Role.builder()
                 .name("SUPERVISOR")
                 .description("Supervisor de tiendas — administra el grupo de tiendas que tenga asignado")
