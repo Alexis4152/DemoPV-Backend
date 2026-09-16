@@ -217,6 +217,35 @@ CREATE TABLE IF NOT EXISTS cash_cut_schedule (
     updated_by_user_id  BIGINT REFERENCES users(id)
 );
 
+-- Transacciones de pago procesadas mediante pasarelas (Openpay: tarjeta, Paynet, SPEI)
+CREATE TABLE IF NOT EXISTS payment_transactions (
+    id                      VARCHAR(36) PRIMARY KEY,
+    order_id                VARCHAR(100) NOT NULL,
+    tienda_id               BIGINT REFERENCES tiendas(id),
+    openpay_transaction_id  VARCHAR(100),
+    amount                  NUMERIC(12,2) NOT NULL,
+    currency                VARCHAR(3) NOT NULL,
+    method                  VARCHAR(20) NOT NULL
+                                CHECK (method IN ('CARD', 'STORE', 'SPEI')),
+    status                  VARCHAR(30) NOT NULL
+                                CHECK (status IN ('PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED', 'REFUNDED', 'PARTIALLY_REFUNDED')),
+    description             VARCHAR(255),
+    authorization_code      VARCHAR(50),
+    reference               VARCHAR(100),
+    barcode_url             VARCHAR(500),
+    clabe                   VARCHAR(50),
+    bank                    VARCHAR(100),
+    redirect_url            VARCHAR(500),
+    failure_reason          VARCHAR(500),
+    refunded_amount         NUMERIC(12,2),
+    customer_name           VARCHAR(100),
+    customer_last_name      VARCHAR(100),
+    customer_email          VARCHAR(150),
+    customer_phone_number   VARCHAR(30),
+    created_at              TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_products_category   ON products(category_id);
 CREATE INDEX IF NOT EXISTS idx_products_barcode    ON products(barcode);
@@ -230,6 +259,9 @@ CREATE INDEX IF NOT EXISTS idx_inv_movements_prod  ON inventory_movements(produc
 CREATE INDEX IF NOT EXISTS idx_cash_cuts_status    ON cash_cuts(status);
 CREATE INDEX IF NOT EXISTS idx_cash_cuts_tienda    ON cash_cuts(tienda_id);
 CREATE INDEX IF NOT EXISTS idx_users_tienda        ON users(tienda_id);
+CREATE INDEX IF NOT EXISTS idx_payment_order_id    ON payment_transactions(order_id);
+CREATE INDEX IF NOT EXISTS idx_payment_openpay_id  ON payment_transactions(openpay_transaction_id);
+CREATE INDEX IF NOT EXISTS idx_payment_tienda_id   ON payment_transactions(tienda_id);
 
 -- Tienda por defecto para el primer arranque
 INSERT INTO tiendas (name)
