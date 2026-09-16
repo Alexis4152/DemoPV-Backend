@@ -7,6 +7,7 @@ import com.boutique.pos.model.PaymentMethod;
 import com.boutique.pos.model.CashCut;
 import com.boutique.pos.model.Sale;
 import com.boutique.pos.model.SaleStatus;
+import com.boutique.pos.model.Tienda;
 import com.boutique.pos.model.User;
 import com.boutique.pos.repository.CashCutRepository;
 import com.boutique.pos.repository.SaleRepository;
@@ -76,14 +77,26 @@ public class CashCutService {
      * @param to fecha/hora máxima de apertura (inclusiva); si es null se usa un límite
      *           superior muy lejano, por la misma razón
      * @param status filtro por estado (abierto/cerrado), o null
+     * @param userId filtra al cajero dueño del corte, o null para no filtrar
      * @param pageable paginación y orden solicitados
      * @param actor usuario que consulta; acota el resultado a su tienda
      * @return página de cortes que cumplen los filtros
      */
-    public Page<CashCut> findAll(LocalDateTime from, LocalDateTime to, CashCutStatus status, Pageable pageable, User actor) {
+    public Page<CashCut> findAll(LocalDateTime from, LocalDateTime to, CashCutStatus status, Long userId, Pageable pageable, User actor) {
         LocalDateTime effectiveFrom = from != null ? from : MIN_DATE;
         LocalDateTime effectiveTo = to != null ? to : MAX_DATE;
-        return cashCutRepository.search(tenantScope.scopeId(actor), effectiveFrom, effectiveTo, status, pageable);
+        return cashCutRepository.search(tenantScope.scopeId(actor), effectiveFrom, effectiveTo, status, userId, pageable);
+    }
+
+    /**
+     * Cajeros distintos con al menos un corte de caja en la tienda del actor, para poblar
+     * el filtro "Cajero" del historial (ver {@link CashCutRepository#findDistinctCashiers}).
+     *
+     * @param actor usuario que consulta; acota el resultado a su tienda
+     * @return lista de {@code [id, nombre]} de cada cajero, ordenada por nombre
+     */
+    public List<Object[]> listCashiers(User actor) {
+        return cashCutRepository.findDistinctCashiers(tenantScope.scopeId(actor));
     }
 
     // El corte propio del día de hoy, abierto o ya cerrado — a diferencia de findOpen(),
@@ -123,8 +136,9 @@ public class CashCutService {
                 .orElseThrow(() -> new IllegalArgumentException("Corte no encontrado: " + id));
     }
 
-    // ADMIN ve cualquier corte de su tienda (para supervisar a todos sus cajeros a la vez);
-    // SUPER_ADMIN ve todo; el resto solo ve el suyo propio del día de hoy.
+    // ADMIN (o SUPERVISOR actuando sobre una de sus tiendas) ve cualquier corte de esa
+    // tienda, para supervisar a todos sus cajeros a la vez; SUPER_ADMIN ve todo; el resto
+    // solo ve el suyo propio del día de hoy.
     /**
      * Determina si el actor tiene permiso para ver un corte de caja en particular, según
      * la regla descrita en el comentario anterior.
@@ -135,9 +149,10 @@ public class CashCutService {
      */
     private boolean canView(CashCut cut, User actor) {
         if (tenantScope.isSuperAdmin(actor)) return true;
-        if (ADMIN.equals(actor.getRole().getName())) {
-            return actor.getTienda() == null ? cut.getTienda() == null
-                    : actor.getTienda().getId().equals(cut.getTienda() != null ? cut.getTienda().getId() : null);
+        if (tenantScope.isSupervisor(actor) || ADMIN.equals(actor.getRole().getName())) {
+            Long scope = tenantScope.scopeId(actor);
+            return scope == null ? cut.getTienda() == null
+                    : scope.equals(cut.getTienda() != null ? cut.getTienda().getId() : null);
         }
         return cut.getUser().getId().equals(actor.getId())
                 && cut.getOpenedAt().toLocalDate().equals(LocalDate.now());
@@ -148,18 +163,26 @@ public class CashCutService {
     /**
      * Abre un corte de caja nuevo para el actor, con su fondo inicial.
      *
-     * <p>Un usuario que no sea ADMIN solo puede abrir un corte por día; un ADMIN puede
+     * <p>Un usuario que no tenga nivel ADMIN (ver {@link TenantScope#isAdminLevel}) solo
+     * puede abrir un corte por día; ADMIN, SUPERVISOR o SUPER_ADMIN actuando como tal puede
      * abrir varios el mismo día (por ejemplo, para cubrir turnos o corregir un cierre
-     * anterior).</p>
+     * anterior). El corte queda en la tienda que el actor esté actuando (ver {@link
+     * TenantScope#tiendaForWrite}) — para un SUPER_ADMIN/SUPERVISOR sin tienda elegida,
+     * esto lanza {@code IllegalStateException} en vez de guardar un corte sin tienda.</p>
      *
      * @param req datos de apertura: monto del fondo inicial y notas opcionales
-     * @param actor usuario que abre el corte; queda como dueño del corte y determina su tienda
+     * @param actor usuario que abre el corte; queda como dueño del corte
      * @return el corte recién abierto, en estado {@code OPEN}
-     * @throws IllegalStateException si el actor no es ADMIN y ya abrió un corte hoy
+     * @throws IllegalStateException si el actor no tiene nivel ADMIN y ya abrió un corte
+     *         hoy, o si es SUPER_ADMIN/SUPERVISOR sin ninguna tienda elegida para actuar
      */
     @Transactional
     public CashCut open(CashCutRequest req, User actor) {
-        if (!ADMIN.equals(actor.getRole().getName())) {
+        Tienda tienda = tenantScope.tiendaForWrite(actor);
+        if (tienda == null && tenantScope.isPlatformActor(actor)) {
+            throw new IllegalStateException("Elige una tienda para poder abrir un corte de caja");
+        }
+        if (!tenantScope.isAdminLevel(actor)) {
             LocalDateTime startOfDay = LocalDate.now().atStartOfDay();
             LocalDateTime endOfDay = startOfDay.plusDays(1);
             if (cashCutRepository.existsByUserIdAndOpenedAtBetween(actor.getId(), startOfDay, endOfDay)) {
@@ -169,7 +192,7 @@ public class CashCutService {
         }
         CashCut cut = new CashCut();
         cut.setUser(actor);
-        cut.setTienda(actor.getTienda());
+        cut.setTienda(tienda);
         cut.setOpeningAmount(req.getAmount());
         cut.setStatus(CashCutStatus.OPEN);
         cut.setNotes(req.getNotes());

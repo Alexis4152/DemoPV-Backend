@@ -25,4 +25,8 @@ public class LoginResponse {
     // Nombres de las AppSection a las que el usuario tiene acceso, resueltas a partir de su Role.
     private List<String> sections;
     private Tienda tienda; // null si es SUPER_ADMIN — el frontend usa tienda.primaryColor para el tema
+    // true si el admin lo dio de alta con contraseña temporal y todavía no la cambia — el
+    // frontend debe mandarlo directo a "Cambiar contraseña" y no dejarlo navegar hasta
+    // que la cambie (ver POST /api/auth/change-password).
+    private Boolean mustChangePassword;
 }

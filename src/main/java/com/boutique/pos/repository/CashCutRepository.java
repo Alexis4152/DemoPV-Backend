@@ -62,10 +62,24 @@ public interface CashCutRepository extends JpaRepository<CashCut, Long> {
            "(:tiendaId IS NULL OR c.tienda.id = :tiendaId) " +
            "AND c.openedAt BETWEEN :from AND :to " +
            "AND (:status IS NULL OR c.status = :status) " +
+           "AND (:userId IS NULL OR c.user.id = :userId) " +
            "ORDER BY c.openedAt DESC")
     Page<CashCut> search(@Param("tiendaId") Long tiendaId,
                           @Param("from") LocalDateTime from,
                           @Param("to") LocalDateTime to,
                           @Param("status") CashCutStatus status,
+                          @Param("userId") Long userId,
                           Pageable pageable);
+
+    /**
+     * Cajeros distintos que tienen al menos un corte de caja en la tienda dada — para
+     * poblar el filtro "Cajero" del historial ({@link #search}), sin depender de la
+     * sección {@code USERS} (que un ADMIN podría no tener habilitada) como haría
+     * {@code UserController}. {@code tiendaId} nulo indica SUPER_ADMIN viendo todas las
+     * tiendas (no se filtra por tienda).
+     */
+    @Query("SELECT DISTINCT c.user.id, c.user.name FROM CashCut c " +
+           "WHERE (:tiendaId IS NULL OR c.tienda.id = :tiendaId) " +
+           "ORDER BY c.user.name ASC")
+    List<Object[]> findDistinctCashiers(@Param("tiendaId") Long tiendaId);
 }

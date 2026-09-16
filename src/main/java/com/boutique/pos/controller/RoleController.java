@@ -1,12 +1,16 @@
 package com.boutique.pos.controller;
 
 import com.boutique.pos.dto.ApiResponse;
+import com.boutique.pos.dto.PageResponse;
 import com.boutique.pos.dto.RoleRequest;
 import com.boutique.pos.model.Role;
 import com.boutique.pos.model.User;
 import com.boutique.pos.service.RoleService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -40,6 +44,25 @@ public class RoleController {
     @GetMapping
     public ResponseEntity<ApiResponse<List<Role>>> list(@AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(roleService.findAll(actor), null));
+    }
+
+    /**
+     * Página de roles de la tienda del usuario autenticado, para la tabla de la pantalla
+     * de administración de Roles (a diferencia de {@link #list}, pensado para selectores
+     * que necesitan el catálogo completo, ej. el filtro/formulario de Usuarios).
+     *
+     * @param page  número de página, 0-based (default 0)
+     * @param size  tamaño de página (default 20)
+     * @param actor usuario autenticado; determina el filtro por tienda
+     */
+    @GetMapping("/page")
+    public ResponseEntity<ApiResponse<PageResponse<Role>>> page(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @AuthenticationPrincipal User actor) {
+        Pageable pageable = PageRequest.of(page, size);
+        Page<Role> result = roleService.findAll(actor, pageable);
+        return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
     }
 
     /**

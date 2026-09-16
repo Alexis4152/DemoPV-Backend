@@ -27,13 +27,15 @@ public class JwtTokenProvider {
     private long expiration;
 
     /**
-     * Genera un JWT firmado para el usuario dado, con el email como subject, fecha de emisión
-     * actual y expiración calculada a partir de {@code app.jwt.expiration} (en milisegundos).
+     * Genera el access token JWT firmado para el usuario dado, con el email como subject,
+     * fecha de emisión actual y expiración calculada a partir de {@code app.jwt.expiration}
+     * (en milisegundos) — vida corta (30 min) a propósito: la renovación la da el refresh
+     * token opaco de {@link com.boutique.pos.model.RefreshToken}, no este JWT.
      *
      * @param userDetails usuario autenticado (su username es el email)
      * @return el JWT compacto y firmado, listo para devolver al cliente
      */
-    public String generateToken(UserDetails userDetails) {
+    public String generateAccessToken(UserDetails userDetails) {
         return Jwts.builder()
                 .setSubject(userDetails.getUsername())
                 .setIssuedAt(new Date())

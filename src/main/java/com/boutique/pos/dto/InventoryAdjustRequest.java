@@ -1,6 +1,7 @@
 package com.boutique.pos.dto;
 
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 /**
@@ -16,6 +17,8 @@ public class InventoryAdjustRequest {
     // solo lo puede aplicar un ADMIN; el servicio lo rechaza para otros roles.
     @NotNull
     private Integer quantity;
-    // Motivo del ajuste (opcional), útil para auditar mermas, conteos físicos, etc.
+    // Motivo del ajuste (opcional), útil para auditar mermas, conteos físicos, etc. Máximo
+    // alineado a inventory_movements.reason VARCHAR(255).
+    @Size(max = 255, message = "El motivo no puede tener más de 255 caracteres")
     private String reason;
 }
