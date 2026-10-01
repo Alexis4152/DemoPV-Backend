@@ -91,6 +91,14 @@ public class PaymentService implements CreatePaymentUseCase, GetPaymentStatusUse
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public PaymentTransaction executeByOrderId(String orderId) {
+        log.info("Consultando estado de pago con Order ID: {}", orderId);
+        return paymentRepositoryPort.findByOrderId(orderId)
+                .orElseThrow(() -> PaymentNotFoundException.withOrderId(orderId));
+    }
+
+    @Override
     public PaymentTransaction execute(String paymentId, RefundCommand command) {
         log.info("Iniciando reembolso para paymentId: {}, monto: {}", paymentId, command.amount());
 
@@ -149,6 +157,30 @@ public class PaymentService implements CreatePaymentUseCase, GetPaymentStatusUse
             case "charge.refunded" -> {
                 transaction.refund(transaction.getAmount());
                 log.info("Transacción {} marcada como REFUNDED vía webhook", transaction.getId());
+                if (saleRepository != null && transaction.getOrderId() != null) {
+                    saleRepository.findByOrderId(transaction.getOrderId()).ifPresent(sale -> {
+                        if (sale.getStatus() == SaleStatus.COMPLETED) {
+                            sale.setStatus(SaleStatus.CANCELLED);
+                            sale.setNotes((sale.getNotes() != null ? sale.getNotes() + "\n" : "") + "[Webhook]: Cargo reembolsado en Openpay");
+                            saleRepository.save(sale);
+                            log.info("Venta ID {} actualizada a CANCELLED tras reembolso de pago vía webhook", sale.getId());
+                        }
+                    });
+                }
+            }
+            case "charge.cancelled" -> {
+                transaction.markAsCancelled();
+                log.info("Transacción {} marcada como CANCELLED vía webhook", transaction.getId());
+                if (saleRepository != null && transaction.getOrderId() != null) {
+                    saleRepository.findByOrderId(transaction.getOrderId()).ifPresent(sale -> {
+                        if (sale.getStatus() == SaleStatus.PENDING) {
+                            sale.setStatus(SaleStatus.CANCELLED);
+                            sale.setNotes((sale.getNotes() != null ? sale.getNotes() + "\n" : "") + "[Webhook]: Cargo cancelado/expirado en Openpay");
+                            saleRepository.save(sale);
+                            log.info("Venta ID {} actualizada de PENDING a CANCELLED tras cancelación de cargo en pasarela", sale.getId());
+                        }
+                    });
+                }
             }
             default -> log.info("Evento de webhook no manejado: {}", notification.type());
         }

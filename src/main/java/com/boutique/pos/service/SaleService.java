@@ -3,6 +3,9 @@ package com.boutique.pos.service;
 import com.boutique.pos.dto.SaleItemRequest;
 import com.boutique.pos.dto.SaleRequest;
 import com.boutique.pos.model.*;
+import com.boutique.pos.payment.application.port.in.RefundCommand;
+import com.boutique.pos.payment.application.port.in.RefundPaymentUseCase;
+import com.boutique.pos.payment.application.port.out.PaymentRepositoryPort;
 import com.boutique.pos.repository.*;
 import com.boutique.pos.security.TenantScope;
 import lombok.RequiredArgsConstructor;
@@ -40,6 +43,8 @@ public class SaleService {
     private final InventoryMovementRepository movementRepository;
     private final EmailService emailService;
     private final TenantScope tenantScope;
+    private final RefundPaymentUseCase refundPaymentUseCase;
+    private final PaymentRepositoryPort paymentRepositoryPort;
 
     // BETWEEN siempre necesita las dos fechas: cuando el filtro viene vacío, Postgres no
     // logra inferir el tipo de un parámetro timestamp nulo (ni con CAST), así que en vez
@@ -249,10 +254,47 @@ public class SaleService {
      */
     @Transactional
     public Sale cancel(Long id, User actor) {
+        return cancel(id, actor, false, null, null);
+    }
+
+    /**
+     * Cancela una venta ya registrada y opcionalmente procesa el reembolso en la pasarela Openpay.
+     *
+     * @param id identificador de la venta a cancelar
+     * @param actor usuario administrador que ejecuta la cancelación
+     * @param refundPayment si es true y la venta fue pagada con tarjeta, procesa el reembolso en Openpay
+     * @param refundAmount monto a reembolsar (opcional, si es null o <= 0 se reembolsa el total de la venta)
+     * @param refundReason motivo del reembolso/cancelación para trazabilidad y auditoría
+     * @return la venta cancelada
+     */
+    @Transactional
+    public Sale cancel(Long id, User actor, boolean refundPayment, BigDecimal refundAmount, String refundReason) {
         Sale sale = findById(id, actor);
         if (sale.getStatus() == SaleStatus.CANCELLED) {
             throw new IllegalStateException("La venta ya está cancelada");
         }
+
+        // Si se solicita reembolso a pasarela Openpay y la venta fue pagada con tarjeta
+        if (refundPayment && sale.getPaymentMethod() == PaymentMethod.CARD) {
+            if (sale.getOrderId() == null || sale.getOrderId().isBlank()) {
+                throw new IllegalStateException("La venta no cuenta con una orden asociada (orderId) para procesar el reembolso en Openpay.");
+            }
+            var paymentOpt = paymentRepositoryPort.findByOrderId(sale.getOrderId());
+            if (paymentOpt.isPresent()) {
+                var payment = paymentOpt.get();
+                BigDecimal amountToRefund = (refundAmount != null && refundAmount.compareTo(BigDecimal.ZERO) > 0)
+                        ? refundAmount
+                        : sale.getTotal();
+                String reason = (refundReason != null && !refundReason.isBlank())
+                        ? refundReason
+                        : "Cancelación de venta #" + sale.getId();
+
+                refundPaymentUseCase.execute(payment.getId(), new RefundCommand(amountToRefund, reason));
+            } else {
+                throw new IllegalStateException("No se encontró la transacción de pago en pasarela para la orden " + sale.getOrderId());
+            }
+        }
+
         for (SaleItem item : sale.getItems()) {
             Product p = item.getProduct();
             int qty = item.getQuantity().intValue();
@@ -273,6 +315,10 @@ public class SaleService {
         sale.setStatus(SaleStatus.CANCELLED);
         sale.setCancelledBy(actor);
         sale.setCancelledAt(LocalDateTime.now());
+        if (refundReason != null && !refundReason.isBlank()) {
+            String existingNotes = sale.getNotes() != null ? sale.getNotes() + "\n" : "";
+            sale.setNotes(existingNotes + "[Cancelación]: " + refundReason);
+        }
         return saleRepository.save(sale);
     }
 }

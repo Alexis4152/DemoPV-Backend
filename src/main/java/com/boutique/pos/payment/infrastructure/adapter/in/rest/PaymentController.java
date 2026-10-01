@@ -97,6 +97,20 @@ public class PaymentController {
         return ResponseEntity.ok(mapper.toResponse(transaction));
     }
 
+    @GetMapping("/order/{orderId}")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Consultar estado de un pago por Order ID", description = "Obtiene la información y estatus de una transacción usando su identificador de orden.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Transacción encontrada",
+                    content = @Content(schema = @Schema(implementation = PaymentResponse.class))),
+            @ApiResponse(responseCode = "404", description = "Transacción no encontrada",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
+    })
+    public ResponseEntity<PaymentResponse> getPaymentByOrderId(@PathVariable("orderId") String orderId) {
+        PaymentTransaction transaction = getPaymentStatusUseCase.executeByOrderId(orderId);
+        return ResponseEntity.ok(mapper.toResponse(transaction));
+    }
+
     @PostMapping("/{id}/refund")
     @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Reembolsar pago", description = "Aplica un reembolso total o parcial sobre una transacción previamente completada (restringido a ADMIN).")

@@ -22,6 +22,14 @@ public class ApiResponse<T> {
     private boolean success;
     private String message;
     private T data;
+    private Integer errorCode;
+
+    public ApiResponse(boolean success, String message, T data) {
+        this.success = success;
+        this.message = message;
+        this.data = data;
+        this.errorCode = null;
+    }
 
     /** Respuesta exitosa sin mensaje adicional (mensaje queda {@code null}). */
     public static <T> ApiResponse<T> ok(T data)                  { return new ApiResponse<>(true,  null, data); }
@@ -29,4 +37,10 @@ public class ApiResponse<T> {
     public static <T> ApiResponse<T> ok(T data, String msg)      { return new ApiResponse<>(true,  msg,  data); }
     /** Respuesta de error: {@code success=false}, sin datos, solo el mensaje de error. */
     public static <T> ApiResponse<T> error(String msg)           { return new ApiResponse<>(false, msg,  null); }
+    /** Respuesta de error con código específico de pasarela/negocio. */
+    public static <T> ApiResponse<T> error(String msg, Integer errorCode) {
+        ApiResponse<T> resp = new ApiResponse<>(false, msg, null);
+        resp.setErrorCode(errorCode);
+        return resp;
+    }
 }

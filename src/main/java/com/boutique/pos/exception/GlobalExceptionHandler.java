@@ -45,7 +45,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(com.boutique.pos.payment.domain.exception.PaymentDeclinedException.class)
     public ResponseEntity<ApiResponse<Void>> handlePaymentDeclined(com.boutique.pos.payment.domain.exception.PaymentDeclinedException ex) {
-        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(ApiResponse.error(ex.getMessage()));
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(ApiResponse.error(ex.getMessage(), ex.getErrorCode()));
     }
 
     @ExceptionHandler(com.boutique.pos.payment.domain.exception.PaymentNotFoundException.class)
@@ -61,7 +61,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(com.boutique.pos.payment.domain.exception.PaymentGatewayException.class)
     public ResponseEntity<ApiResponse<Void>> handlePaymentGateway(com.boutique.pos.payment.domain.exception.PaymentGatewayException ex) {
         int status = ex.getHttpStatus() != null ? ex.getHttpStatus() : HttpStatus.BAD_GATEWAY.value();
-        return ResponseEntity.status(status).body(ApiResponse.error(ex.getMessage()));
+        return ResponseEntity.status(status).body(ApiResponse.error(ex.getMessage(), ex.getOpenpayErrorCode()));
     }
 
     @ExceptionHandler(RuntimeException.class)

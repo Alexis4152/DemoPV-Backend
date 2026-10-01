@@ -200,7 +200,7 @@ public class OpenpayPaymentGatewayAdapter implements PaymentGatewayPort {
                     throw new PaymentDeclinedException(errorCode, desc);
                 }
 
-                throw new PaymentGatewayException("Error Openpay [" + errorCode + "]: " + desc, httpStatus);
+                throw new PaymentGatewayException("Error Openpay [" + errorCode + "]: " + desc, httpStatus, errorCode);
             }
         } catch (PaymentDeclinedException | PaymentGatewayException ex) {
             throw ex;
