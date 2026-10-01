@@ -10,6 +10,8 @@ package com.boutique.pos.model;
 public enum SaleStatus {
     /** Venta vigente, ya cobrada y aplicada al inventario y al corte de caja. */
     COMPLETED,
+    /** Venta pendiente de cobro (ej. transferencia SPEI o pago en tiendas de conveniencia). */
+    PENDING,
     /** Venta cancelada: su stock fue revertido y no cuenta para los totales activos del corte. */
     CANCELLED
 }

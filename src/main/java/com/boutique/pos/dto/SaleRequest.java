@@ -1,6 +1,7 @@
 package com.boutique.pos.dto;
 
 import com.boutique.pos.model.PaymentMethod;
+import com.boutique.pos.model.SaleStatus;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotEmpty;
@@ -34,6 +35,10 @@ public class SaleRequest {
     // Con cuánto pagó el cliente. Obligatorio cuando paymentMethod = CASH (el servicio
     // rechaza la venta si falta o es menor al total); se ignora para tarjeta/transferencia.
     private BigDecimal amountReceived;
+    // Estado inicial de la venta (opcional: COMPLETED por defecto, o PENDING para pagos asíncronos)
+    private SaleStatus status;
+    // ID de la orden en pasarela de pago (ej. Openpay orderId)
+    private String orderId;
     private String notes;
     @NotEmpty @Valid
     private List<SaleItemRequest> items;

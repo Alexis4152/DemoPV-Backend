@@ -9,6 +9,9 @@ import com.boutique.pos.payment.application.port.out.PaymentGatewayPort;
 import com.boutique.pos.payment.application.port.out.PaymentRepositoryPort;
 import com.boutique.pos.payment.domain.exception.InvalidPaymentOperationException;
 import com.boutique.pos.payment.domain.exception.PaymentNotFoundException;
+import com.boutique.pos.model.Sale;
+import com.boutique.pos.model.SaleStatus;
+import com.boutique.pos.repository.SaleRepository;
 import com.boutique.pos.payment.domain.model.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -250,5 +253,56 @@ class PaymentServiceTest {
         assertThat(initialTransaction.getStatus()).isEqualTo(PaymentStatus.COMPLETED);
         assertThat(initialTransaction.getAuthorizationCode()).isEqualTo("AUTH-STORE-PAID");
         verify(paymentRepositoryPort).save(initialTransaction);
+    }
+
+    @Test
+    @DisplayName("Debe actualizar el estado a COMPLETED y completar la venta asociada al recibir un webhook charge.succeeded")
+    void shouldUpdateSaleStatusToCompletedOnWebhookChargeSucceeded() {
+        var mockSaleRepo = mock(SaleRepository.class);
+        var serviceWithSaleRepo = new PaymentService(paymentGatewayPort, paymentRepositoryPort, mockSaleRepo);
+
+        var initialTransaction = new PaymentTransaction(
+                "tx-uuid-webhook",
+                "ORD-400",
+                1L,
+                "tr-openpay-webhook-1",
+                new BigDecimal("200.00"),
+                "MXN",
+                PaymentMethod.STORE,
+                PaymentStatus.IN_PROGRESS,
+                "Pago pendiente en tienda",
+                null,
+                PaymentMethodDetails.empty(),
+                null,
+                BigDecimal.ZERO,
+                null,
+                Instant.now(),
+                Instant.now()
+        );
+
+        when(paymentRepositoryPort.findByOpenpayTransactionId("tr-openpay-webhook-1"))
+                .thenReturn(Optional.of(initialTransaction));
+
+        var pendingSale = new Sale();
+        pendingSale.setId(10L);
+        pendingSale.setOrderId("ORD-400");
+        pendingSale.setStatus(SaleStatus.PENDING);
+
+        when(mockSaleRepo.findByOrderId("ORD-400")).thenReturn(Optional.of(pendingSale));
+
+        var webhook = new WebhookNotification(
+                "charge.succeeded",
+                "2026-09-08T15:00:00Z",
+                "tr-openpay-webhook-1",
+                "completed",
+                "AUTH-STORE-PAID",
+                null
+        );
+
+        serviceWithSaleRepo.execute(webhook);
+
+        assertThat(initialTransaction.getStatus()).isEqualTo(PaymentStatus.COMPLETED);
+        assertThat(pendingSale.getStatus()).isEqualTo(SaleStatus.COMPLETED);
+        verify(mockSaleRepo).save(pendingSale);
     }
 }

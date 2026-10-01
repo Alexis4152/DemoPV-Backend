@@ -140,7 +140,8 @@ public class SaleService {
         sale.setCustomerName(req.getCustomerName());
         sale.setCustomerEmail(req.getCustomerEmail());
         sale.setPaymentMethod(req.getPaymentMethod());
-        sale.setStatus(SaleStatus.COMPLETED);
+        sale.setStatus(req.getStatus() != null ? req.getStatus() : SaleStatus.COMPLETED);
+        sale.setOrderId(req.getOrderId());
         sale.setNotes(req.getNotes());
         sale.setTienda(actor.getTienda());
 

@@ -310,6 +310,9 @@ public class CashCutService {
                 totals.cancelledTotal = totals.cancelledTotal.add(s.getTotal());
                 continue;
             }
+            if (s.getStatus() == SaleStatus.PENDING) {
+                continue;
+            }
             totals.transactionCount++;
             totals.totalSales = totals.totalSales.add(s.getTotal());
             if (s.getPaymentMethod() == PaymentMethod.CASH) totals.cashSales = totals.cashSales.add(s.getTotal());

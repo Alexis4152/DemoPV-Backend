@@ -48,6 +48,10 @@ public class Sale {
     @Column(length = 150)
     private String customerEmail;
 
+    /** Identificador de orden/intención de pago (ej. Openpay orderId). */
+    @Column(name = "order_id", length = 100)
+    private String orderId;
+
     /** Suma de los subtotales de los {@link SaleItem}, antes de descuento e impuestos. */
     @Column(nullable = false, precision = 12, scale = 2)
     @Builder.Default

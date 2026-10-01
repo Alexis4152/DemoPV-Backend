@@ -147,15 +147,28 @@ CREATE TABLE IF NOT EXISTS sales (
     -- NULL en tarjeta/transferencia y en ventas registradas antes de este feature.
     amount_received         NUMERIC(12,2),
     change_given            NUMERIC(12,2),
+    order_id                VARCHAR(100),
     payment_method          VARCHAR(20) NOT NULL DEFAULT 'CASH'
                                 CHECK (payment_method IN ('CASH','CARD','TRANSFER')),
     status                  VARCHAR(15) NOT NULL DEFAULT 'COMPLETED'
-                                CHECK (status IN ('COMPLETED','CANCELLED')),
+                                CHECK (status IN ('COMPLETED','PENDING','CANCELLED')),
     notes                   TEXT,
     created_at              TIMESTAMP NOT NULL DEFAULT NOW(),
     cancelled_at            TIMESTAMP,
     cancelled_by_user_id    BIGINT REFERENCES users(id)
 );
+
+-- Compatibilidad con bases de datos ya existentes: asegurar columna order_id y estado PENDING
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS order_id VARCHAR(100);
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'sales_status_check'
+    ) THEN
+        ALTER TABLE sales DROP CONSTRAINT sales_status_check;
+        ALTER TABLE sales ADD CONSTRAINT sales_status_check CHECK (status IN ('COMPLETED','PENDING','CANCELLED'));
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS sale_items (
     id              BIGSERIAL PRIMARY KEY,
@@ -254,6 +267,7 @@ CREATE INDEX IF NOT EXISTS idx_categories_tienda   ON categories(tienda_id);
 CREATE INDEX IF NOT EXISTS idx_sales_user          ON sales(user_id);
 CREATE INDEX IF NOT EXISTS idx_sales_created_at    ON sales(created_at);
 CREATE INDEX IF NOT EXISTS idx_sales_tienda        ON sales(tienda_id);
+CREATE INDEX IF NOT EXISTS idx_sales_order_id      ON sales(order_id);
 CREATE INDEX IF NOT EXISTS idx_sale_items_sale     ON sale_items(sale_id);
 CREATE INDEX IF NOT EXISTS idx_inv_movements_prod  ON inventory_movements(product_id);
 CREATE INDEX IF NOT EXISTS idx_cash_cuts_status    ON cash_cuts(status);

@@ -12,6 +12,7 @@ import org.springframework.data.repository.query.Param;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Repositorio de {@link Sale}, la venta principal (cabecera de ticket).
@@ -49,6 +50,9 @@ public interface SaleRepository extends JpaRepository<Sale, Long> {
 
     /** Lista las ventas asociadas a un corte de caja (usado al armar el detalle/reporte de un corte). */
     List<Sale> findByCashCutId(Long cashCutId);
+
+    /** Busca una venta por su identificador de orden de pago (Openpay). */
+    Optional<Sale> findByOrderId(String orderId);
 
     /**
      * Suma el total de las ventas completadas dentro de un rango de fechas.
