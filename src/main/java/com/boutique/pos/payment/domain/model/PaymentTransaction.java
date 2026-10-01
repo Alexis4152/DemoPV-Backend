@@ -127,6 +127,11 @@ public class PaymentTransaction {
         this.updatedAt = Instant.now();
     }
 
+    public void markAsCancelled() {
+        this.status = PaymentStatus.CANCELLED;
+        this.updatedAt = Instant.now();
+    }
+
     public void refund(BigDecimal amountToRefund) {
         if (this.status != PaymentStatus.COMPLETED && this.status != PaymentStatus.PARTIALLY_REFUNDED) {
             throw new InvalidPaymentOperationException(

@@ -12,4 +12,8 @@ public class PaymentNotFoundException extends RuntimeException {
     public static PaymentNotFoundException withOpenpayId(String openpayId) {
         return new PaymentNotFoundException("Transacción no encontrada con ID de Openpay: " + openpayId);
     }
+
+    public static PaymentNotFoundException withOrderId(String orderId) {
+        return new PaymentNotFoundException("Transacción no encontrada con Order ID: " + orderId);
+    }
 }

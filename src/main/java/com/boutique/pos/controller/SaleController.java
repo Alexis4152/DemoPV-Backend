@@ -1,6 +1,7 @@
 package com.boutique.pos.controller;
 
 import com.boutique.pos.dto.ApiResponse;
+import com.boutique.pos.dto.CancelSaleRequest;
 import com.boutique.pos.dto.PageResponse;
 import com.boutique.pos.dto.SaleRequest;
 import com.boutique.pos.model.PaymentMethod;
@@ -128,5 +129,26 @@ public class SaleController {
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<Sale>> cancel(@PathVariable Long id, @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(saleService.cancel(id, actor), "Venta cancelada"));
+    }
+
+    /**
+     * Cancela una venta ya registrada, con opción de ejecutar el reembolso en pasarela Openpay.
+     * Solo disponible para el rol ADMIN.
+     *
+     * @param id identificador de la venta a cancelar
+     * @param request datos opcionales de reembolso (indicador de pasarela, monto y motivo)
+     * @param actor usuario administrador autenticado
+     */
+    @PostMapping("/{id}/cancel")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<Sale>> cancelWithDetails(
+            @PathVariable Long id,
+            @RequestBody(required = false) CancelSaleRequest request,
+            @AuthenticationPrincipal User actor
+    ) {
+        boolean refund = request != null && Boolean.TRUE.equals(request.refundPayment());
+        java.math.BigDecimal amount = request != null ? request.refundAmount() : null;
+        String reason = request != null ? request.reason() : null;
+        return ResponseEntity.ok(ApiResponse.ok(saleService.cancel(id, actor, refund, amount, reason), "Venta cancelada exitosamente"));
     }
 }
