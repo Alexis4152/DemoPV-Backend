@@ -80,6 +80,12 @@ public class SecurityConfig {
                         // Vitrina pública de apartados (PublicController): sin login, el
                         // aislamiento entre tiendas lo da el slug de la URL, no una sesión.
                         .requestMatchers("/api/public/**").permitAll()
+                        // Cuando un recurso permitAll (ej. /uploads/**) no existe en disco,
+                        // Spring lo reenvía internamente a /error para armar el 404. Sin este
+                        // permitAll, ESE reenvío (que llega sin sesión) lo bloqueaba Security
+                        // antes de que se generara el 404 real, devolviendo un 401 engañoso en
+                        // su lugar (reproducido y confirmado con logging TRACE de Security).
+                        .requestMatchers("/error").permitAll()
                         .anyRequest().authenticated()
                 )
                 .userDetailsService(userDetailsService)
