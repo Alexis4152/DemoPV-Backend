@@ -59,6 +59,17 @@ public interface ApartadoRepository extends JpaRepository<Apartado, Long> {
     List<Apartado> findAllByStatusAndExpiresAtBefore(ApartadoStatus status, LocalDateTime now);
 
     /**
+     * Los apartados más recientes de una tienda (sin filtrar por teléfono aquí — el
+     * teléfono se guarda en texto libre con formatos distintos entre sí, así que esa
+     * comparación tolerante se hace en Java, ver {@code ApartadoService#phonesMatch}). Solo
+     * usado por {@code ApartadoService#publicApartadoLookupByPhone} ("¿no tienes tu
+     * folio?" en la vitrina pública) — el {@code Pageable} acota cuántos candidatos trae
+     * para filtrar, no cuántos se le muestran al final al cliente (eso lo recorta el
+     * servicio después de filtrar).
+     */
+    List<Apartado> findByTiendaIdOrderByRequestedAtDesc(Long tiendaId, Pageable pageable);
+
+    /**
      * Piezas de cada producto (de los {@code productIds} dados) ya reclamadas por OTRAS
      * solicitudes {@code PENDING} (excluyendo {@code excludeApartadoId}) — estas todavía
      * NO descontaron stock real (eso solo pasa al confirmar), así que sin este dato el

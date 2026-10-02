@@ -1,6 +1,9 @@
 package com.boutique.pos.controller;
 
+import com.boutique.pos.dto.ApartadoLookupRequest;
+import com.boutique.pos.dto.ApartadoPhoneLookupRequest;
 import com.boutique.pos.dto.ApartadoRequest;
+import com.boutique.pos.dto.ApartadoSelfCancelRequest;
 import com.boutique.pos.dto.ApiResponse;
 import com.boutique.pos.dto.PageResponse;
 import com.boutique.pos.dto.PublicApartadoDto;
@@ -87,5 +90,51 @@ public class PublicController {
         Apartado apartado = apartadoService.createPublic(slug, req);
         return ResponseEntity.ok(ApiResponse.ok(apartadoService.toPublicDto(apartado),
                 "¡Listo! Tu apartado quedó registrado, en breve la tienda te confirmará."));
+    }
+
+    /**
+     * Consulta el estado de un apartado ya hecho, por folio (su id) + teléfono — para que un
+     * cliente sin cuenta pueda darle seguimiento sin tener que llamar a la tienda (ver
+     * {@link ApartadoService#publicApartadoLookup}). Va por {@code POST} y no {@code GET}
+     * con query params a propósito: aunque el teléfono no es un dato ultra sensible, lleva
+     * el mismo criterio que una credencial — mejor no dejarlo en la URL (logs de servidor/
+     * proxy) si hay forma fácil de evitarlo.
+     */
+    @PostMapping("/apartados/lookup")
+    public ResponseEntity<ApiResponse<PublicApartadoDto>> lookupApartado(
+            @PathVariable String slug,
+            @Valid @RequestBody ApartadoLookupRequest req) {
+        PublicApartadoDto dto = apartadoService.publicApartadoLookup(slug, req.getId(), req.getPhone());
+        return ResponseEntity.ok(ApiResponse.ok(dto, null));
+    }
+
+    /**
+     * "¿No tienes tu folio?" — lista los apartados recientes de esta tienda que coincidan
+     * con un teléfono (ver {@link ApartadoService#publicApartadoLookupByPhone} para el
+     * criterio de coincidencia y la nota sobre por qué esta consulta es, a propósito,
+     * menos estricta que {@link #lookupApartado}).
+     */
+    @PostMapping("/apartados/lookup-by-phone")
+    public ResponseEntity<ApiResponse<List<PublicApartadoDto>>> lookupApartadosByPhone(
+            @PathVariable String slug,
+            @Valid @RequestBody ApartadoPhoneLookupRequest req) {
+        List<PublicApartadoDto> results = apartadoService.publicApartadoLookupByPhone(slug, req.getPhone());
+        return ResponseEntity.ok(ApiResponse.ok(results, null));
+    }
+
+    /**
+     * El cliente cancela su propio apartado, sin hablarle a la tienda — mismo folio+
+     * teléfono que {@link #lookupApartado} para verificar que de verdad es suyo, revalidado
+     * aquí desde cero (nunca se confía en que el frontend ya lo validó al consultarlo antes
+     * de mostrar el botón). También es la base de "editar" en la vitrina: cancela este y el
+     * frontend manda al cliente a apartar de nuevo con los mismos productos precargados —
+     * ver {@link ApartadoService#publicApartadoCancel}.
+     */
+    @PostMapping("/apartados/self-cancel")
+    public ResponseEntity<ApiResponse<PublicApartadoDto>> selfCancelApartado(
+            @PathVariable String slug,
+            @Valid @RequestBody ApartadoSelfCancelRequest req) {
+        PublicApartadoDto dto = apartadoService.publicApartadoCancel(slug, req.getId(), req.getPhone(), req.getReason());
+        return ResponseEntity.ok(ApiResponse.ok(dto, "Tu apartado fue cancelado."));
     }
 }

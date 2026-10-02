@@ -61,6 +61,13 @@ public class TiendaInfo {
     @Column(length = 200)
     private String paginaWeb;
 
+    /** Horario de atención en texto libre (ej. "Lun-Vie 9am-7pm, Sáb 10am-3pm") — se
+     *  muestra en la vitrina pública de apartados (ver {@code PublicTiendaDto}), no en
+     *  el ticket. Sin estructura por día a propósito, mismo criterio que {@code
+     *  redesSociales}: es más simple de capturar y de leer que un horario por día. */
+    @Column(columnDefinition = "TEXT")
+    private String horario;
+
     /** Enlaces o menciones a redes sociales de la tienda, en texto libre. */
     @Column(columnDefinition = "TEXT")
     private String redesSociales;

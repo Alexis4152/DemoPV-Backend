@@ -46,6 +46,8 @@ public class TiendaInfoRequest {
     private String telefono;
     @Size(max = 200, message = "La página web no puede tener más de 200 caracteres")
     private String paginaWeb;
+    @Size(max = 500, message = "El horario no puede tener más de 500 caracteres")
+    private String horario;
     @Size(max = 500, message = "Las redes sociales no pueden tener más de 500 caracteres")
     private String redesSociales;
     @Size(max = 500, message = "Los otros datos no pueden tener más de 500 caracteres")

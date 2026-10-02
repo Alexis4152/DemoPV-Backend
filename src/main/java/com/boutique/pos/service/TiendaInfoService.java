@@ -106,6 +106,7 @@ public class TiendaInfoService {
         info.setRazonSocial(req.getRazonSocial());
         info.setTelefono(req.getTelefono());
         info.setPaginaWeb(req.getPaginaWeb());
+        info.setHorario(req.getHorario());
         info.setRedesSociales(req.getRedesSociales());
         info.setNotasAdicionales(req.getNotasAdicionales());
         return tiendaInfoRepository.save(info);
