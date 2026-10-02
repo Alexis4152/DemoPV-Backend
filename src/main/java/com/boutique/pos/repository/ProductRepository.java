@@ -211,6 +211,18 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                                      Pageable pageable);
 
     /**
+     * Igual que {@link #findPublicCatalog} pero por una lista puntual de ids, SIN filtrar
+     * por {@code stock > 0} a propósito: se usa para revalidar un carrito de apartado
+     * restaurado desde {@code localStorage} en la vitrina pública (ver {@code
+     * PublicController#productsByIds}), donde interesa justamente DETECTAR que un producto
+     * ya se quedó sin stock (para quitarlo del carrito con aviso), no excluirlo en
+     * silencio como haría el catálogo normal.
+     */
+    @Query("SELECT p FROM Product p WHERE p.isActive = true AND p.isReservable = true " +
+           "AND p.tienda.id = :tiendaId AND p.id IN :ids")
+    List<Product> findPublicByIds(@Param("tiendaId") Long tiendaId, @Param("ids") List<Long> ids);
+
+    /**
      * Igual que {@code findById} de siempre, pero toma un bloqueo pesimista de escritura
      * ({@code SELECT ... FOR UPDATE}) sobre la fila — usar SIEMPRE justo antes de leer/
      * modificar el {@code stock} de un producto dentro de una transacción (venta, apartado,

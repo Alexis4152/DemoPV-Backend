@@ -74,7 +74,8 @@ public class TicketPdfService {
      * datos de la venta (vendedor, fecha/hora, folio, cliente si lo hay, método de
      * pago), tabla de productos vendidos con cantidades y subtotales, totales
      * (subtotal, descuento, impuestos, total), y pie de página con el total en letras,
-     * la cantidad de artículos vendidos y la marca del sistema.</p>
+     * la cantidad de artículos vendidos y la página web de la tienda (si la capturó en
+     * "Datos de tienda").</p>
      *
      * @param sale venta ya persistida, con sus {@link SaleItem} cargados
      * @return el PDF generado, listo para adjuntarse a un correo o descargarse
@@ -152,8 +153,11 @@ public class TicketPdfService {
             document.add(paragraph(SpanishNumberToWords.pesos(sale.getTotal()), FONT_BODY, Element.ALIGN_CENTER, 0, 6));
             document.add(paragraph("TOTAL DE ARTÍCULOS VENDIDOS = " + stripTrailingZeros(totalArticulos), FONT_BODY_BOLD, Element.ALIGN_CENTER, 0, 10));
             addSeparator(document, 10);
-            document.add(paragraph("NEXORA SYSTEMS", FONT_BODY_BOLD, Element.ALIGN_CENTER, 0, 2));
-            document.add(paragraph("WWW.NEXORASYSTEMS.COM", FONT_SUBTLE, Element.ALIGN_CENTER, 0, 6));
+            // Página web de la TIENDA (TiendaInfo.paginaWeb), no una marca fija del sistema —
+            // se omite por completo si la tienda no la capturó en "Datos de tienda".
+            if (info != null && info.getPaginaWeb() != null && !info.getPaginaWeb().isBlank()) {
+                document.add(paragraph(info.getPaginaWeb().trim(), FONT_SUBTLE, Element.ALIGN_CENTER, 0, 6));
+            }
             document.add(paragraph("¡¡¡GRACIAS POR SU COMPRA, VUELVA PRONTO!!!", FONT_SUBTLE, Element.ALIGN_CENTER, 0, 0));
 
             document.close();

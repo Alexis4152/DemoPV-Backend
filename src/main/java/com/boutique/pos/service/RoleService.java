@@ -24,9 +24,12 @@ import java.util.Set;
  *
  * <p>Un {@link Role} pertenece siempre a una sola tienda (no es global) y define, vía
  * un {@code Set<}{@link AppSection}{@code >}, a qué módulos de la app tienen acceso los
- * usuarios que lo tengan asignado. Cada tienda nueva recibe automáticamente tres roles
- * "de sistema"/base: ADMIN (todas las secciones), CASHIER y SELLER (todas menos USERS y
- * ROLES) — ver {@link #seedDefaultRolesForTienda(Tienda)}.</p>
+ * usuarios que lo tengan asignado. Cada tienda nueva recibe automáticamente dos roles
+ * "de sistema"/base: ADMIN (todas las secciones) y CASHIER (todas menos USERS y ROLES)
+ * — ver {@link #seedDefaultRolesForTienda(Tienda)}. Junto con SUPER_ADMIN y SUPERVISOR
+ * (de plataforma, uno solo para todo el sistema), son los 4 roles fijos: protegidos de
+ * renombrar/eliminar, y solo un SUPER_ADMIN puede crear roles adicionales (ver
+ * {@code RoleController}).</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -138,6 +141,7 @@ public class RoleService {
         r.setIsSystem(false);
         r.setTienda(tienda);
         r.setSections(sanitizeSections(req.getSections(), false));
+        r.setActionGrants(sanitizeActionGrants(req.getActionGrants()));
         r.setCreatedBy(actor);
         return roleRepository.save(r);
     }
@@ -173,7 +177,8 @@ public class RoleService {
             r.setName(req.getName());
         }
         r.setDescription(req.getDescription());
-        r.setSections(sanitizeSections(req.getSections(), Boolean.TRUE.equals(r.getIsSystem())));
+        r.setSections(sanitizeSections(req.getSections(), isManagementRole(r.getName())));
+        r.setActionGrants(sanitizeActionGrants(req.getActionGrants()));
         r.setUpdatedBy(actor);
         return roleRepository.save(r);
     }
@@ -230,9 +235,18 @@ public class RoleService {
     }
 
     /**
-     * Siembra los tres roles por defecto (ADMIN, CASHIER, SELLER) para una tienda recién
-     * creada. ADMIN es de sistema y tiene acceso a todas las secciones; CASHIER y SELLER
-     * tienen acceso a todo excepto USERS y ROLES.
+     * Siembra los dos roles fijos por tienda (ADMIN, CASHIER) para una tienda recién
+     * creada — junto con SUPER_ADMIN y SUPERVISOR (de plataforma, sembrados una sola vez
+     * para todo el sistema por {@code RoleDataInitializer}, no por tienda), son los 4
+     * roles fijos del sistema: protegidos de renombrar/eliminar (ver {@code isSystem}),
+     * aunque sus secciones y acciones otorgadas sí se pueden editar. ADMIN tiene acceso a
+     * todas las secciones; CASHIER a todo excepto USERS y ROLES, sin ninguna acción de
+     * mutación otorgada por defecto (ver {@code Role#actionGrants}) — el admin de la
+     * tienda decide qué puede crear/editar/eliminar desde "Roles y Permisos".
+     *
+     * <p>Ya NO siembra SELLER (antes un tercer rol por tienda) — las tiendas que ya lo
+     * tenían de antes de este cambio lo conservan tal cual, solo se dejó de crear para
+     * tiendas nuevas.</p>
      *
      * <p>Es idempotente: si la tienda ya tiene un rol ADMIN no hace nada, para poder
      * llamarse de forma segura sin duplicar roles.</p>
@@ -248,26 +262,50 @@ public class RoleService {
         nonAdminSections.remove(AppSection.ROLES);
 
         createSeedRole("ADMIN", "Administrador — acceso total", true, EnumSet.allOf(AppSection.class), tienda);
-        createSeedRole("CASHIER", "Cajero", false, nonAdminSections, tienda);
-        createSeedRole("SELLER", "Vendedor", false, nonAdminSections, tienda);
+        createSeedRole("CASHIER", "Cajero", true, nonAdminSections, tienda);
     }
 
     /**
      * Normaliza el conjunto de secciones solicitado para un rol: convierte un valor nulo
-     * en un conjunto vacío y, si el rol es de sistema, fuerza que incluya siempre ROLES
-     * para que el administrador nunca se quede sin acceso a la pantalla de roles (y por
-     * ende sin forma de recuperar el acceso).
+     * en un conjunto vacío y, si el rol es "de gestión" (ADMIN/SUPERVISOR/SUPER_ADMIN),
+     * fuerza que incluya siempre ROLES para que el administrador nunca se quede sin acceso
+     * a la pantalla de roles (y por ende sin forma de recuperar el acceso).
+     *
+     * <p>OJO: no es lo mismo "de gestión" que {@code isSystem} — CASHIER también es
+     * {@code isSystem=true} (protegido de renombrar/eliminar, ver {@link
+     * #seedDefaultRolesForTienda}) pero NO es de gestión, así que nunca debe forzársele
+     * ROLES por esta vía (un cajero no tiene por qué ver "Roles y Permisos").</p>
      *
      * @param requested secciones solicitadas (puede ser null)
-     * @param isSystem si el rol es de sistema
+     * @param isManagementRole si el rol es "de gestión" (ver {@link #isManagementRole(String)})
      * @return conjunto de secciones saneado
      */
-    private Set<AppSection> sanitizeSections(Set<AppSection> requested, boolean isSystem) {
+    private Set<AppSection> sanitizeSections(Set<AppSection> requested, boolean isManagementRole) {
         Set<AppSection> sections = requested == null ? new HashSet<>() : new HashSet<>(requested);
-        if (isSystem) {
+        if (isManagementRole) {
             // evita que el admin se bloquee a sí mismo la pantalla de roles
             sections.add(AppSection.ROLES);
         }
         return sections;
+    }
+
+    // Mismos tres nombres que SectionAccessService#MANAGEMENT_ROLES y AuthService
+    // #SESSION_RESTRICTION_EXEMPT_ROLES — "de gestión" es un concepto distinto de
+    // isSystem (ver sanitizeSections de arriba para el porqué).
+    private static final Set<String> MANAGEMENT_ROLE_NAMES = Set.of("SUPER_ADMIN", "SUPERVISOR", "ADMIN");
+
+    /** {@code true} si el nombre de rol dado es uno de los tres roles "de gestión" del
+     *  sistema (ver {@link #MANAGEMENT_ROLE_NAMES}). */
+    private boolean isManagementRole(String roleName) {
+        return MANAGEMENT_ROLE_NAMES.contains(roleName);
+    }
+
+    /** Normaliza el conjunto de acciones otorgadas solicitado: null se vuelve vacío (sin
+     *  acciones de mutación, nunca null). No valida formato aquí — una entrada mal formada
+     *  (que no sea "SECCION:ACCION") simplemente nunca va a calzar en {@code
+     *  SectionAccessService#checkAction}, así que el peor caso es un permiso que no hace
+     *  nada, nunca uno que otorgue de más. */
+    private Set<String> sanitizeActionGrants(Set<String> requested) {
+        return requested == null ? new HashSet<>() : new HashSet<>(requested);
     }
 }

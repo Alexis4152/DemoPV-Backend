@@ -118,14 +118,15 @@ public class SaleController {
     }
 
     /**
-     * Cancela una venta ya registrada. Solo disponible para el rol ADMIN, dado
-     * su impacto en el inventario y en los totales de caja.
+     * Cancela una venta ya registrada. Dado su impacto en el inventario y en los totales de
+     * caja, requiere el permiso fino {@code SALES:DELETE} (roles de gestión siempre lo
+     * tienen implícito — ver {@code SectionAccessService#checkAction}).
      *
      * @param id    identificador de la venta a cancelar
      * @param actor usuario autenticado que realiza la cancelación
      */
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    @PreAuthorize("@sectionAccess.checkAction('SALES', 'DELETE')")
     public ResponseEntity<ApiResponse<Sale>> cancel(@PathVariable Long id, @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(saleService.cancel(id, actor), "Venta cancelada"));
     }

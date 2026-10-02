@@ -63,6 +63,20 @@ public class PublicController {
     }
 
     /**
+     * Reconsulta un conjunto puntual de productos por id (sin paginar) — usado por la
+     * vitrina pública para revalidar un carrito de apartado restaurado desde {@code
+     * localStorage} contra el stock/precio/oferta actuales al cargar la página, no para
+     * navegar el catálogo normal (eso es {@link #products}). Un id que ya no existe, se
+     * desactivó o dejó de ser reservable simplemente no aparece en la respuesta.
+     */
+    @GetMapping("/products/by-ids")
+    public ResponseEntity<ApiResponse<List<PublicProductDto>>> productsByIds(
+            @PathVariable String slug,
+            @RequestParam List<Long> ids) {
+        return ResponseEntity.ok(ApiResponse.ok(apartadoService.publicProductsByIds(slug, ids), null));
+    }
+
+    /**
      * Solicita un apartado. Queda {@code PENDING} (sin descontar stock todavía) hasta que
      * un cajero/admin de la tienda lo confirme — ver {@link ApartadoService#createPublic}.
      */

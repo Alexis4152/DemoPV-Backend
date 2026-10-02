@@ -54,6 +54,20 @@ public class Role {
     @Builder.Default
     private Set<AppSection> sections = new HashSet<>();
 
+    // Capa más fina que `sections` (que solo dice SI ve el módulo): dentro de un módulo al
+    // que ya tiene acceso, qué acciones de mutación puede hacer. Codificado como
+    // "SECCION:ACCION" (ej. "INVENTORY:CREATE") en vez de una entidad aparte, mismo patrón
+    // simple que ya usa `sections` arriba. Solo aplica a roles que NO sean de gestión (ver
+    // SectionAccessService — ADMIN/SUPERVISOR/SUPER_ADMIN siempre tienen CRUD completo sin
+    // importar esta lista). Ausente = sin permiso para esa acción: modelo "todo restringido
+    // salvo lo explícitamente otorgado", para que ningún rol existente (CASHIER, SELLER,
+    // uno personalizado) amanezca con capacidades nuevas de la nada al desplegar esto.
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "role_action_grants", joinColumns = @JoinColumn(name = "role_id"))
+    @Column(name = "grant_key", nullable = false, length = 40)
+    @Builder.Default
+    private Set<String> actionGrants = new HashSet<>();
+
     // antes se borraba la fila físicamente; ahora es borrado suave, igual que
     // products/users/tiendas/categories, para poder conservar quién y cuándo lo eliminó.
     @Column(nullable = false, columnDefinition = "boolean default true")

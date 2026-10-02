@@ -17,8 +17,8 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * {@link CommandLineRunner} que siembra los roles por defecto del sistema (ADMIN, CASHIER,
- * SELLER) la primera vez que arranca la aplicación con una base de datos sin roles, y deja
+ * {@link CommandLineRunner} que siembra los roles por defecto del sistema (ADMIN, CASHIER)
+ * la primera vez que arranca la aplicación con una base de datos sin roles, y deja
  * asignado el rol ADMIN a la cuenta administradora inicial ({@code admin@boutique.com}).
  *
  * <p>{@code @Order(1)} garantiza que corra antes que {@link TenantDataInitializer}
@@ -49,13 +49,18 @@ public class RoleDataInitializer implements CommandLineRunner {
         seedSuperAdminRole();
         seedSupervisorRole();
         assignDefaultAdminRole();
+        protectExistingCashierRoles();
     }
 
     /**
-     * Crea los roles ADMIN (acceso total, marcado {@code isSystem}), CASHIER y SELLER (todas
-     * las secciones excepto USERS y ROLES) si todavía no existe ningún rol en la base de
-     * datos. No hace nada si ya hay al menos un rol sembrado, para no duplicar en arranques
-     * posteriores.
+     * Crea los roles ADMIN y CASHIER (ambos {@code isSystem}, protegidos de renombrar o
+     * eliminar) si todavía no existe ningún rol en la base de datos. ADMIN tiene todas las
+     * secciones; CASHIER todas excepto USERS y ROLES, sin ninguna acción de mutación
+     * otorgada por defecto (ver {@code Role#actionGrants}). No hace nada si ya hay al
+     * menos un rol sembrado, para no duplicar en arranques posteriores.
+     *
+     * <p>Ya NO siembra SELLER — ver {@code RoleService#seedDefaultRolesForTienda} para el
+     * porqué (son 4 roles fijos ahora: SUPER_ADMIN, SUPERVISOR, ADMIN, CASHIER).</p>
      */
     private void seedDefaultRoles() {
         if (roleRepository.count() > 0) return;
@@ -73,16 +78,12 @@ public class RoleDataInitializer implements CommandLineRunner {
         Role cashier = Role.builder()
                 .name("CASHIER")
                 .description("Cajero")
-                .sections(new HashSet<>(nonAdminSections))
-                .build();
-        Role seller = Role.builder()
-                .name("SELLER")
-                .description("Vendedor")
+                .isSystem(true)
                 .sections(new HashSet<>(nonAdminSections))
                 .build();
 
-        roleRepository.saveAll(List.of(admin, cashier, seller));
-        log.info("Roles sembrados: ADMIN, CASHIER, SELLER");
+        roleRepository.saveAll(List.of(admin, cashier));
+        log.info("Roles sembrados: ADMIN, CASHIER");
     }
 
     // Chequeo aparte de seedDefaultRoles() (que solo corre con la tabla TOTALMENTE vacía):
@@ -176,6 +177,27 @@ public class RoleDataInitializer implements CommandLineRunner {
                 admin.getId());
         if (updated > 0) {
             log.info("Rol ADMIN asignado a admin@boutique.com");
+        }
+    }
+
+    // CASHIER pasó a ser uno de los 4 roles fijos del sistema (protegido de renombrar/
+    // eliminar) junto con ADMIN/SUPERVISOR/SUPER_ADMIN, pero las filas "CASHIER" creadas
+    // ANTES de este cambio (una por cada tienda ya existente) se quedaron con
+    // isSystem=false, porque el sembrado de arriba (seedDefaultRoles/
+    // RoleService#seedDefaultRolesForTienda) solo corre una vez por tienda. Este paso se
+    // corre en CADA arranque y solo toca las filas que todavía lo necesiten — así cualquier
+    // CASHIER ya existente queda protegido sin esperar a que alguien lo vuelva a guardar
+    // manualmente desde "Roles y Permisos".
+    /**
+     * Marca {@code isSystem=true} en cualquier rol llamado CASHIER que se haya quedado
+     * como {@code isSystem=false} (sembrado antes de que pasara a ser uno de los 4 roles
+     * fijos del sistema).
+     */
+    private void protectExistingCashierRoles() {
+        int updated = jdbcTemplate.update(
+                "UPDATE roles SET is_system = true WHERE name = 'CASHIER' AND is_system = false");
+        if (updated > 0) {
+            log.info("{} rol(es) CASHIER marcado(s) como fijo(s) (isSystem=true)", updated);
         }
     }
 }

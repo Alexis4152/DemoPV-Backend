@@ -27,7 +27,11 @@ import java.time.LocalDate;
  * del flujo (revisar, confirmar, completar, cancelar). La creación pública vive aparte,
  * en {@code PublicController} ({@code /api/public/**}, sin autenticación).
  * <p>
- * Todos los endpoints requieren la sección {@code APARTADOS}.
+ * Todos los endpoints requieren al menos la sección {@code APARTADOS}; confirmar, completar
+ * y quitar un producto además exigen el permiso fino {@code APARTADOS:EDIT}, y cancelar
+ * exige {@code APARTADOS:DELETE} (roles de gestión siempre los tienen implícitos — ver
+ * {@code SectionAccessService#checkAction}). No hay alta manual: los apartados se crean
+ * desde la tienda pública, sin pasar por este controlador.
  */
 @RestController
 @RequestMapping("/api/apartados")
@@ -82,7 +86,7 @@ public class ApartadoController {
      * vigencia (ver {@link ApartadoService#confirm}).
      */
     @PostMapping("/{id}/confirm")
-    @PreAuthorize("@sectionAccess.check('APARTADOS')")
+    @PreAuthorize("@sectionAccess.checkAction('APARTADOS', 'EDIT')")
     public ResponseEntity<ApiResponse<Apartado>> confirm(
             @PathVariable Long id,
             @Valid @RequestBody(required = false) ApartadoConfirmRequest req,
@@ -96,7 +100,7 @@ public class ApartadoController {
      * quitar solo esa línea en vez de cancelar todo el apartado.
      */
     @DeleteMapping("/{id}/items/{itemId}")
-    @PreAuthorize("@sectionAccess.check('APARTADOS')")
+    @PreAuthorize("@sectionAccess.checkAction('APARTADOS', 'EDIT')")
     public ResponseEntity<ApiResponse<Apartado>> removeItem(
             @PathVariable Long id,
             @PathVariable Long itemId,
@@ -109,7 +113,7 @@ public class ApartadoController {
      * real (ver {@link ApartadoService#complete}).
      */
     @PostMapping("/{id}/complete")
-    @PreAuthorize("@sectionAccess.check('APARTADOS')")
+    @PreAuthorize("@sectionAccess.checkAction('APARTADOS', 'EDIT')")
     public ResponseEntity<ApiResponse<Apartado>> complete(
             @PathVariable Long id,
             @Valid @RequestBody ApartadoCompleteRequest req,
@@ -123,7 +127,7 @@ public class ApartadoController {
      * apartado, se le avisa la cancelación incluyéndolo.
      */
     @PostMapping("/{id}/cancel")
-    @PreAuthorize("@sectionAccess.check('APARTADOS')")
+    @PreAuthorize("@sectionAccess.checkAction('APARTADOS', 'DELETE')")
     public ResponseEntity<ApiResponse<Apartado>> cancel(
             @PathVariable Long id,
             @Valid @RequestBody(required = false) ApartadoCancelRequest req,

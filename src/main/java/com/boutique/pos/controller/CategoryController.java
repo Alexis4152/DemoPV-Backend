@@ -99,7 +99,7 @@ public class CategoryController {
      * @param actor usuario autenticado que realiza la creación
      */
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    @PreAuthorize("@sectionAccess.checkAction('INVENTORY', 'CREATE')")
     public ResponseEntity<ApiResponse<Category>> create(@Valid @RequestBody CategoryRequest req, @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(categoryService.create(req, actor), "Categoría creada"));
     }
@@ -113,7 +113,7 @@ public class CategoryController {
      * @param actor usuario autenticado que realiza la actualización
      */
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    @PreAuthorize("@sectionAccess.checkAction('INVENTORY', 'EDIT')")
     public ResponseEntity<ApiResponse<Category>> update(@PathVariable Long id,
                                                          @Valid @RequestBody CategoryRequest req,
                                                          @AuthenticationPrincipal User actor) {
@@ -127,7 +127,7 @@ public class CategoryController {
      * @param actor usuario autenticado que realiza la eliminación
      */
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    @PreAuthorize("@sectionAccess.checkAction('INVENTORY', 'DELETE')")
     public ResponseEntity<ApiResponse<Void>> delete(@PathVariable Long id, @AuthenticationPrincipal User actor) {
         categoryService.delete(id, actor);
         return ResponseEntity.ok(ApiResponse.ok(null, "Categoría eliminada"));

@@ -252,6 +252,45 @@ public class ApartadoService {
     }
 
     /**
+     * Reconsulta un conjunto puntual de productos por id, sin paginar — usado para
+     * revalidar un carrito de apartado restaurado desde {@code localStorage} en la vitrina
+     * pública (ver {@code PublicController#productsByIds}) contra el stock/precio/oferta
+     * ACTUALES, no para navegar el catálogo normal (eso es {@link #publicCatalog}). Un id
+     * que ya no existe, se desactivó o dejó de ser reservable simplemente no aparece en el
+     * resultado — el frontend interpreta su ausencia como "ya no disponible" y lo quita del
+     * carrito con un aviso.
+     *
+     * @param slug slug de la tienda
+     * @param ids  ids de producto a reconsultar
+     * @return los productos de esa lista que siguen activos y reservables en esa tienda
+     */
+    public List<PublicProductDto> publicProductsByIds(String slug, List<Long> ids) {
+        if (ids == null || ids.isEmpty()) return List.of();
+        Tienda tienda = findPublicTienda(slug);
+        List<Product> products = productRepository.findPublicByIds(tienda.getId(), ids);
+
+        List<Long> foundIds = products.stream().map(Product::getId).toList();
+        Map<Long, List<String>> imagesByProduct = foundIds.isEmpty() ? Map.of()
+                : productImageRepository.findByProductIdInOrderByIsPrimaryDescSortOrderAsc(foundIds).stream()
+                        .collect(Collectors.groupingBy(
+                                img -> img.getProduct().getId(),
+                                LinkedHashMap::new,
+                                Collectors.mapping(ProductImage::getPath, Collectors.toList())));
+
+        return products.stream().map(p -> PublicProductDto.builder()
+                .id(p.getId())
+                .name(p.getName())
+                .description(p.getDescription())
+                .price(p.getPrice())
+                .discountPercent(p.getApartadoDiscountPercent())
+                .finalPrice(finalPrice(p.getPrice(), p.getApartadoDiscountPercent()))
+                .unit(p.getUnit())
+                .stock(p.getStock())
+                .images(imagesByProduct.getOrDefault(p.getId(), List.of()))
+                .build()).toList();
+    }
+
+    /**
      * Aplica el descuento promocional PÚBLICO de un producto ({@link
      * Product#getApartadoDiscountPercent()}) a su precio de lista — usado tanto para
      * mostrarlo en el catálogo público ({@link #publicCatalog}) como para calcularlo de

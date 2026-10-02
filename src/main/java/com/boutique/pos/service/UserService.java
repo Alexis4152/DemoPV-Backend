@@ -7,6 +7,7 @@ import com.boutique.pos.model.Role;
 import com.boutique.pos.model.Tienda;
 import com.boutique.pos.model.User;
 import com.boutique.pos.repository.CashCutRepository;
+import com.boutique.pos.repository.RefreshTokenRepository;
 import com.boutique.pos.repository.RoleRepository;
 import com.boutique.pos.repository.TiendaRepository;
 import com.boutique.pos.repository.UserRepository;
@@ -45,6 +46,7 @@ public class UserService {
     private final RoleRepository roleRepository;
     private final TiendaRepository tiendaRepository;
     private final CashCutRepository cashCutRepository;
+    private final RefreshTokenRepository refreshTokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final TenantScope tenantScope;
     private final EmailService emailService;
@@ -70,8 +72,12 @@ public class UserService {
     // solo puede dar de alta, editar el rol de, o dar de baja usuarios con un rol
     // ESTRICTAMENTE por debajo del suyo — nunca uno de su mismo nivel ni uno superior (ver
     // assertCanAssignRole/assertCanManage). Los tres roles de sistema tienen un rango fijo;
-    // cualquier otro nombre (CASHIER, SELLER, o un rol personalizado que un ADMIN cree
-    // desde "Roles y Permisos") cae en UNRANKED_ROLE, por debajo de ADMIN.
+    // cualquier otro nombre (CASHIER, o un rol personalizado que un SUPER_ADMIN cree desde
+    // "Roles y Permisos") cae en UNRANKED_ROLE, por debajo de ADMIN. Excepción: entre dos
+    // roles SIN rango sí se permite administrarse entre sí (ver canManageRank) — si no,
+    // el permiso fino USERS:CREATE/EDIT/DELETE que se le puede dar a CASHIER o a un rol
+    // personalizado en "Roles y Permisos" nunca tendría efecto real, porque ninguno de esos
+    // roles tiene nada por debajo de él en esta jerarquía.
     private static final Map<String, Integer> ROLE_RANK = Map.of(
             "SUPER_ADMIN", 0,
             "SUPERVISOR", 1,
@@ -104,7 +110,21 @@ public class UserService {
         // siempre regresaría vacío aunque sí existan, algo confuso para el SUPER_ADMIN que
         // acaba de dar de alta un Supervisor y quiere volver a encontrarlo.
         Long scope = tenantScope.isSuperAdmin(actor) && isPlatformRole(roleId) ? null : tenantScope.scopeId(actor);
-        return userRepository.search(scope, effectiveFrom, effectiveTo, name, email, roleId, isActive, pageable);
+        Page<User> result = userRepository.search(scope, effectiveFrom, effectiveTo, name, email, roleId, isActive, pageable);
+        markActiveSessions(result.getContent());
+        return result;
+    }
+
+    // Un solo query para toda la página (nunca uno por fila) — ver RefreshTokenRepository
+    // #findUserIdsWithActiveSession. Alimenta la columna "Sesión activa" de Usuarios.jsx,
+    // desde donde un admin puede cerrarle la sesión a alguien (ver forceLogout).
+    private void markActiveSessions(List<User> users) {
+        if (users.isEmpty()) return;
+        List<Long> ids = users.stream().map(User::getId).toList();
+        List<Long> activeIds = refreshTokenRepository.findUserIdsWithActiveSession(ids, LocalDateTime.now());
+        for (User u : users) {
+            u.setHasActiveSession(activeIds.contains(u.getId()));
+        }
     }
 
     /** {@code true} si el id de rol dado corresponde a un rol de plataforma (ver {@link
@@ -159,11 +179,15 @@ public class UserService {
         // SUPER_ADMIN puede ver CUALQUIER usuario por id, sin importar en qué tienda esté
         // actuando — incluye a otros usuarios de plataforma (SUPERVISOR) que, al no tener
         // tienda, nunca calzarían con el filtro normal. Mismo criterio que RoleService#findById.
-        if (tenantScope.isSuperAdmin(actor)) return u;
+        if (tenantScope.isSuperAdmin(actor)) {
+            markActiveSessions(List.of(u));
+            return u;
+        }
         Long scope = tenantScope.scopeId(actor);
         if (scope != null && (u.getTienda() == null || !scope.equals(u.getTienda().getId()))) {
             throw new IllegalArgumentException("Usuario no encontrado: " + id);
         }
+        markActiveSessions(List.of(u));
         return u;
     }
 
@@ -173,21 +197,37 @@ public class UserService {
     }
 
     // "Hacia abajo, nunca uno como él o arriba": un SUPERVISOR puede crear ADMIN/CASHIER/
-    // SELLER/roles personalizados pero nunca otro SUPERVISOR ni SUPER_ADMIN; un ADMIN puede
-    // crear CASHIER/SELLER/personalizados pero YA NO otro ADMIN (antes de esta regla sí
-    // podía, sin querer). SUPER_ADMIN puede crear cualquier rol excepto otro SUPER_ADMIN
-    // (esa alta sigue siendo, a propósito, un paso manual fuera de la aplicación).
+    // roles personalizados pero nunca otro SUPERVISOR ni SUPER_ADMIN; un ADMIN puede crear
+    // CASHIER/personalizados pero YA NO otro ADMIN (antes de esta regla sí podía, sin
+    // querer). SUPER_ADMIN puede crear cualquier rol excepto otro SUPER_ADMIN (esa alta
+    // sigue siendo, a propósito, un paso manual fuera de la aplicación). Única excepción a
+    // "estrictamente por debajo": dos roles sin rango (CASHIER, o cualquier personalizado)
+    // sí pueden administrarse entre sí — ver {@link #canManageRank}.
+    /**
+     * {@code true} si un actor con rango {@code actorRank} puede asignar/administrar a un
+     * objetivo con rango {@code targetRank}: estrictamente por debajo en la jerarquía, o
+     * ambos SIN rango (ver {@link #UNRANKED_ROLE}) — entre dos roles sin rango sí se
+     * permite, porque de lo contrario el permiso fino {@code USERS:CREATE/EDIT/DELETE} que
+     * se le puede otorgar a CASHIER o a un rol personalizado desde "Roles y Permisos" nunca
+     * tendría efecto real (ninguno de esos roles tiene nada por debajo de él en esta
+     * jerarquía). Nunca se habilita hacia un rol de gestión (ADMIN/SUPERVISOR/SUPER_ADMIN):
+     * esos siempre quedan fuera de alcance de un actor sin rango.
+     */
+    private boolean canManageRank(int targetRank, int actorRank) {
+        if (actorRank == UNRANKED_ROLE && targetRank == UNRANKED_ROLE) return true;
+        return targetRank < actorRank;
+    }
+
     /**
      * Valida que el actor tenga permiso para asignar el rol dado a un usuario (nuevo o
-     * existente), según la jerarquía de {@link #ROLE_RANK}.
+     * existente), según la jerarquía de {@link #ROLE_RANK} (ver {@link #canManageRank}).
      *
      * @param target rol que se quiere asignar
      * @param actor  usuario que hace la asignación
-     * @throws AccessDeniedException si el rol del actor no es estrictamente superior al
-     *         rol que intenta asignar
+     * @throws AccessDeniedException si el actor no tiene permiso para asignar ese rol
      */
     private void assertCanAssignRole(Role target, User actor) {
-        if (rankOf(target) <= rankOf(actor.getRole())) {
+        if (!canManageRank(rankOf(target), rankOf(actor.getRole()))) {
             throw new AccessDeniedException("No puedes asignar un rol igual o superior al tuyo");
         }
     }
@@ -200,12 +240,11 @@ public class UserService {
      *
      * @param target usuario sobre el que se quiere actuar
      * @param actor  usuario que intenta editarlo/darlo de baja
-     * @throws AccessDeniedException si el rol del actor no es estrictamente superior al
-     *         del usuario objetivo
+     * @throws AccessDeniedException si el actor no tiene permiso para administrar ese usuario
      */
     private void assertCanManage(User target, User actor) {
         if (target.getId().equals(actor.getId())) return;
-        if (rankOf(target.getRole()) <= rankOf(actor.getRole())) {
+        if (!canManageRank(rankOf(target.getRole()), rankOf(actor.getRole()))) {
             throw new AccessDeniedException("No puedes administrar una cuenta de tu mismo nivel o superior");
         }
     }
@@ -550,5 +589,29 @@ public class UserService {
         u.setDeletedBy(actor);
         u.setDeletedAt(java.time.LocalDateTime.now());
         userRepository.save(u);
+    }
+
+    /**
+     * Cierra a la fuerza la sesión abierta de un usuario — ej. un cajero que se fue a su
+     * casa sin cerrar sesión en el POS. Revoca TODOS sus refresh tokens vigentes (mismo
+     * mecanismo que {@link AuthService#changePassword}), para que ya no pueda renovar su
+     * access token cuando este expire.
+     *
+     * <p><b>No es instantáneo del todo:</b> el access token JWT ya emitido sigue siendo
+     * válido por sí mismo (es stateless, nadie lo consulta contra esta tabla) hasta su
+     * propio vencimiento natural ({@code app.jwt.expiration}, 30 min) — recién en ese
+     * momento, al intentar renovarlo, el refresh token ya revocado lo manda de vuelta al
+     * login. Es la misma limitación que ya tiene cambiar la contraseña de alguien más.</p>
+     *
+     * @param id id del usuario a desloguear
+     * @param actor usuario que ejecuta la acción; debe poder administrar al usuario objetivo
+     *              (misma jerarquía que {@link #assertCanManage})
+     * @throws AccessDeniedException si el actor no puede administrar al usuario objetivo
+     */
+    @Transactional
+    public void forceLogout(Long id, User actor) {
+        User u = findById(id, actor);
+        assertCanManage(u, actor);
+        refreshTokenRepository.revokeAllForUser(u);
     }
 }

@@ -113,6 +113,23 @@ public class User implements UserDetails {
     @UpdateTimestamp
     private LocalDateTime updatedAt;
 
+    // No es columna: se calcula al vuelo en UserService#findAll/findById (existe un
+    // refresh token suyo sin revocar y vigente) solo para mostrarse en la tabla de
+    // Usuarios — de ahí el admin puede cerrarle la sesión sin que el cajero tenga que
+    // volver (ver UserService#forceLogout). Default false para cualquier otro punto que
+    // construya un User sin pasar por ese cálculo (ej. tests, otros servicios).
+    //
+    // Modificador `transient` de JAVA a propósito, NO la anotación @Transient de JPA:
+    // Hibernate6Module (registrado en JacksonConfig para las relaciones LAZY) ignora por
+    // default cualquier atributo marcado con la ANOTACIÓN @Transient al serializar a JSON
+    // — hasta con @JsonProperty encima seguía sin aparecer en la respuesta (confirmado
+    // pegándole directo a /api/users). Hibernate igual excluye de la tabla cualquier campo
+    // con el modificador `transient` (lo exige el propio spec de JPA), pero ese módulo de
+    // Jackson solo revisa la anotación, no el modificador — así se le escapa el ignore sin
+    // perder la exclusión de la base de datos.
+    @Builder.Default
+    private transient Boolean hasActiveSession = false;
+
     // ── UserDetails ──────────────────────────────────────────────
 
     /**

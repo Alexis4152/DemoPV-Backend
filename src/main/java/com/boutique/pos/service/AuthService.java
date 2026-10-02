@@ -27,6 +27,7 @@ import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Base64;
+import java.util.List;
 
 /**
  * Servicio de autenticación del sistema.
@@ -92,10 +93,17 @@ public class AuthService {
      * frontend pueda armar el menú sin pedirlas por separado, así como la tienda a la que
      * pertenece (null para usuarios de plataforma tipo SUPER_ADMIN).</p>
      *
+     * <p>Una sola sesión activa por cuenta: si el usuario ya tiene un refresh token vigente
+     * sin revocar (otro dispositivo/navegador con sesión abierta), este login se rechaza —
+     * ver {@code IllegalStateException} más abajo. Excepción: SUPER_ADMIN/SUPERVISOR/ADMIN
+     * nunca se bloquean (ver {@link #isSessionRestrictionExempt}) — en vez de rechazar,
+     * revoca cualquier sesión previa suya y deja esta como la única válida.</p>
+     *
      * @param req credenciales de acceso (correo y contraseña en texto plano)
      * @return el body de sesión de siempre más el refresh token crudo (ver {@link LoginResult})
      * @throws org.springframework.security.core.AuthenticationException si las credenciales son inválidas
-     * @throws IllegalStateException si la cuenta está bloqueada temporalmente por demasiados intentos fallidos
+     * @throws IllegalStateException si la cuenta está bloqueada temporalmente por demasiados intentos
+     *         fallidos, o si ya tiene una sesión activa en otro lado
      */
     // Sin @Transactional a propósito: si el método completo fuera una sola transacción, el
     // guardado del contador de intentos fallidos (registerFailedLoginAttempt) se revertiría
@@ -130,6 +138,24 @@ public class AuthService {
             // role_id) — sin esto, el .getRole().getName() de abajo truena con NPE crudo.
             throw new IllegalStateException("Tu cuenta no tiene un rol asignado, contacta a tu administrador");
         }
+        // Una sola sesión activa por cuenta a la vez — evita que dos cajeros terminen
+        // operando sin querer con el mismo usuario desde dos cajas distintas. Se checa
+        // DESPUÉS de validar credenciales (nunca antes): si fuera antes, cualquiera podría
+        // usar este mensaje para averiguar si una cuenta tiene sesión abierta sin conocer
+        // su contraseña. Para volver a entrar, el usuario debe cerrar sesión él mismo, o un
+        // admin debe cerrársela desde Usuarios (ver UserService#forceLogout).
+        //
+        // EXCEPCIÓN: roles de administración (ADMIN/SUPERVISOR/SUPER_ADMIN) nunca se
+        // bloquean — son justo quienes tendrían que resolver el bloqueo de cualquier otra
+        // cuenta, así que ellos mismos no pueden quedar atrapados sin nadie que se lo
+        // revoque. En vez de bloquear, este login revoca cualquier sesión previa suya y
+        // sigue adelante: siempre gana la ÚLTIMA sesión iniciada, nunca la bloquea.
+        if (isSessionRestrictionExempt(user)) {
+            refreshTokenRepository.revokeAllForUser(user);
+        } else if (refreshTokenRepository.existsByUserAndRevokedFalseAndExpiresAtAfter(user, LocalDateTime.now())) {
+            throw new IllegalStateException(
+                    "Ya hay una sesión activa con este usuario. Ciérrala primero, o pide a tu administrador que la cierre desde Usuarios.");
+        }
         String accessToken = jwtTokenProvider.generateAccessToken(user);
         String refreshToken = issueRefreshToken(user);
         LoginResponse body = LoginResponse.builder()
@@ -139,10 +165,24 @@ public class AuthService {
                 .email(user.getEmail())
                 .role(user.getRole().getName())
                 .sections(user.getRole().getSections().stream().map(Enum::name).toList())
+                .actionGrants(List.copyOf(user.getRole().getActionGrants()))
                 .tienda(user.getTienda())
                 .mustChangePassword(user.getMustChangePassword())
                 .build();
         return new LoginResult(body, refreshToken);
+    }
+
+    // Mismos tres roles de administración que ya distingue UserService#ROLE_RANK (ahí para
+    // la jerarquía de quién puede administrar a quién; aquí para quién nunca se queda
+    // bloqueado afuera). Un rol personalizado que un ADMIN cree desde "Roles y Permisos"
+    // SÍ queda sujeto a la restricción — solo estos tres roles del sistema son "de gestión".
+    private static final java.util.Set<String> SESSION_RESTRICTION_EXEMPT_ROLES =
+            java.util.Set.of("SUPER_ADMIN", "SUPERVISOR", "ADMIN");
+
+    /** {@code true} si el rol del usuario queda exento del bloqueo de "una sola sesión
+     *  activa" al hacer login (ver el bloque de arriba en {@link #login}). */
+    private boolean isSessionRestrictionExempt(User user) {
+        return SESSION_RESTRICTION_EXEMPT_ROLES.contains(user.getRole().getName());
     }
 
     /** Suma un intento fallido a la cuenta con ese correo (si existe) y la bloquea
