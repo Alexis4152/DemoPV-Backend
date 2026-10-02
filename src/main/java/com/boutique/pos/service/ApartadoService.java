@@ -386,10 +386,16 @@ public class ApartadoService {
         BigDecimal totalDiscount = BigDecimal.ZERO;
 
         for (ApartadoItem item : apartado.getItems()) {
-            Product product = item.getProduct();
-            if (product == null) {
+            if (item.getProduct() == null) {
                 throw new IllegalStateException("\"" + item.getProductName() + "\" ya no existe en el catálogo");
             }
+            // findByIdForUpdate (no la referencia ya cargada del item): toma el lock ANTES
+            // de leer el stock, para que dos confirmaciones (o una confirmación y una venta)
+            // concurrentes sobre el mismo producto queden serializadas en vez de ambas
+            // partir del mismo stock leído (condición de carrera — hallazgo "Media" de la
+            // auditoría de código).
+            Product product = productRepository.findByIdForUpdate(item.getProduct().getId())
+                    .orElseThrow(() -> new IllegalStateException("\"" + item.getProductName() + "\" ya no existe en el catálogo"));
             if (BigDecimal.valueOf(product.getStock()).compareTo(item.getQuantity()) < 0) {
                 throw new IllegalStateException("No hay suficiente stock de \"" + product.getName()
                         + "\" para confirmar este apartado (disponible: " + product.getStock() + ")");
@@ -580,8 +586,11 @@ public class ApartadoService {
      */
     private void restoreStock(Apartado apartado, String motivo, User user) {
         for (ApartadoItem item : apartado.getItems()) {
-            Product product = item.getProduct();
-            if (product == null) continue; // el producto pudo eliminarse desde entonces; no hay a quién devolverle stock
+            if (item.getProduct() == null) continue; // el producto pudo eliminarse desde entonces; no hay a quién devolverle stock
+            // findByIdForUpdate: mismo motivo que en confirm() — dos operaciones
+            // concurrentes sobre el mismo producto no deben pisarse.
+            Product product = productRepository.findByIdForUpdate(item.getProduct().getId()).orElse(null);
+            if (product == null) continue;
             int qty = item.getQuantity().intValue();
             int previous = product.getStock();
             product.setStock(previous + qty);

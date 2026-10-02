@@ -88,13 +88,15 @@ public class GlobalExceptionHandler {
         return ResponseEntity.badRequest().body(ApiResponse.error("El archivo es demasiado pesado"));
     }
 
-    // Cualquier RuntimeException no cubierta por un handler más específico de arriba —
-    // antes se le mandaba al cliente el mensaje crudo sin dejar rastro en el log del
-    // servidor, así que un 500 real (bug, no un error de negocio esperado) no dejaba forma
-    // de diagnosticarlo después del hecho.
-    @ExceptionHandler(RuntimeException.class)
-    public ResponseEntity<ApiResponse<Void>> handleRuntime(RuntimeException ex) {
+    // Catch-all: cualquier excepción no cubierta por un handler más específico de arriba.
+    // No se expone el mensaje real de la excepción al cliente (podría filtrar detalles
+    // internos: stack traces, nombres de clase, rutas de archivo, mensajes de SQL, etc.);
+    // solo se registra en el log del servidor, que es donde se diagnostica un 500 real
+    // (bug, no un error de negocio esperado).
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ApiResponse<Void>> handleGeneric(Exception ex) {
         log.error("Error no controlado", ex);
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(ApiResponse.error(ex.getMessage()));
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(ApiResponse.error("Ocurrió un error inesperado. Intenta de nuevo más tarde."));
     }
 }

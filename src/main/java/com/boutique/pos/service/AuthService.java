@@ -15,6 +15,8 @@ import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.LockedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -22,6 +24,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Base64;
 
@@ -53,6 +56,16 @@ public class AuthService {
     // de exposición si el correo del usuario fuera interceptado.
     private static final long RESET_TOKEN_MINUTES = 30;
 
+    // Fuerza bruta en login, por CUENTA (hallazgo "Alto" de la auditoría de código) — capa
+    // complementaria al límite por IP de RateLimitInterceptor: ese frena a alguien probando
+    // muchas cuentas distintas desde la misma IP, este bloquea el ataque puntual contra UNA
+    // cuenta (aunque venga repartido entre varias IPs). Al llegar al límite se bloquea
+    // temporalmente — ver User#isAccountNonLocked, que Spring Security revisa ANTES de
+    // comparar la contraseña, así que una cuenta ya bloqueada nunca llega a exponer si la
+    // contraseña enviada era o no correcta.
+    private static final int MAX_FAILED_LOGIN_ATTEMPTS = 5;
+    private static final int ACCOUNT_LOCK_MINUTES = 15;
+
     @Value("${app.frontend.url}")
     private String frontendUrl;
 
@@ -82,13 +95,36 @@ public class AuthService {
      * @param req credenciales de acceso (correo y contraseña en texto plano)
      * @return el body de sesión de siempre más el refresh token crudo (ver {@link LoginResult})
      * @throws org.springframework.security.core.AuthenticationException si las credenciales son inválidas
+     * @throws IllegalStateException si la cuenta está bloqueada temporalmente por demasiados intentos fallidos
      */
-    @Transactional
+    // Sin @Transactional a propósito: si el método completo fuera una sola transacción, el
+    // guardado del contador de intentos fallidos (registerFailedLoginAttempt) se revertiría
+    // en cuanto la excepción de credenciales inválidas se relanza y sale del método — cada
+    // llamada a userRepository.save()/issueRefreshToken() ya es transaccional por sí misma
+    // (Spring Data), así que el contador debe quedar confirmado ANTES de lanzar el error, no
+    // envuelto junto con él.
     public LoginResult login(LoginRequest req) {
-        Authentication auth = authManager.authenticate(
-                new UsernamePasswordAuthenticationToken(req.getEmail(), req.getPassword())
-        );
+        Authentication auth;
+        try {
+            auth = authManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(req.getEmail(), req.getPassword())
+            );
+        } catch (LockedException e) {
+            String detail = userRepository.findByEmail(req.getEmail())
+                    .map(User::getLockedUntil)
+                    .map(until -> "Intenta de nuevo en " + Math.max(1, Duration.between(LocalDateTime.now(), until).toMinutes()) + " minuto(s).")
+                    .orElse("Intenta de nuevo más tarde.");
+            throw new IllegalStateException("Cuenta bloqueada temporalmente por múltiples intentos fallidos. " + detail);
+        } catch (BadCredentialsException e) {
+            registerFailedLoginAttempt(req.getEmail());
+            throw e;
+        }
         User user = (User) auth.getPrincipal();
+        if (user.getFailedLoginAttempts() > 0 || user.getLockedUntil() != null) {
+            user.setFailedLoginAttempts(0);
+            user.setLockedUntil(null);
+            userRepository.save(user);
+        }
         if (user.getRole() == null) {
             // Usuario sin rol asignado (típicamente uno insertado a mano en la base sin
             // role_id) — sin esto, el .getRole().getName() de abajo truena con NPE crudo.
@@ -107,6 +143,22 @@ public class AuthService {
                 .mustChangePassword(user.getMustChangePassword())
                 .build();
         return new LoginResult(body, refreshToken);
+    }
+
+    /** Suma un intento fallido a la cuenta con ese correo (si existe) y la bloquea
+     *  {@value #ACCOUNT_LOCK_MINUTES} minutos al llegar a {@value #MAX_FAILED_LOGIN_ATTEMPTS}.
+     *  Silencioso si el correo no existe — un correo desconocido ya lo rechazó Spring
+     *  Security con el mismo {@link BadCredentialsException} genérico, no hay cuenta que
+     *  bloquear ni falta rastro de intentos fallidos contra un correo que no es de nadie. */
+    private void registerFailedLoginAttempt(String email) {
+        userRepository.findByEmail(email).ifPresent(user -> {
+            int attempts = user.getFailedLoginAttempts() + 1;
+            user.setFailedLoginAttempts(attempts);
+            if (attempts >= MAX_FAILED_LOGIN_ATTEMPTS) {
+                user.setLockedUntil(LocalDateTime.now().plusMinutes(ACCOUNT_LOCK_MINUTES));
+            }
+            userRepository.save(user);
+        });
     }
 
     /**
@@ -252,6 +304,24 @@ public class AuthService {
         actor.setMustChangePassword(false);
         userRepository.save(actor);
         refreshTokenRepository.revokeAllForUser(actor);
+    }
+
+    // Un token revocado sigue teniendo su expiresAt original (8h para refresh, 30 min para
+    // reset), así que también queda cubierto por este borrado dentro de esa misma ventana —
+    // no hace falta una purga aparte por "revoked"/"used". Invocado por TokenPurgeJob.
+    /**
+     * Borra de las tablas {@code refresh_tokens} y {@code password_reset_tokens} las filas
+     * ya vencidas, para que no crezcan sin límite con el tiempo (hallazgo "Baja" de la
+     * auditoría de código: ninguna de las dos se purgaba nunca).
+     *
+     * @return cuántas filas se borraron en total, para el log del job
+     */
+    @Transactional
+    public int purgeExpiredTokens() {
+        LocalDateTime now = LocalDateTime.now();
+        int refreshDeleted = refreshTokenRepository.deleteExpired(now);
+        int resetDeleted = passwordResetTokenRepository.deleteExpired(now);
+        return refreshDeleted + resetDeleted;
     }
 
     /** Genera un token aleatorio criptográficamente seguro, codificado en base64 URL-safe.

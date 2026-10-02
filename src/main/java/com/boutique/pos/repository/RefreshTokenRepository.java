@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 /**
@@ -23,4 +24,12 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
     @Modifying
     @Query("UPDATE RefreshToken t SET t.revoked = true WHERE t.user = :user AND t.revoked = false")
     void revokeAllForUser(@Param("user") User user);
+
+    // Purga real (borrado de fila), a diferencia de revokeAllForUser: un token revocado o
+    // vencido ya no sirve para nada, ni siquiera para auditoría (no hay pantalla que lea
+    // esta tabla), así que no hay razón para conservarlo — ver TokenPurgeJob.
+    /** Borra los refresh tokens ya vencidos (expiresAt en el pasado). */
+    @Modifying
+    @Query("DELETE FROM RefreshToken t WHERE t.expiresAt < :now")
+    int deleteExpired(@Param("now") LocalDateTime now);
 }

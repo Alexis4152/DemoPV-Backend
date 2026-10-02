@@ -66,6 +66,17 @@ public class User implements UserDetails {
     @Builder.Default
     private Boolean mustChangePassword = false;
 
+    /** Intentos de login fallidos consecutivos; se resetea a 0 en cuanto uno tiene éxito.
+     *  Protección contra fuerza bruta (hallazgo "Alto" de la auditoría de código) — ver
+     *  {@link com.boutique.pos.service.AuthService#login}. */
+    @Column(nullable = false)
+    @Builder.Default
+    private Integer failedLoginAttempts = 0;
+
+    /** Si tiene un valor futuro, la cuenta está bloqueada temporalmente por demasiados
+     *  intentos fallidos — ver {@link #isAccountNonLocked()}. */
+    private LocalDateTime lockedUntil;
+
     // LAZY (a diferencia del resto de relaciones de esta clase) porque User se referencia
     // a sí mismo aquí — en EAGER, Hibernate encadena el join User→createdBy→createdBy→...
     // sin límite y Postgres truena con "límite de profundidad de stack alcanzado".
@@ -124,7 +135,7 @@ public class User implements UserDetails {
     @Override public String getUsername()              { return email; }
     @Override public boolean isAccountNonExpired()     { return true; }
     @Override public boolean isCredentialsNonExpired() { return true; }
-    @Override public boolean isAccountNonLocked()      { return true; }
+    @Override public boolean isAccountNonLocked()      { return lockedUntil == null || lockedUntil.isBefore(LocalDateTime.now()); }
     /** Un usuario dado de baja (borrado suave, {@code isActive=false}) no puede autenticarse. */
     @Override public boolean isEnabled()               { return Boolean.TRUE.equals(isActive); }
 }

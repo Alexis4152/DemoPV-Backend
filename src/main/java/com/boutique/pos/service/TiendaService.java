@@ -8,6 +8,7 @@ import com.boutique.pos.security.TenantScope;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -101,6 +102,7 @@ public class TiendaService {
      *              {@code createdBy}
      * @return la tienda creada, ya con sus roles base sembrados
      */
+    @Transactional
     public Tienda create(TiendaRequest req, User actor) {
         Tienda t = new Tienda();
         t.setName(req.getName());

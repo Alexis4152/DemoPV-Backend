@@ -166,7 +166,11 @@ public class SaleService {
         BigDecimal itemDiscountTotal = BigDecimal.ZERO;
 
         for (SaleItemRequest ir : req.getItems()) {
-            Product product = productService.findById(ir.getProductId(), actor);
+            // findByIdForUpdate (no findById): toma el lock ANTES de leer el stock, para que
+            // dos ventas concurrentes del mismo producto queden serializadas en vez de
+            // ambas leer el mismo stock "disponible" y una perder su resta (condición de
+            // carrera — hallazgo "Media" de la auditoría de código).
+            Product product = productService.findByIdForUpdate(ir.getProductId(), actor);
 
             if (!product.getIsActive()) throw new IllegalStateException("Producto inactivo: " + product.getName());
 
@@ -279,7 +283,10 @@ public class SaleService {
             throw new IllegalStateException("La venta ya está cancelada");
         }
         for (SaleItem item : sale.getItems()) {
-            Product p = item.getProduct();
+            if (item.getProduct() == null) continue; // el producto pudo eliminarse desde entonces; no hay a quién devolverle stock
+            // findByIdForUpdate: mismo motivo que en create() — dos cancelaciones (o una
+            // cancelación y una venta nueva) sobre el mismo producto no deben pisarse.
+            Product p = productService.findByIdForUpdate(item.getProduct().getId());
             int qty = item.getQuantity().intValue();
             int previous = p.getStock();
             p.setStock(previous + qty);

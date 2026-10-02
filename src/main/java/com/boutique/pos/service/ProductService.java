@@ -174,6 +174,46 @@ public class ProductService {
     }
 
     /**
+     * Igual que {@link #findById(Long)} pero toma un bloqueo pesimista sobre la fila (ver
+     * {@link ProductRepository#findByIdForUpdate}) — usar en vez de {@code findById} justo
+     * antes de leer/modificar el {@code stock} de un producto YA verificado (ej. viene de
+     * la línea de una venta/apartado que ya se comprobó que pertenece a la tienda del
+     * actor), sin necesidad de volver a chequear la tienda.
+     *
+     * <p>Debe llamarse siempre dentro de una transacción activa ({@code @Transactional} en
+     * el método que llama) — el lock solo tiene efecto mientras esa transacción sigue
+     * abierta, se libera al hacer commit/rollback.</p>
+     *
+     * @param id id del producto a bloquear
+     * @return el producto encontrado, con el lock ya tomado
+     * @throws IllegalArgumentException si no existe
+     */
+    public Product findByIdForUpdate(Long id) {
+        return productRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new IllegalArgumentException("Producto no encontrado: " + id));
+    }
+
+    /**
+     * Igual que {@link #findById(Long, User)} (valida que el producto pertenezca a la
+     * tienda del actor) pero tomando el mismo bloqueo pesimista que {@link
+     * #findByIdForUpdate(Long)} — usar cuando el id del producto viene fresco de un
+     * request (ej. una línea de venta nueva) y todavía no se verificó su tienda.
+     *
+     * @param id id del producto a bloquear
+     * @param actor usuario que realiza la operación
+     * @return el producto encontrado, con el lock ya tomado
+     * @throws IllegalArgumentException si no existe o no pertenece a la tienda del actor
+     */
+    public Product findByIdForUpdate(Long id, User actor) {
+        Product p = findByIdForUpdate(id);
+        Long scope = tenantScope.scopeId(actor);
+        if (scope != null && (p.getTienda() == null || !scope.equals(p.getTienda().getId()))) {
+            throw new IllegalArgumentException("Producto no encontrado: " + id);
+        }
+        return p;
+    }
+
+    /**
      * Total histórico de unidades vendidas de cada producto activo de la tienda del actor
      * (ver {@link ProductRepository#totalSoldByProduct}), pensado para los filtros
      * "sin ventas" / "más vendidos" de Inventario. Incluye productos con 0 ventas.
@@ -237,6 +277,7 @@ public class ProductService {
      *         tienda del actor
      * @throws IllegalStateException si es SUPER_ADMIN sin ninguna tienda elegida para actuar
      */
+    @Transactional
     public Product create(ProductRequest req, User actor) {
         Tienda tienda = tenantScope.tiendaForWrite(actor);
         if (tienda == null && tenantScope.isPlatformActor(actor)) {
@@ -327,7 +368,10 @@ public class ProductService {
         if (req.getQuantity() < 0 && !tenantScope.isAdminLevel(actor)) {
             throw new IllegalStateException("Solo un administrador puede quitar piezas del inventario");
         }
-        Product p = findById(id, actor);
+        // findByIdForUpdate (no findById): toma el lock ANTES de leer el stock, para que un
+        // ajuste manual concurrente con una venta/confirmación de apartado sobre el mismo
+        // producto quede serializado en vez de que ambos partan del mismo valor leído.
+        Product p = findByIdForUpdate(id, actor);
         int previous = p.getStock();
         // En long, NO en int: "previous + quantity" con aritmética int normal se desborda
         // en silencio si la suma pasa de Integer.MAX_VALUE (ENV: envuelve a un negativo

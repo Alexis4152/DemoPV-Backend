@@ -149,7 +149,7 @@ public class CashCutService {
      */
     private boolean canView(CashCut cut, User actor) {
         if (tenantScope.isSuperAdmin(actor)) return true;
-        if (tenantScope.isSupervisor(actor) || ADMIN.equals(actor.getRole().getName())) {
+        if (tenantScope.isSupervisor(actor) || (actor.getRole() != null && ADMIN.equals(actor.getRole().getName()))) {
             Long scope = tenantScope.scopeId(actor);
             return scope == null ? cut.getTienda() == null
                     : scope.equals(cut.getTienda() != null ? cut.getTienda().getId() : null);

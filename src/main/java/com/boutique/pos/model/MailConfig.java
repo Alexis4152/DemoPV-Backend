@@ -1,5 +1,6 @@
 package com.boutique.pos.model;
 
+import com.boutique.pos.security.EncryptedStringConverter;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
@@ -43,6 +44,9 @@ public class MailConfig {
     @Column(name = "smtp_username", length = 150)
     private String smtpUsername;
 
+    // Cifrada con AES-256-GCM en la columna (ver EncryptedStringConverter) — hallazgo
+    // "Media" de la auditoría de código: antes vivía en texto plano en la base de datos.
+    @Convert(converter = EncryptedStringConverter.class)
     @Column(name = "smtp_password", length = 255)
     private String smtpPassword;
 

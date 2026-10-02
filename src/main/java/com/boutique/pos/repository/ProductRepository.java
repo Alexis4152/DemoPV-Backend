@@ -1,9 +1,11 @@
 package com.boutique.pos.repository;
 
 import com.boutique.pos.model.Product;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -207,4 +209,21 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                                      @Param("categoryId") Long categoryId,
                                      @Param("q") String q,
                                      Pageable pageable);
+
+    /**
+     * Igual que {@code findById} de siempre, pero toma un bloqueo pesimista de escritura
+     * ({@code SELECT ... FOR UPDATE}) sobre la fila — usar SIEMPRE justo antes de leer/
+     * modificar el {@code stock} de un producto dentro de una transacción (venta, apartado,
+     * ajuste manual de inventario), nunca para una simple consulta de lectura.
+     *
+     * <p>Hallazgo "Media" de la auditoría de código: "condición de carrera al descontar
+     * inventario — sin locking optimista ni pesimista, dos operaciones simultáneas sobre el
+     * mismo recurso pueden dejarlo en negativo". Con este lock, si dos transacciones
+     * intentan tocar el stock del MISMO producto a la vez, la segunda queda bloqueada por
+     * Postgres hasta que la primera termine (commit o rollback) — nunca las dos parten del
+     * mismo valor de stock leído ni se pisa una resta con la otra.</p>
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT p FROM Product p WHERE p.id = :id")
+    Optional<Product> findByIdForUpdate(@Param("id") Long id);
 }

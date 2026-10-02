@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.EnumSet;
 import java.util.HashSet;
@@ -238,6 +239,7 @@ public class RoleService {
      *
      * @param tienda tienda para la que se siembran los roles
      */
+    @Transactional
     public void seedDefaultRolesForTienda(Tienda tienda) {
         if (roleRepository.existsByNameAndTiendaId("ADMIN", tienda.getId())) return;
 

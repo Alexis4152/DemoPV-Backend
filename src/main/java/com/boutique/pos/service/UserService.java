@@ -18,6 +18,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
@@ -245,6 +246,7 @@ public class UserService {
      * @return el usuario creado o reactivado
      * @throws FieldConflictException (campo {@code email}) si el correo ya está registrado y ACTIVO
      */
+    @Transactional
     public User create(UserRequest req, User actor) {
         Optional<User> existing = userRepository.findByEmail(req.getEmail());
         if (existing.isPresent()) {
@@ -338,6 +340,7 @@ public class UserService {
      * @throws IllegalStateException si el usuario tiene un corte de caja abierto y se le
      *         intenta cambiar a una tienda distinta de la actual
      */
+    @Transactional
     public User update(Long id, UserRequest req, User actor) {
         User u = findById(id, actor);
         assertCanManage(u, actor);
@@ -409,7 +412,7 @@ public class UserService {
         // MISMO NOMBRE en la tienda nueva y lo reasigna — de lo contrario quedaría con un
         // rol "importado" de la tienda anterior, invisible e inmodificable desde "Roles y
         // Permisos" de su tienda nueva.
-        if (!isPlatformRole(u.getRole()) && u.getTienda() != null) {
+        if (u.getRole() != null && !isPlatformRole(u.getRole()) && u.getTienda() != null) {
             Long roleTiendaId = u.getRole().getTienda() != null ? u.getRole().getTienda().getId() : null;
             if (!u.getTienda().getId().equals(roleTiendaId)) {
                 Role matching = roleRepository.findByNameAndTiendaId(u.getRole().getName(), u.getTienda().getId())
