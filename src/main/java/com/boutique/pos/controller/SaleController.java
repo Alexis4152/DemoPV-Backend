@@ -140,7 +140,7 @@ public class SaleController {
      * @param actor usuario administrador autenticado
      */
     @PostMapping("/{id}/cancel")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
     public ResponseEntity<ApiResponse<Sale>> cancelWithDetails(
             @PathVariable Long id,
             @RequestBody(required = false) CancelSaleRequest request,
