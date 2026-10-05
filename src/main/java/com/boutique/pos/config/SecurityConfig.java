@@ -2,6 +2,7 @@ package com.boutique.pos.config;
 
 import com.boutique.pos.security.CustomUserDetailsService;
 import com.boutique.pos.security.JwtAuthFilter;
+import com.boutique.pos.security.RestAuthenticationEntryPoint;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -44,6 +45,7 @@ public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
     private final CustomUserDetailsService userDetailsService;
+    private final RestAuthenticationEntryPoint restAuthenticationEntryPoint;
 
     @Value("${app.cors.allowed-origins}")
     private String allowedOrigins;
@@ -62,11 +64,24 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .exceptionHandling(ex -> ex.authenticationEntryPoint(restAuthenticationEntryPoint))
                 .authorizeHttpRequests(auth -> auth
+                        // Excepciones DENTRO de /api/auth/**, declaradas antes que el permitAll
+                        // de abajo (gana la regla más específica que aparezca primero): a
+                        // diferencia de login/refresh/logout/forgot-password/reset-password
+                        // (anónimos por diseño), cambiar la propia contraseña y "quién soy"
+                        // sí exigen sesión — /me en particular la necesita para que un token
+                        // inválido/vencido dispare el 401 real de restAuthenticationEntryPoint
+                        // (y con él, el refresh transparente del frontend) en vez de responder
+                        // 200 con data null vía @AuthenticationPrincipal.
+                        .requestMatchers("/api/auth/change-password", "/api/auth/me").authenticated()
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/uploads/**").permitAll()
                         .requestMatchers("/api/v1/webhooks/**").permitAll()
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
+                        // Vitrina pública de apartados (PublicController): sin login, el
+                        // aislamiento entre tiendas lo da el slug de la URL, no una sesión.
+                        .requestMatchers("/api/public/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .userDetailsService(userDetailsService)

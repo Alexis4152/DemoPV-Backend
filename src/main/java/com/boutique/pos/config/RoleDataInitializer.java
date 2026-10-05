@@ -37,13 +37,17 @@ public class RoleDataInitializer implements CommandLineRunner {
     private final JdbcTemplate jdbcTemplate;
 
     /**
-     * Orquesta el sembrado inicial: primero crea los roles base si la tabla está vacía, luego
-     * asegura que la cuenta admin por defecto tenga un rol asignado.
+     * Orquesta el sembrado inicial: primero crea los roles base si la tabla está vacía,
+     * luego asegura que exista el rol SUPER_ADMIN (chequeo aparte, no gira sobre "la tabla
+     * está vacía" porque para cuando se agregó este rol la tabla ya casi nunca lo está), y
+     * por último asegura que la cuenta admin por defecto tenga un rol asignado.
      */
     @Override
     @Transactional
     public void run(String... args) {
         seedDefaultRoles();
+        seedSuperAdminRole();
+        seedSupervisorRole();
         assignDefaultAdminRole();
     }
 
@@ -79,6 +83,80 @@ public class RoleDataInitializer implements CommandLineRunner {
 
         roleRepository.saveAll(List.of(admin, cashier, seller));
         log.info("Roles sembrados: ADMIN, CASHIER, SELLER");
+    }
+
+    // Chequeo aparte de seedDefaultRoles() (que solo corre con la tabla TOTALMENTE vacía):
+    // este rol se agregó cuando ya casi ninguna base de datos real estaba vacía, así que
+    // necesita su propio guard idempotente ("¿ya existe uno llamado SUPER_ADMIN?") en vez
+    // de colgarse del mismo "count() > 0" de los otros tres.
+    /**
+     * Crea el rol SUPER_ADMIN (usuario de plataforma, sin tienda, con TODAS las secciones
+     * habilitadas — ve y administra cualquier tienda, una a la vez, vía {@code
+     * SelectTienda.jsx} en el frontend) si todavía no existe ninguno con ese nombre. No
+     * crea ningún usuario con este rol — eso sigue siendo un paso manual (dar de alta un
+     * usuario y asignarle este rol desde la pantalla de Usuarios, o directo en la base de
+     * datos), a propósito: quién tiene acceso de plataforma completo es una decisión que
+     * no debe tomar un script de arranque.
+     */
+    private void seedSuperAdminRole() {
+        Role existing = roleRepository.findFirstByNameAndTiendaIsNullOrderById("SUPER_ADMIN").orElse(null);
+        if (existing != null) {
+            backfillSectionsIfEmpty(existing);
+            return;
+        }
+        Role superAdmin = Role.builder()
+                .name("SUPER_ADMIN")
+                .description("Super administrador — plataforma completa, todas las tiendas")
+                .isSystem(true)
+                .tienda(null)
+                .sections(EnumSet.allOf(AppSection.class))
+                .build();
+        roleRepository.save(superAdmin);
+        log.info("Rol sembrado: SUPER_ADMIN");
+    }
+
+    // Detectado en producción: una fila SUPER_ADMIN de antes de que este rol tuviera
+    // secciones (o sembrada por algún otro camino) se quedaba con `role_sections` vacío
+    // para siempre — el guard idempotente de arriba nunca la volvía a tocar una vez que
+    // existía, así que ese usuario solo veía el submenú "Configuración" (lo único que no
+    // depende de `hasSection` en el frontend) sin importar cuántas veces se reiniciara el
+    // backend. Se corrige solo en cada arranque en vez de requerir una migración manual.
+    /**
+     * Si el rol ya existe pero se quedó sin ninguna sección asignada (dato corrupto/legado,
+     * nunca un estado válido para SUPER_ADMIN o SUPERVISOR), lo rellena con todas.
+     */
+    private void backfillSectionsIfEmpty(Role role) {
+        if (!role.getSections().isEmpty()) return;
+        role.setSections(EnumSet.allOf(AppSection.class));
+        roleRepository.save(role);
+        log.warn("Rol {} tenía 0 secciones asignadas — se rellenó con todas", role.getName());
+    }
+
+    // Mismo patrón idempotente que seedSuperAdminRole(): chequeo propio por nombre, no por
+    // count() de la tabla completa.
+    /**
+     * Crea el rol SUPERVISOR ("Supervisor de tiendas": usuario de plataforma, sin tienda
+     * propia, con TODAS las secciones habilitadas — ve y administra el SUBCONJUNTO de
+     * tiendas que tenga asignadas, vía {@link com.boutique.pos.model.Tienda#getSupervisor()})
+     * si todavía no existe ninguno con ese nombre. Igual que con SUPER_ADMIN, no crea ningún
+     * usuario con este rol ni le asigna tiendas — eso lo decide el SUPER_ADMIN (o el propio
+     * Supervisor, al dar de alta una tienda nueva) desde la aplicación.
+     */
+    private void seedSupervisorRole() {
+        Role existing = roleRepository.findFirstByNameAndTiendaIsNullOrderById("SUPERVISOR").orElse(null);
+        if (existing != null) {
+            backfillSectionsIfEmpty(existing);
+            return;
+        }
+        Role supervisor = Role.builder()
+                .name("SUPERVISOR")
+                .description("Supervisor de tiendas — administra el grupo de tiendas que tenga asignado")
+                .isSystem(true)
+                .tienda(null)
+                .sections(EnumSet.allOf(AppSection.class))
+                .build();
+        roleRepository.save(supervisor);
+        log.info("Rol sembrado: SUPERVISOR");
     }
 
     /**

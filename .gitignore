@@ -14,6 +14,10 @@ nbdist/
 # Archivos subidos por usuarios (logos de tienda) — datos runtime, no código
 uploads/
 
+# Certificado/llave privada de firma de QZ Tray (ver QzSigningService) — nunca debe
+# versionarse, se genera una sola vez por entorno con openssl.
+qz-keys/
+
 # Configuración local con secretos — nunca debe versionarse
 application-local.properties
 .env

@@ -9,6 +9,8 @@ import com.boutique.pos.repository.RoleRepository;
 import com.boutique.pos.repository.UserRepository;
 import com.boutique.pos.security.TenantScope;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import java.util.EnumSet;
@@ -37,12 +39,40 @@ public class RoleService {
      * Lista los roles activos visibles para el actor: los de su tienda, o todos si es
      * SUPER_ADMIN.
      *
+     * <p>Cuando el actor es SUPER_ADMIN, además suma el rol de plataforma SUPERVISOR (que
+     * al no pertenecer a ninguna tienda —igual que SUPER_ADMIN mismo— nunca aparecería en
+     * un listado acotado a la tienda que esté actuando) para que el selector de rol al dar
+     * de alta un usuario en Usuarios.jsx pueda ofrecerlo — es la única forma de crear una
+     * cuenta Supervisor desde la aplicación en vez de a mano en la base de datos.</p>
+     *
      * @param actor usuario que realiza la consulta
      * @return roles activos dentro del alcance del actor, ordenados por nombre
      */
     public List<Role> findAll(User actor) {
         Long scope = tenantScope.scopeId(actor);
-        return scope == null ? roleRepository.findAllByIsActiveTrueOrderByNameAsc() : roleRepository.findAllByTiendaIdAndIsActiveTrueOrderByNameAsc(scope);
+        List<Role> roles = scope == null
+                ? new java.util.ArrayList<>(roleRepository.findAllByIsActiveTrueOrderByNameAsc())
+                : new java.util.ArrayList<>(roleRepository.findAllByTiendaIdAndIsActiveTrueOrderByNameAsc(scope));
+        if (tenantScope.isSuperAdmin(actor)) {
+            roleRepository.findFirstByNameAndTiendaIsNullOrderById("SUPERVISOR")
+                    .filter(supervisor -> roles.stream().noneMatch(r -> r.getId().equals(supervisor.getId())))
+                    .ifPresent(roles::add);
+        }
+        return roles;
+    }
+
+    /**
+     * Igual que {@link #findAll(User)} pero paginado, para la pantalla de administración de
+     * Roles (a diferencia del método anterior, pensado para selectores que necesitan el
+     * catálogo completo, ej. el filtro/formulario de Usuarios).
+     *
+     * @param actor usuario que realiza la consulta
+     * @param pageable página y tamaño solicitados
+     * @return página de roles activos dentro del alcance del actor, ordenados por nombre
+     */
+    public Page<Role> findAll(User actor, Pageable pageable) {
+        Long scope = tenantScope.scopeId(actor);
+        return scope == null ? roleRepository.findAllByIsActiveTrueOrderByNameAsc(pageable) : roleRepository.findAllByTiendaIdAndIsActiveTrueOrderByNameAsc(scope, pageable);
     }
 
     /**
@@ -68,6 +98,13 @@ public class RoleService {
      */
     public Role findById(Long id, User actor) {
         Role r = findById(id);
+        // SUPER_ADMIN puede resolver CUALQUIER rol por id, sin importar de qué tienda sea
+        // ni cuál tenga elegida como "actuante" — incluye a los roles de plataforma
+        // (SUPERVISOR) que de otra forma nunca calificarían (tienda=null no calza con
+        // ninguna tienda concreta). No es una escalada de privilegio nueva: SUPER_ADMIN ya
+        // puede mandar cualquier tiendaId explícito al dar de alta un usuario (ver
+        // UserService#resolveTiendaForWrite), esto solo evita un rechazo inconsistente.
+        if (tenantScope.isSuperAdmin(actor)) return r;
         Long scope = tenantScope.scopeId(actor);
         if (scope != null && (r.getTienda() == null || !scope.equals(r.getTienda().getId()))) {
             throw new IllegalArgumentException("Rol no encontrado: " + id);
@@ -76,15 +113,21 @@ public class RoleService {
     }
 
     /**
-     * Crea un rol nuevo (no de sistema) dentro de la tienda del actor.
+     * Crea un rol nuevo (no de sistema) dentro de la tienda del actor (la que esté
+     * actuando, si es SUPER_ADMIN — ver {@link TenantScope#tiendaForWrite}).
      *
      * @param req datos del rol: nombre, descripción y secciones habilitadas
-     * @param actor usuario que lo crea; determina la tienda del rol y queda como {@code createdBy}
+     * @param actor usuario que lo crea; queda como {@code createdBy}
      * @return el rol creado
      * @throws IllegalArgumentException si ya existe un rol con ese nombre en la misma tienda
+     * @throws IllegalStateException si es SUPER_ADMIN sin ninguna tienda elegida para actuar
      */
     public Role create(RoleRequest req, User actor) {
-        Long tiendaId = actor.getTienda() != null ? actor.getTienda().getId() : null;
+        Tienda tienda = tenantScope.tiendaForWrite(actor);
+        if (tienda == null && tenantScope.isPlatformActor(actor)) {
+            throw new IllegalStateException("Elige una tienda para poder crear un rol");
+        }
+        Long tiendaId = tienda != null ? tienda.getId() : null;
         if (roleRepository.existsByNameAndTiendaId(req.getName(), tiendaId)) {
             throw new IllegalArgumentException("Ya existe un rol con ese nombre en tu tienda");
         }
@@ -92,7 +135,7 @@ public class RoleService {
         r.setName(req.getName());
         r.setDescription(req.getDescription());
         r.setIsSystem(false);
-        r.setTienda(actor.getTienda());
+        r.setTienda(tienda);
         r.setSections(sanitizeSections(req.getSections(), false));
         r.setCreatedBy(actor);
         return roleRepository.save(r);

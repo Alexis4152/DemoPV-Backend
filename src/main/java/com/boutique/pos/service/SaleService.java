@@ -15,9 +15,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.text.NumberFormat;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Registro y consulta de ventas (punto de venta), y cancelación de ventas ya registradas.
@@ -34,6 +37,8 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 public class SaleService {
+
+    private static final NumberFormat MONEY_FMT = NumberFormat.getCurrencyInstance(new Locale("es", "MX"));
 
     private final SaleRepository saleRepository;
     private final ProductRepository productRepository;
@@ -139,6 +144,13 @@ public class SaleService {
         CashCut openCut = cashCutRepository.findFirstByUserIdAndStatus(actor.getId(), CashCutStatus.OPEN)
                 .orElseThrow(() -> new IllegalStateException("Debes abrir un corte de caja antes de registrar ventas"));
 
+        // La tienda de la venta es la del corte de caja abierto, no la del actor
+        // directamente: para un SUPER_ADMIN (sin tienda propia) es la única fuente
+        // confiable de "en qué tienda está actuando ahora mismo" — el corte ya quedó
+        // fijado a esa tienda al abrirse (ver CashCutService#open), así que no puede
+        // cambiar a media sesión aunque el SUPER_ADMIN cambie de tienda actuante después.
+        Tienda tienda = openCut.getTienda();
+
         Sale sale = new Sale();
         sale.setUser(actor);
         sale.setCashCut(openCut);
@@ -148,10 +160,16 @@ public class SaleService {
         sale.setStatus(req.getStatus() != null ? req.getStatus() : SaleStatus.COMPLETED);
         sale.setOrderId(req.getOrderId());
         sale.setNotes(req.getNotes());
-        sale.setTienda(actor.getTienda());
+        sale.setTienda(tienda);
 
         List<SaleItem> items = new ArrayList<>();
-        BigDecimal subtotal = BigDecimal.ZERO;
+        // grossSubtotal: suma de unitPrice*qty de cada línea, SIN restar ningún descuento —
+        // es lo que se muestra como "Subtotal" en el ticket, precisamente para que ahí
+        // "Subtotal - Descuento + Impuestos = Total" cierre a simple vista. El descuento
+        // por línea sí se resta en item.subtotal (lo que se imprime junto a cada producto),
+        // pero no aquí, para no restarlo dos veces.
+        BigDecimal grossSubtotal = BigDecimal.ZERO;
+        BigDecimal itemDiscountTotal = BigDecimal.ZERO;
 
         for (SaleItemRequest ir : req.getItems()) {
             Product product = productService.findById(ir.getProductId(), actor);
@@ -167,7 +185,9 @@ public class SaleService {
 
             BigDecimal unitPrice = product.getPrice();
             BigDecimal discount = ir.getDiscount() != null ? ir.getDiscount() : BigDecimal.ZERO;
-            BigDecimal itemSubtotal = unitPrice.multiply(qty).subtract(discount);
+            BigDecimal lineGross = unitPrice.multiply(qty);
+            validateDiscountLimit(discount, lineGross, product.getName(), tienda);
+            BigDecimal itemSubtotal = lineGross.subtract(discount);
 
             SaleItem item = new SaleItem();
             item.setSale(sale);
@@ -178,6 +198,7 @@ public class SaleService {
             item.setDiscount(discount);
             item.setSubtotal(itemSubtotal);
             items.add(item);
+            itemDiscountTotal = itemDiscountTotal.add(discount);
 
             int previous = product.getStock();
             product.setStock(previous - qtyInt);
@@ -193,12 +214,17 @@ public class SaleService {
             mv.setReason("Venta");
             movementRepository.save(mv);
 
-            subtotal = subtotal.add(itemSubtotal);
+            grossSubtotal = grossSubtotal.add(lineGross);
         }
 
-        BigDecimal discount = req.getDiscount() != null ? req.getDiscount() : BigDecimal.ZERO;
+        // El descuento total de la venta es la suma de los descuentos por línea más
+        // cualquier descuento global adicional que venga en el request (ver el Javadoc de
+        // SaleRequest.discount) — antes de este fix, el descuento por línea nunca se
+        // reflejaba aquí, aunque sí se restaba correctamente en cada item.subtotal.
+        BigDecimal globalDiscount = req.getDiscount() != null ? req.getDiscount() : BigDecimal.ZERO;
+        BigDecimal discount = itemDiscountTotal.add(globalDiscount);
         BigDecimal tax = req.getTax() != null ? req.getTax() : BigDecimal.ZERO;
-        BigDecimal total = subtotal.subtract(discount).add(tax);
+        BigDecimal total = grossSubtotal.subtract(discount).add(tax);
 
         // En efectivo, el cajero debe capturar con cuánto pagó el cliente para poder
         // calcular el cambio a entregar; en tarjeta/transferencia no aplica y se ignora
@@ -217,7 +243,7 @@ public class SaleService {
             changeGiven = amountReceived.subtract(total);
         }
 
-        sale.setSubtotal(subtotal);
+        sale.setSubtotal(grossSubtotal);
         sale.setDiscount(discount);
         sale.setTax(tax);
         sale.setTotal(total);
@@ -320,5 +346,152 @@ public class SaleService {
             sale.setNotes(existingNotes + "[Cancelación]: " + refundReason);
         }
         return saleRepository.save(sale);
+    }
+
+    /**
+     * Genera la {@link Sale} real de un {@link Apartado} {@code ACTIVE} que el cliente vino
+     * a recoger y pagar — llamado por {@code ApartadoService#complete}, nunca directamente
+     * desde un controller.
+     * <p>
+     * A diferencia de {@link #create}, NO valida ni descuenta stock ni registra {@link
+     * InventoryMovement} por producto: el stock del apartado ya se descontó al
+     * CONFIRMARLO ({@code ApartadoService#confirm}), así que volver a descontarlo aquí
+     * sería descontarlo dos veces. Los precios/cantidades/descuentos de cada línea ya
+     * quedaron fijos desde el apartado (el descuento, si lo hubo, ya se validó contra el
+     * límite de apartados al confirmar — no el de venta física), así que aquí solo se
+     * copian a {@link SaleItem} tal cual.
+     * <p>
+     * Igual que en {@link #create}, en efectivo es obligatorio {@code amountReceived} (al
+     * menos el total) y el cambio siempre lo calcula el servidor.
+     *
+     * @param apartado apartado {@code ACTIVE} que se está completando, con sus {@link
+     *                 com.boutique.pos.model.ApartadoItem} ya cargados
+     * @param paymentMethod forma de pago con la que el cliente liquida al recogerlo
+     * @param amountReceived con cuánto pagó el cliente; obligatorio si {@code paymentMethod == CASH}
+     * @param customerEmailOverride correo capturado por el cajero al completar (opcional);
+     *                 si viene con algo, se usa para esta venta en vez del correo que el
+     *                 cliente haya dejado al solicitar el apartado (que puede no existir) —
+     *                 no modifica el registro del apartado, solo el de la venta generada
+     * @param actor cajero/admin que completa el apartado; debe tener un corte de caja
+     *              propio abierto, igual que en cualquier venta; queda registrado como
+     *              {@code user} de la venta
+     * @return la venta ya registrada y persistida, con {@code notes} indicando de qué
+     *         apartado proviene
+     * @throws IllegalStateException si el actor no tiene un corte abierto, o si es en
+     *         efectivo y el monto recibido falta o es menor al total
+     */
+    @Transactional
+    public Sale completeFromApartado(Apartado apartado, PaymentMethod paymentMethod, BigDecimal amountReceived, String customerEmailOverride, User actor) {
+        CashCut openCut = cashCutRepository.findFirstByUserIdAndStatus(actor.getId(), CashCutStatus.OPEN)
+                .orElseThrow(() -> new IllegalStateException("Debes abrir un corte de caja antes de completar un apartado"));
+
+        String effectiveEmail = (customerEmailOverride != null && !customerEmailOverride.isBlank())
+                ? customerEmailOverride : apartado.getCustomerEmail();
+
+        Sale sale = new Sale();
+        sale.setUser(actor);
+        sale.setCashCut(openCut);
+        sale.setCustomerName(apartado.getCustomerName());
+        sale.setCustomerEmail(effectiveEmail);
+        sale.setPaymentMethod(paymentMethod);
+        sale.setStatus(SaleStatus.COMPLETED);
+        sale.setNotes("Generada desde el apartado #" + apartado.getId());
+        sale.setTienda(apartado.getTienda());
+
+        List<SaleItem> items = new ArrayList<>();
+        BigDecimal grossSubtotal = BigDecimal.ZERO;
+        BigDecimal itemDiscountTotal = BigDecimal.ZERO;
+
+        for (ApartadoItem ai : apartado.getItems()) {
+            SaleItem item = new SaleItem();
+            item.setSale(sale);
+            item.setProduct(ai.getProduct());
+            item.setProductName(ai.getProductName());
+            item.setQuantity(ai.getQuantity());
+            item.setUnitPrice(ai.getUnitPrice());
+            item.setDiscount(ai.getDiscount());
+            item.setSubtotal(ai.getSubtotal());
+            items.add(item);
+
+            grossSubtotal = grossSubtotal.add(ai.getUnitPrice().multiply(ai.getQuantity()));
+            itemDiscountTotal = itemDiscountTotal.add(ai.getDiscount());
+        }
+
+        BigDecimal total = grossSubtotal.subtract(itemDiscountTotal);
+
+        BigDecimal changeGiven = null;
+        if (paymentMethod == PaymentMethod.CASH) {
+            if (amountReceived == null) {
+                throw new IllegalStateException("Debes indicar con cuánto pagó el cliente para cobrar en efectivo");
+            }
+            if (amountReceived.compareTo(total) < 0) {
+                throw new IllegalStateException("El monto recibido es menor al total del apartado");
+            }
+            changeGiven = amountReceived.subtract(total);
+        } else {
+            amountReceived = null;
+        }
+
+        sale.setSubtotal(grossSubtotal);
+        sale.setDiscount(itemDiscountTotal);
+        sale.setTax(BigDecimal.ZERO);
+        sale.setTotal(total);
+        sale.setAmountReceived(amountReceived);
+        sale.setChangeGiven(changeGiven);
+        sale.setItems(items);
+
+        Sale saved = saleRepository.save(sale);
+
+        if (effectiveEmail != null && !effectiveEmail.isBlank()) {
+            emailService.sendTicketEmail(saved, effectiveEmail);
+        }
+
+        return saved;
+    }
+
+    /**
+     * Verifica que el descuento de una línea no exceda ninguno de los límites que el ADMIN
+     * haya fijado para la tienda en "Datos de la tienda" ({@link Tienda#getMaxDiscountAmount()}/
+     * {@link Tienda#getMaxDiscountPercent()}). Ambos son opcionales e independientes: si
+     * están definidos, se rechaza el descuento que exceda CUALQUIERA de los dos.
+     * <p>
+     * Si el ADMIN no configuró NINGUNO de los dos límites, los descuentos quedan
+     * deshabilitados por completo (no hay un límite "sin restricción" implícito): hay que
+     * fijar al menos uno para poder aplicar descuentos. Esto evita que una tienda recién
+     * creada, donde nadie configuró nada todavía, permita descontar sin ningún tope.
+     * <p>
+     * El POS ya hace esta misma validación en el navegador (ver {@code lineDiscount}/
+     * {@code resolveDiscountCap} en {@code POS.jsx}) para dar feedback inmediato sin ida y
+     * vuelta al servidor; esta es la validación real, para que nadie pueda saltarse el
+     * límite llamando a la API directamente.
+     *
+     * @param discount monto de descuento (en pesos) que se intenta aplicar a la línea
+     * @param lineGross importe bruto de la línea ({@code unitPrice * quantity}), usado para
+     *                  traducir el límite en porcentaje a un monto comparable
+     * @param productName nombre del producto, solo para el mensaje de error
+     * @param tienda tienda del vendedor; si es null (SUPER_ADMIN sin tienda) no aplica límite
+     * @throws IllegalStateException si el descuento excede el límite en monto o en porcentaje,
+     *         o si la tienda no tiene ningún límite configurado
+     */
+    private void validateDiscountLimit(BigDecimal discount, BigDecimal lineGross, String productName, Tienda tienda) {
+        if (discount.signum() <= 0 || tienda == null) return;
+
+        if (tienda.getMaxDiscountAmount() == null && tienda.getMaxDiscountPercent() == null) {
+            throw new IllegalStateException("Los descuentos están deshabilitados: el administrador debe configurar "
+                    + "un límite de descuento en \"Datos de la tienda\" antes de poder aplicar descuentos.");
+        }
+
+        if (tienda.getMaxDiscountAmount() != null && discount.compareTo(tienda.getMaxDiscountAmount()) > 0) {
+            throw new IllegalStateException("Ese descuento no está permitido para \"" + productName
+                    + "\", el monto máximo permitido es " + MONEY_FMT.format(tienda.getMaxDiscountAmount()));
+        }
+        if (tienda.getMaxDiscountPercent() != null && lineGross.signum() > 0) {
+            BigDecimal maxFromPercent = lineGross.multiply(tienda.getMaxDiscountPercent())
+                    .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+            if (discount.compareTo(maxFromPercent) > 0) {
+                throw new IllegalStateException("Ese porcentaje de descuento no está permitido para \"" + productName
+                        + "\", el porcentaje máximo permitido es " + tienda.getMaxDiscountPercent() + "%");
+            }
+        }
     }
 }

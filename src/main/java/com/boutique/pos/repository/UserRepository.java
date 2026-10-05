@@ -1,7 +1,10 @@
 package com.boutique.pos.repository;
 
+import com.boutique.pos.model.AppSection;
 import com.boutique.pos.model.Role;
 import com.boutique.pos.model.User;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -48,16 +51,30 @@ public interface UserRepository extends JpaRepository<User, Long> {
            "AND (:roleId IS NULL OR u.role.id = :roleId) " +
            "AND (:isActive IS NULL OR u.isActive = :isActive) " +
            "ORDER BY u.name ASC")
-    List<User> search(@Param("tiendaId") Long tiendaId,
+    Page<User> search(@Param("tiendaId") Long tiendaId,
                        @Param("from") LocalDateTime from,
                        @Param("to") LocalDateTime to,
                        @Param("name") String name,
                        @Param("email") String email,
                        @Param("roleId") Long roleId,
-                       @Param("isActive") Boolean isActive);
+                       @Param("isActive") Boolean isActive,
+                       Pageable pageable);
 
     // para avisarle por correo al/los admin(es) de una tienda cuando se autocierra un corte
     /** Lista los usuarios activos con rol ADMIN de una tienda; usado para notificarles por correo cuando el job autocierra un corte. */
     @Query("SELECT u FROM User u WHERE u.tienda.id = :tiendaId AND u.role.name = 'ADMIN' AND u.isActive = true")
     List<User> findAdminsByTiendaId(@Param("tiendaId") Long tiendaId);
+
+    // Para los avisos de apartados (nuevo/confirmado/cancelado/completado/vencido): a
+    // diferencia de findAdminsByTiendaId (ADMIN nada más), esto trae a TODO el personal
+    // activo con acceso a la sección dada, sin importar su rol — un cajero o vendedor con
+    // la sección APARTADOS habilitada también necesita enterarse, no solo el admin.
+    /**
+     * Lista los usuarios activos de una tienda cuyo rol tiene habilitada la {@link
+     * AppSection} dada — usado para avisos por correo dirigidos a "todo el personal que
+     * puede actuar sobre esto", no solo a los administradores.
+     */
+    @Query("SELECT DISTINCT u FROM User u JOIN u.role.sections s " +
+           "WHERE u.tienda.id = :tiendaId AND u.isActive = true AND s = :section")
+    List<User> findActiveByTiendaIdAndSection(@Param("tiendaId") Long tiendaId, @Param("section") AppSection section);
 }

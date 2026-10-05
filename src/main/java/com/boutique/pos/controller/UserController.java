@@ -1,11 +1,15 @@
 package com.boutique.pos.controller;
 
 import com.boutique.pos.dto.ApiResponse;
+import com.boutique.pos.dto.PageResponse;
 import com.boutique.pos.dto.UserRequest;
 import com.boutique.pos.model.User;
 import com.boutique.pos.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -13,15 +17,19 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
-import java.util.List;
 
 /**
  * Controlador de usuarios, expuesto bajo {@code /api/users}.
  * <p>
  * Administra los usuarios (cajeros, vendedores, administradores, etc.) de la
- * tienda del usuario autenticado, incluyendo su asignación de rol. Todos los
- * métodos requieren acceso a la sección {@code USERS}, según el
- * {@code @PreAuthorize} definido a nivel de clase.
+ * tienda del usuario autenticado, incluyendo su asignación de rol. Todos los métodos
+ * requieren acceso a la sección {@code USERS} (el {@code @PreAuthorize} de la clase);
+ * dar de alta, editar y desactivar usuarios además exigen el rol {@code ADMIN}, {@code
+ * SUPERVISOR} o {@code SUPER_ADMIN} (ver el {@code @PreAuthorize} de cada uno de esos tres
+ * métodos, que repite la sección porque un {@code @PreAuthorize} a nivel de método
+ * reemplaza al de la clase en vez de sumarse) — la jerarquía real de qué rol puede asignar
+ * qué otro rol la aplica {@link UserService} (ver {@code assertCanAssignRole}), no esta
+ * anotación.
  */
 @RestController
 @RequestMapping("/api/users")
@@ -41,18 +49,24 @@ public class UserController {
      * @param email    email a filtrar (opcional)
      * @param roleId   id de rol a filtrar (opcional)
      * @param isActive filtra por usuarios activos/inactivos (opcional)
+     * @param page     número de página, 0-based (default 0)
+     * @param size     tamaño de página (default 20)
      * @param actor    usuario autenticado; determina el filtro por tienda
      */
     @GetMapping
-    public ResponseEntity<ApiResponse<List<User>>> list(
+    public ResponseEntity<ApiResponse<PageResponse<User>>> list(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
             @RequestParam(required = false) String name,
             @RequestParam(required = false) String email,
             @RequestParam(required = false) Long roleId,
             @RequestParam(required = false) Boolean isActive,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
             @AuthenticationPrincipal User actor) {
-        return ResponseEntity.ok(ApiResponse.ok(userService.findAll(from, to, name, email, roleId, isActive, actor), null));
+        Pageable pageable = PageRequest.of(page, size);
+        Page<User> result = userService.findAll(from, to, name, email, roleId, isActive, actor, pageable);
+        return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
     }
 
     /**
@@ -73,9 +87,21 @@ public class UserController {
      * @param req   datos del usuario a crear (incluye el rol asignado)
      * @param actor usuario autenticado que realiza la creación
      */
+    // hasAnyRole explícito aquí (además del @sectionAccess de la clase, que un
+    // @PreAuthorize a nivel de método REEMPLAZA en vez de sumar) porque cualquiera con la
+    // sección USERS habilitada podía crear/editar/desactivar usuarios — debe ser solo
+    // ADMIN/SUPER_ADMIN.
     @PostMapping
+    @PreAuthorize("@sectionAccess.check('USERS') and hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
     public ResponseEntity<ApiResponse<User>> create(@Valid @RequestBody UserRequest req, @AuthenticationPrincipal User actor) {
-        return ResponseEntity.ok(ApiResponse.ok(userService.create(req, actor), "Usuario creado"));
+        // Se checa ANTES de crear/reactivar (que es quien de verdad decide y ejecuta) solo
+        // para poder avisarle al admin qué pasó de verdad — ver UserService#create.
+        boolean reactivating = userService.isReactivatableEmail(req.getEmail());
+        User saved = userService.create(req, actor);
+        String message = reactivating
+                ? "Ese correo ya tenía un usuario desactivado — se reactivó en vez de crear uno nuevo"
+                : "Usuario creado";
+        return ResponseEntity.ok(ApiResponse.ok(saved, message));
     }
 
     /**
@@ -86,6 +112,7 @@ public class UserController {
      * @param actor usuario autenticado que realiza la actualización
      */
     @PutMapping("/{id}")
+    @PreAuthorize("@sectionAccess.check('USERS') and hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
     public ResponseEntity<ApiResponse<User>> update(@PathVariable Long id,
                                                      @Valid @RequestBody UserRequest req,
                                                      @AuthenticationPrincipal User actor) {
@@ -99,6 +126,7 @@ public class UserController {
      * @param actor usuario autenticado que realiza la baja
      */
     @DeleteMapping("/{id}")
+    @PreAuthorize("@sectionAccess.check('USERS') and hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
     public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id, @AuthenticationPrincipal User actor) {
         userService.deactivate(id, actor);
         return ResponseEntity.ok(ApiResponse.ok(null, "Usuario desactivado"));

@@ -1,10 +1,15 @@
 package com.boutique.pos.controller;
 
 import com.boutique.pos.dto.ApiResponse;
+import com.boutique.pos.dto.BulkImportResult;
 import com.boutique.pos.dto.InventoryAdjustRequest;
+import com.boutique.pos.dto.PageResponse;
 import com.boutique.pos.dto.ProductRequest;
 import com.boutique.pos.model.Product;
+import com.boutique.pos.model.ProductImage;
 import com.boutique.pos.model.User;
+import com.boutique.pos.service.ProductBulkImportService;
+import com.boutique.pos.service.ProductImageService;
 import com.boutique.pos.service.ProductService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +20,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -34,6 +40,8 @@ import java.util.List;
 public class ProductController {
 
     private final ProductService productService;
+    private final ProductImageService productImageService;
+    private final ProductBulkImportService productBulkImportService;
 
     /**
      * Lista todos los productos de la tienda del usuario autenticado.
@@ -71,6 +79,85 @@ public class ProductController {
         Pageable pageable = PageRequest.of(page, size);
         Page<Product> result = productService.search(q, categoryId, lowStock, pageable, actor);
         return ResponseEntity.ok(ApiResponse.ok(result.getContent(), null));
+    }
+
+    /**
+     * Búsqueda paginada de productos activos para Inventario, con filtros opcionales por
+     * texto libre, categoría, stock bajo, y ahora también por historial de ventas
+     * ({@code sold=NEVER_SOLD} o {@code sold=TOP_SELLERS}) — a diferencia de {@link #list}
+     * (catálogo completo sin paginar) y {@link #search} (paginado pero sin filtro de
+     * ventas, usado por POS/Dashboard), este endpoint pagina en el servidor y devuelve los
+     * metadatos de paginación completos, para que Inventario no tenga que cargar todo el
+     * catálogo de un jalón conforme crece. Accesible desde {@code INVENTORY}.
+     *
+     * @param q          texto de búsqueda libre (nombre, código de barras), opcional
+     * @param categoryId id de categoría para filtrar, opcional
+     * @param lowStock   si es {@code true}, limita el resultado a productos con stock bajo
+     * @param sold       {@code "NEVER_SOLD"} o {@code "TOP_SELLERS"}, opcional
+     * @param page       número de página (base 0, por defecto 0)
+     * @param size       tamaño de página (por defecto 20)
+     * @param actor      usuario autenticado; determina el filtro por tienda
+     */
+    @GetMapping("/page")
+    @PreAuthorize("@sectionAccess.check('INVENTORY')")
+    public ResponseEntity<ApiResponse<PageResponse<Product>>> page(@RequestParam(required = false) String q,
+                                                                    @RequestParam(required = false) Long categoryId,
+                                                                    @RequestParam(required = false) Boolean lowStock,
+                                                                    @RequestParam(required = false) String sold,
+                                                                    @RequestParam(defaultValue = "0") int page,
+                                                                    @RequestParam(defaultValue = "20") int size,
+                                                                    @AuthenticationPrincipal User actor) {
+        Pageable pageable = PageRequest.of(page, size);
+        Page<Product> result = productService.searchPage(q, categoryId, lowStock, sold, pageable, actor);
+        return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
+    }
+
+    /**
+     * Busca stock disponible de un producto en las tiendas "hermanas" de la del actor (el
+     * mismo SUPERVISOR), sin exponer nada más de ellas. Accesible para cualquier rol con la
+     * sección {@code INVENTORY} habilitada (cajero, vendedor, admin...), no solo SUPER_ADMIN/
+     * SUPERVISOR — ver {@link ProductService#searchSiblingStock}.
+     *
+     * @param q      texto de búsqueda (nombre o código de barras), obligatorio
+     * @param page   número de página (base 0, por defecto 0)
+     * @param size   tamaño de página (por defecto 20)
+     * @param actor  usuario autenticado; determina el grupo de tiendas hermanas
+     */
+    @GetMapping("/sibling-stock")
+    @PreAuthorize("@sectionAccess.check('INVENTORY')")
+    public ResponseEntity<ApiResponse<PageResponse<Product>>> siblingStock(@RequestParam String q,
+                                                                            @RequestParam(defaultValue = "0") int page,
+                                                                            @RequestParam(defaultValue = "20") int size,
+                                                                            @AuthenticationPrincipal User actor) {
+        Pageable pageable = PageRequest.of(page, size);
+        Page<Product> result = productService.searchSiblingStock(q, actor, pageable);
+        return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
+    }
+
+    /**
+     * Total histórico de unidades vendidas de cada producto activo (incluye los que nunca
+     * se han vendido, con 0), para alimentar los filtros "sin ventas" / "más vendidos" de
+     * Inventario. Accesible desde {@code INVENTORY}.
+     *
+     * @param actor usuario autenticado; determina el filtro por tienda
+     */
+    @GetMapping("/sales-stats")
+    @PreAuthorize("@sectionAccess.check('INVENTORY')")
+    public ResponseEntity<ApiResponse<List<Object[]>>> salesStats(@AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(productService.salesStats(actor), null));
+    }
+
+    /**
+     * Piezas actualmente descontadas del stock por apartados {@code ACTIVE} de cada
+     * producto activo, para la columna "Apartados" de Inventario (no incluye {@code
+     * PENDING}: todavía no descuenta stock real). Accesible desde {@code INVENTORY}.
+     *
+     * @param actor usuario autenticado; determina el filtro por tienda
+     */
+    @GetMapping("/reserved-stats")
+    @PreAuthorize("@sectionAccess.check('INVENTORY')")
+    public ResponseEntity<ApiResponse<List<Object[]>>> reservedStats(@AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(productService.reservedStats(actor), null));
     }
 
     /**
@@ -112,7 +199,7 @@ public class ProductController {
      * @param actor usuario autenticado que realiza la creación
      */
     @PostMapping
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
     public ResponseEntity<ApiResponse<Product>> create(@Valid @RequestBody ProductRequest req,
                                                         @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(productService.create(req, actor), "Producto creado"));
@@ -127,7 +214,7 @@ public class ProductController {
      * @param actor usuario autenticado que realiza la actualización
      */
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
     public ResponseEntity<ApiResponse<Product>> update(@PathVariable Long id,
                                                         @Valid @RequestBody ProductRequest req,
                                                         @AuthenticationPrincipal User actor) {
@@ -160,9 +247,84 @@ public class ProductController {
      * @param actor usuario autenticado que realiza la baja
      */
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
     public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id, @AuthenticationPrincipal User actor) {
         productService.deactivate(id, actor);
         return ResponseEntity.ok(ApiResponse.ok(null, "Producto desactivado"));
+    }
+
+    // ── Fotos del producto (galería para la tienda pública de apartados) ───────────────
+    // Todas validan primero que el producto sea de la tienda del actor (productService.findById(id, actor)
+    // ya lanza si no) antes de tocar nada en ProductImageService.
+
+    /** Fotos de un producto, portada primero. Accesible desde {@code INVENTORY}. */
+    @GetMapping("/{id}/images")
+    @PreAuthorize("@sectionAccess.check('INVENTORY')")
+    public ResponseEntity<ApiResponse<List<ProductImage>>> listImages(@PathVariable Long id, @AuthenticationPrincipal User actor) {
+        Product product = productService.findById(id, actor);
+        return ResponseEntity.ok(ApiResponse.ok(productImageService.list(product.getId()), null));
+    }
+
+    /** Sube una foto nueva para el producto. Solo ADMIN (igual que crear/editar el producto). */
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    @PostMapping(value = "/{id}/images", consumes = "multipart/form-data")
+    public ResponseEntity<ApiResponse<ProductImage>> uploadImage(@PathVariable Long id,
+                                                                  @RequestParam("file") MultipartFile file,
+                                                                  @AuthenticationPrincipal User actor) {
+        Product product = productService.findById(id, actor);
+        return ResponseEntity.ok(ApiResponse.ok(productImageService.upload(product, file), "Foto agregada"));
+    }
+
+    /** Marca una foto como portada del producto. Solo ADMIN. */
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    @PutMapping("/{id}/images/{imageId}/primary")
+    public ResponseEntity<ApiResponse<Void>> setPrimaryImage(@PathVariable Long id, @PathVariable Long imageId,
+                                                              @AuthenticationPrincipal User actor) {
+        Product product = productService.findById(id, actor);
+        productImageService.setPrimary(product, imageId);
+        return ResponseEntity.ok(ApiResponse.ok(null, "Portada actualizada"));
+    }
+
+    /** Borra una foto del producto. Solo ADMIN. */
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    @DeleteMapping("/{id}/images/{imageId}")
+    public ResponseEntity<ApiResponse<Void>> deleteImage(@PathVariable Long id, @PathVariable Long imageId,
+                                                          @AuthenticationPrincipal User actor) {
+        Product product = productService.findById(id, actor);
+        productImageService.delete(product, imageId);
+        return ResponseEntity.ok(ApiResponse.ok(null, "Foto eliminada"));
+    }
+
+    // ── Carga masiva de productos por Excel ────────────────────────────────────────────
+
+    /**
+     * Descarga la plantilla (.xlsx) de carga masiva, con las columnas esperadas y una fila
+     * de ejemplo. Disponible para ADMIN/SUPER_ADMIN/SUPERVISOR — es de solo lectura, sin
+     * ningún riesgo, a diferencia de la carga real (ver {@link #bulkImport}).
+     */
+    @GetMapping("/bulk-import/template")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    public ResponseEntity<byte[]> bulkImportTemplate() {
+        byte[] xlsx = productBulkImportService.buildTemplate();
+        return ResponseEntity.ok()
+                .header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                .header("Content-Disposition", "attachment; filename=\"plantilla-carga-masiva-productos.xlsx\"")
+                .body(xlsx);
+    }
+
+    /**
+     * Procesa un archivo de carga masiva de productos, creando uno por cada fila válida y
+     * reportando el resto como errores (sin tumbar la carga completa por una fila mala).
+     * Restringido a SUPER_ADMIN.
+     */
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @PostMapping(value = "/bulk-import", consumes = "multipart/form-data")
+    public ResponseEntity<ApiResponse<BulkImportResult>> bulkImport(@RequestParam("file") MultipartFile file,
+                                                                     @AuthenticationPrincipal User actor) {
+        BulkImportResult result = productBulkImportService.importFile(file, actor);
+        String message = result.getErrorCount() == 0
+                ? result.getCreated() + " producto(s) creado(s) correctamente"
+                : result.getCreated() + " producto(s) creado(s), " + result.getErrorCount() + " con error";
+        return ResponseEntity.ok(ApiResponse.ok(result, message));
     }
 }

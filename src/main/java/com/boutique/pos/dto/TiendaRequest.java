@@ -1,6 +1,7 @@
 package com.boutique.pos.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 /**
@@ -11,6 +12,8 @@ import lombok.Data;
  */
 @Data
 public class TiendaRequest {
+    // 150 porque Tienda.name es VARCHAR(150) (ver Tienda#name).
     @NotBlank
+    @Size(max = 150, message = "El nombre no puede tener más de 150 caracteres")
     private String name;
 }
