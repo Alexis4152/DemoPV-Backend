@@ -300,8 +300,9 @@ public class ProductService {
         p.setTienda(tienda);
         p.setIsActive(true);
         p.setIsReservable(Boolean.TRUE.equals(req.getIsReservable()));
-        validateApartadoDiscountPercent(req.getApartadoDiscountPercent(), req.getPrice(), tienda);
-        p.setApartadoDiscountPercent(req.getApartadoDiscountPercent());
+        BigDecimal apartadoDiscount = effectiveApartadoDiscount(p, req);
+        validateApartadoDiscountPercent(apartadoDiscount, req.getPrice(), tienda);
+        p.setApartadoDiscountPercent(apartadoDiscount);
         p.setCreatedBy(actor);
         Product saved = productRepository.save(p);
 
@@ -339,8 +340,9 @@ public class ProductService {
         p.setUnit(req.getUnit() != null ? req.getUnit() : "pieza");
         p.setCategory(cat);
         if (req.getIsReservable() != null) p.setIsReservable(req.getIsReservable());
-        validateApartadoDiscountPercent(req.getApartadoDiscountPercent(), req.getPrice(), p.getTienda());
-        p.setApartadoDiscountPercent(req.getApartadoDiscountPercent());
+        BigDecimal apartadoDiscount = effectiveApartadoDiscount(p, req);
+        validateApartadoDiscountPercent(apartadoDiscount, req.getPrice(), p.getTienda());
+        p.setApartadoDiscountPercent(apartadoDiscount);
         p.setUpdatedBy(actor);
         return productRepository.save(p);
     }
@@ -448,6 +450,18 @@ public class ProductService {
         if (existing != null && !existing.getId().equals(excludeProductId)) {
             throw new FieldConflictException("barcode", "Ya existe un producto con ese código de barras: " + existing.getName());
         }
+    }
+
+    /**
+     * Descuento público de apartados que de verdad aplica: el del request solo si el
+     * producto queda visible en la tienda pública ({@code isReservable}); si no, null. Un
+     * producto que no sale en el catálogo público no tiene a quién mostrarle la oferta — y
+     * el formulario de Inventario solo oculta el campo al desmarcar "Mostrar en la tienda
+     * pública", sin vaciarlo, así que sin esto un valor viejo seguía validándose (y
+     * rechazándose) aunque ya no aplicara.
+     */
+    private BigDecimal effectiveApartadoDiscount(Product p, ProductRequest req) {
+        return Boolean.TRUE.equals(p.getIsReservable()) ? req.getApartadoDiscountPercent() : null;
     }
 
     /**
