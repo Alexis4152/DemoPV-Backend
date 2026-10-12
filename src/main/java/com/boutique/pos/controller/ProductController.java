@@ -8,6 +8,8 @@ import com.boutique.pos.dto.ProductRequest;
 import com.boutique.pos.model.Product;
 import com.boutique.pos.model.ProductImage;
 import com.boutique.pos.model.User;
+import com.boutique.pos.security.SectionAccessService;
+import com.boutique.pos.service.InventoryCountSheetService;
 import com.boutique.pos.service.ProductBulkImportService;
 import com.boutique.pos.service.ProductImageService;
 import com.boutique.pos.service.ProductService;
@@ -17,11 +19,15 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.Duration;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -42,6 +48,12 @@ public class ProductController {
     private final ProductService productService;
     private final ProductImageService productImageService;
     private final ProductBulkImportService productBulkImportService;
+    private final SectionAccessService sectionAccess;
+    private final InventoryCountSheetService inventoryCountSheetService;
+
+    // Ventana para que un rol con CREATE (sin EDIT) suba las fotos del producto que acaba de
+    // crear — ver uploadImage. Holgada para varias fotos pesadas en una conexión lenta.
+    private static final Duration NEW_PRODUCT_IMAGE_WINDOW = Duration.ofMinutes(10);
 
     /**
      * Lista todos los productos de la tienda del usuario autenticado.
@@ -266,15 +278,32 @@ public class ProductController {
         return ResponseEntity.ok(ApiResponse.ok(productImageService.list(product.getId()), null));
     }
 
-    /** Sube una foto nueva para el producto. Requiere la acción EDIT en INVENTORY (la
-     *  galería se administra como parte de editar el producto). */
-    @PreAuthorize("@sectionAccess.checkAction('INVENTORY', 'EDIT')")
+    /**
+     * Sube una foto nueva para el producto. Requiere la acción EDIT en INVENTORY (la
+     * galería se administra como parte de editar el producto) — o, para quien solo tiene
+     * CREATE, únicamente sobre un producto que él mismo acaba de dar de alta: al agregar un
+     * producto, Inventory.jsx primero lo crea y luego sube las fotos elegidas, así que sin
+     * esta excepción un rol con CREATE y sin EDIT creaba el producto pero se quedaba sin
+     * fotos (403). El límite de tiempo evita que CREATE sirva para tocar la galería de
+     * productos que ya existían.
+     */
+    @PreAuthorize("@sectionAccess.checkAction('INVENTORY', 'EDIT') or @sectionAccess.checkAction('INVENTORY', 'CREATE')")
     @PostMapping(value = "/{id}/images", consumes = "multipart/form-data")
     public ResponseEntity<ApiResponse<ProductImage>> uploadImage(@PathVariable Long id,
                                                                   @RequestParam("file") MultipartFile file,
                                                                   @AuthenticationPrincipal User actor) {
         Product product = productService.findById(id, actor);
+        if (!sectionAccess.checkAction("INVENTORY", "EDIT") && !isFreshlyCreatedBy(product, actor)) {
+            throw new AccessDeniedException("Solo puedes agregar fotos a un producto que acabas de crear");
+        }
         return ResponseEntity.ok(ApiResponse.ok(productImageService.upload(product, file), "Foto agregada"));
+    }
+
+    /** {@code true} si el producto lo creó {@code actor} hace menos de {@link #NEW_PRODUCT_IMAGE_WINDOW}. */
+    private boolean isFreshlyCreatedBy(Product product, User actor) {
+        return product.getCreatedBy() != null && product.getCreatedBy().getId().equals(actor.getId())
+                && product.getCreatedAt() != null
+                && product.getCreatedAt().isAfter(LocalDateTime.now().minus(NEW_PRODUCT_IMAGE_WINDOW));
     }
 
     /** Marca una foto como portada del producto. Requiere la acción EDIT en INVENTORY. */
@@ -313,6 +342,31 @@ public class ProductController {
                 .header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 .header("Content-Disposition", "attachment; filename=\"plantilla-carga-masiva-productos.xlsx\"")
                 .body(xlsx);
+    }
+
+    /**
+     * Descarga la hoja de conteo físico de inventario en Excel: nombre del producto, cantidad
+     * actual en sistema y "Cantidad real" en blanco. Libre para cualquiera con acceso a
+     * INVENTORY (sin acción específica): es de solo lectura, pensada para que el propio
+     * cajero haga el conteo.
+     */
+    @GetMapping("/count-sheet.xlsx")
+    @PreAuthorize("@sectionAccess.check('INVENTORY')")
+    public ResponseEntity<byte[]> countSheetExcel(@AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok()
+                .header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                .header("Content-Disposition", "attachment; filename=\"inventario-" + LocalDate.now() + ".xlsx\"")
+                .body(inventoryCountSheetService.buildExcel(actor));
+    }
+
+    /** Igual que {@link #countSheetExcel}, en PDF listo para imprimir. */
+    @GetMapping("/count-sheet.pdf")
+    @PreAuthorize("@sectionAccess.check('INVENTORY')")
+    public ResponseEntity<byte[]> countSheetPdf(@AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok()
+                .header("Content-Type", "application/pdf")
+                .header("Content-Disposition", "attachment; filename=\"inventario-" + LocalDate.now() + ".pdf\"")
+                .body(inventoryCountSheetService.buildPdf(actor));
     }
 
     /**
