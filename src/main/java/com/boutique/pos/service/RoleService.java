@@ -267,14 +267,22 @@ public class RoleService {
 
     /**
      * Normaliza el conjunto de secciones solicitado para un rol: convierte un valor nulo
-     * en un conjunto vacío y, si el rol es "de gestión" (ADMIN/SUPERVISOR/SUPER_ADMIN),
-     * fuerza que incluya siempre ROLES para que el administrador nunca se quede sin acceso
-     * a la pantalla de roles (y por ende sin forma de recuperar el acceso).
+     * en un conjunto vacío y fuerza la regla de ROLES según si el rol es "de gestión"
+     * (ADMIN/SUPERVISOR/SUPER_ADMIN) o no, en ambos sentidos — no solo cuando falta.
+     *
+     * <p>De gestión: SIEMPRE incluye ROLES, aunque no se haya pedido, para que el
+     * administrador nunca se quede sin acceso a la pantalla de roles (y por ende sin forma
+     * de recuperar el acceso). NO de gestión (CASHIER, o cualquier rol personalizado):
+     * ROLES se QUITA aunque se haya pedido explícitamente — "Roles y Permisos" controla
+     * qué módulos ve cada rol, así que dejar que un rol sin rango lo edite es dejarle una
+     * puerta para habilitarse a sí mismo cualquier otro módulo (incluido USERS). Solo
+     * ADMIN/SUPERVISOR/SUPER_ADMIN pueden tocar permisos y roles — ver también {@link
+     * com.boutique.pos.security.SectionAccessService#check}, que es quien de verdad
+     * autoriza cada petición a {@code /api/roles} en base a este mismo campo.</p>
      *
      * <p>OJO: no es lo mismo "de gestión" que {@code isSystem} — CASHIER también es
      * {@code isSystem=true} (protegido de renombrar/eliminar, ver {@link
-     * #seedDefaultRolesForTienda}) pero NO es de gestión, así que nunca debe forzársele
-     * ROLES por esta vía (un cajero no tiene por qué ver "Roles y Permisos").</p>
+     * #seedDefaultRolesForTienda}) pero NO es de gestión.</p>
      *
      * @param requested secciones solicitadas (puede ser null)
      * @param isManagementRole si el rol es "de gestión" (ver {@link #isManagementRole(String)})
@@ -285,6 +293,10 @@ public class RoleService {
         if (isManagementRole) {
             // evita que el admin se bloquee a sí mismo la pantalla de roles
             sections.add(AppSection.ROLES);
+        } else {
+            // un cajero (o rol personalizado) nunca debe poder editar roles/permisos,
+            // así se lo hayan marcado por error o a propósito desde el formulario
+            sections.remove(AppSection.ROLES);
         }
         return sections;
     }

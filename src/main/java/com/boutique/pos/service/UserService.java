@@ -215,7 +215,7 @@ public class UserService {
      */
     private boolean canManageRank(int targetRank, int actorRank) {
         if (actorRank == UNRANKED_ROLE && targetRank == UNRANKED_ROLE) return true;
-        return targetRank < actorRank;
+        return targetRank > actorRank;
     }
 
     /**

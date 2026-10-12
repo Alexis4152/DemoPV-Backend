@@ -50,6 +50,7 @@ public class RoleDataInitializer implements CommandLineRunner {
         seedSupervisorRole();
         assignDefaultAdminRole();
         protectExistingCashierRoles();
+        stripRolesSectionFromNonManagementRoles();
     }
 
     /**
@@ -198,6 +199,33 @@ public class RoleDataInitializer implements CommandLineRunner {
                 "UPDATE roles SET is_system = true WHERE name = 'CASHIER' AND is_system = false");
         if (updated > 0) {
             log.info("{} rol(es) CASHIER marcado(s) como fijo(s) (isSystem=true)", updated);
+        }
+    }
+
+    // Mismos tres nombres que RoleService#MANAGEMENT_ROLE_NAMES/SectionAccessService
+    // #MANAGEMENT_ROLES — repetidos aquí (en vez de inyectar RoleService) porque este
+    // runner trabaja directo con JDBC, igual que protectExistingCashierRoles.
+    private static final String MANAGEMENT_ROLE_NAMES_SQL = "'SUPER_ADMIN','SUPERVISOR','ADMIN'";
+
+    // RoleService#sanitizeSections ya evita que un rol sin rango (CASHIER, o cualquier
+    // personalizado) se quede con ROLES al guardarse desde "Roles y Permisos" — pero eso
+    // solo corre para una fila que alguien vuelva a guardar. Este paso limpia, en CADA
+    // arranque, cualquier fila que se haya quedado con ROLES de antes de ese fix (por
+    // ejemplo, un CASHIER al que un admin le marcó por error la casilla de ROLES): sin
+    // esto, ese cajero seguiría viendo y editando "Roles y Permisos" —incluido
+    // habilitarse a sí mismo cualquier otro módulo— hasta que alguien vuelva a guardar su
+    // rol manualmente.
+    /**
+     * Quita la sección ROLES de cualquier rol que NO sea de gestión (SUPER_ADMIN/
+     * SUPERVISOR/ADMIN) — "Roles y Permisos" nunca debe quedar al alcance de CASHIER ni de
+     * un rol personalizado, ni siquiera por un error de captura previo a este fix.
+     */
+    private void stripRolesSectionFromNonManagementRoles() {
+        int updated = jdbcTemplate.update(
+                "DELETE FROM role_sections WHERE section = 'ROLES' AND role_id IN (" +
+                        "SELECT id FROM roles WHERE name NOT IN (" + MANAGEMENT_ROLE_NAMES_SQL + "))");
+        if (updated > 0) {
+            log.info("Se quitó el acceso a ROLES de {} rol(es) sin rango de gestión", updated);
         }
     }
 }
