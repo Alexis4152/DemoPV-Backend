@@ -70,20 +70,26 @@ public interface ApartadoRepository extends JpaRepository<Apartado, Long> {
     List<Apartado> findByTiendaIdOrderByRequestedAtDesc(Long tiendaId, Pageable pageable);
 
     /**
-     * Piezas de cada producto (de los {@code productIds} dados) ya reclamadas por OTRAS
-     * solicitudes {@code PENDING} (excluyendo {@code excludeApartadoId}) — estas todavía
+     * Piezas de cada producto (de los {@code productIds} dados) ya reclamadas por las
+     * solicitudes {@code PENDING} que llegaron ANTES que {@code apartadoId} — estas todavía
      * NO descontaron stock real (eso solo pasa al confirmar), así que sin este dato el
      * stock crudo del producto parece más libre de lo que en realidad está si hay más de
      * una solicitud pendiente compitiendo por él. Usado por {@code
      * ApartadoService#populateAvailableStock} para la pantalla de confirmación.
      *
+     * <p>Solo cuenta las anteriores (por orden de llegada), no TODAS las demás: si cada
+     * solicitud restara a todas las otras, dos que compiten por la última pieza se
+     * descontarían mutuamente y ambas marcarían 0 disponibles aunque la pieza sí exista.
+     * Se compara por {@code id} (secuencia de la BD, único y creciente) y no por fecha,
+     * para que el desempate sea siempre el mismo aun si llegaron en el mismo instante.</p>
+     *
      * @return filas {@code [productId, piezasReclamadas]}
      */
     @Query(value = "SELECT ai.product_id, COALESCE(SUM(ai.quantity), 0) " +
                    "FROM apartado_items ai JOIN apartados a ON a.id = ai.apartado_id " +
-                   "WHERE a.status = 'PENDING' AND a.id <> :excludeApartadoId AND ai.product_id IN (:productIds) " +
+                   "WHERE a.status = 'PENDING' AND a.id < :apartadoId AND ai.product_id IN (:productIds) " +
                    "GROUP BY ai.product_id",
            nativeQuery = true)
-    List<Object[]> sumPendingQuantityByProductExcluding(@Param("excludeApartadoId") Long excludeApartadoId,
-                                                          @Param("productIds") List<Long> productIds);
+    List<Object[]> sumPendingQuantityByProductBefore(@Param("apartadoId") Long apartadoId,
+                                                       @Param("productIds") List<Long> productIds);
 }

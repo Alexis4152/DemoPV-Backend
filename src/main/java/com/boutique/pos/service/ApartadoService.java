@@ -516,8 +516,9 @@ public class ApartadoService {
 
     /**
      * Calcula, por línea, {@link ApartadoItem#getAvailableStock()}: el stock actual del
-     * producto menos lo que ya reclaman OTRAS solicitudes {@code PENDING} del mismo
-     * producto ({@link ApartadoRepository#sumPendingQuantityByProductExcluding}) — sin
+     * producto menos lo que ya reclaman las solicitudes {@code PENDING} del mismo producto
+     * que llegaron ANTES que esta (por orden de llegada, ver
+     * {@link ApartadoRepository#sumPendingQuantityByProductBefore}) — sin
      * esto, el cajero vería el stock crudo (todavía no descontado para NINGÚN PENDING) y
      * podría pensar que hay más disponible de lo que en realidad queda si hay más de una
      * solicitud compitiendo por el mismo producto.
@@ -534,7 +535,7 @@ public class ApartadoService {
         if (productIds.isEmpty()) return;
 
         Map<Long, BigDecimal> pendingByProduct = apartadoRepository
-                .sumPendingQuantityByProductExcluding(apartado.getId(), productIds).stream()
+                .sumPendingQuantityByProductBefore(apartado.getId(), productIds).stream()
                 .collect(Collectors.toMap(r -> ((Number) r[0]).longValue(), r -> (BigDecimal) r[1]));
 
         for (ApartadoItem item : apartado.getItems()) {
