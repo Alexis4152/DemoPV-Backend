@@ -27,6 +27,9 @@ import java.util.List;
 public class ProductImageService {
 
     private static final long MAX_SIZE_BYTES = 5L * 1024 * 1024; // 5 MB
+    // Tope de fotos por producto (galería del catálogo público). Productos que ya tenían
+    // más antes de este límite las conservan; solo se impide subir nuevas.
+    public static final int MAX_IMAGES_PER_PRODUCT = 3;
 
     private final ProductImageRepository imageRepository;
     private final ImageStorageService imageStorageService;
@@ -46,11 +49,15 @@ public class ProductImageService {
      * @return la foto recién guardada
      * @throws IllegalArgumentException si el archivo viene vacío, no es de un tipo
      *         permitido o excede el tamaño máximo
+     * @throws IllegalStateException si el producto ya tiene {@link #MAX_IMAGES_PER_PRODUCT} fotos
      * @throws RuntimeException si falla la escritura del archivo a disco
      */
     @Transactional
     public ProductImage upload(Product product, MultipartFile file) {
         List<ProductImage> existing = imageRepository.findByProductId(product.getId());
+        if (existing.size() >= MAX_IMAGES_PER_PRODUCT) {
+            throw new IllegalStateException("Un producto puede tener máximo " + MAX_IMAGES_PER_PRODUCT + " fotos");
+        }
         String path = imageStorageService.store(file, "products/" + product.getId(), "", MAX_SIZE_BYTES);
 
         ProductImage image = new ProductImage();
