@@ -1,6 +1,8 @@
 package com.boutique.pos.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -9,17 +11,24 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * Corte de caja: representa la sesión de trabajo de un cajero/vendedor dentro de una
- * {@link Tienda}, desde que la abre (con un fondo inicial en {@code openingAmount}) hasta
- * que se cierra.
+ * Corte de caja: el turno de un cajero/vendedor sobre una {@link CashRegister} (caja) de
+ * una {@link Tienda}, desde que la recibe (con el fondo inicial que contó, en
+ * {@code openingAmount}) hasta que la cierra y la entrega.
  * <p>
- * Cada usuario abre y opera su propio corte, por lo que en una misma tienda pueden existir
- * varios cortes {@link CashCutStatus#OPEN} simultáneamente (uno por cajero). Todas las
- * {@link Sale} de un cajero se asocian a su corte abierto, y este va acumulando los totales
- * (ventas por forma de pago, transacciones, cancelaciones, etc.) que se consolidan al cerrarlo.
+ * Cada usuario tiene a lo más un corte abierto, y cada caja también: en una tienda con
+ * varias cajas puede haber varios cortes {@link CashCutStatus#OPEN} a la vez (uno por caja).
+ * Todas las {@link Sale} de un cajero se asocian a su corte abierto; los demás movimientos
+ * de efectivo (gastos, retiros, aportes...) son {@link CashMovement}.
  * <p>
- * El cierre puede ser manual (el propio cajero o un ADMIN) o automático, ejecutado por
- * {@code CashCutAutoCloseJob} según el horario configurado en {@link CashCutSchedule}.
+ * Al abrir, el cajero recibe lo que dejó el corte anterior de esa caja (más/menos lo que un
+ * administrador movió con la caja cerrada), lo cuenta y da su de acuerdo: si no coincide,
+ * queda una diferencia de entrega ({@code handover*}). Al cerrar se hace el arqueo
+ * ({@code countedAmount} contra el efectivo esperado) y lo contado queda en la caja para el
+ * siguiente turno ({@code handoverAmount}).
+ * <p>
+ * El cierre puede ser manual (el propio cajero), forzado por un administrador, o automático,
+ * ejecutado por {@code CashCutAutoCloseJob} según el horario configurado en {@link CashCutSchedule}.
+ * Los cortes anteriores a las cajas tienen {@code cashRegister} en null.
  */
 @Entity
 @Table(name = "cash_cuts")
@@ -104,6 +113,104 @@ public class CashCut {
     @Column(nullable = false, length = 10)
     @Builder.Default
     private CashCutStatus status = CashCutStatus.OPEN;
+
+    // ── Caja y recepción ───────────────────────────────────────────────────────────
+    /** Caja sobre la que se abrió el corte; null en cortes anteriores a las cajas. */
+    @JsonIgnoreProperties({"tienda", "pendingCountedBy", "hibernateLazyInitializer", "handler"})
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "cash_register_id")
+    private CashRegister cashRegister;
+
+    /** Corte anterior de la misma caja, del que se recibió el efectivo. */
+    @JsonIgnore
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "previous_cut_id")
+    private CashCut previousCut;
+
+    /** Lo que debía recibir el cajero al abrir; null si no hubo entrega previa. */
+    @Column(precision = 12, scale = 2)
+    private BigDecimal expectedOpeningAmount;
+
+    /** Cómo se había verificado el efectivo que recibió (snapshot de la caja al abrir). */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private CashCountMethod receivedCountMethod;
+
+    /** Nota del cajero al recibir (obligatoria si contó otra cantidad). */
+    @Column(columnDefinition = "TEXT")
+    private String receiveNote;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 12, columnDefinition = "varchar(12) default 'NONE'")
+    @Builder.Default
+    private HandoverStatus handoverStatus = HandoverStatus.NONE;
+
+    /** Contado al recibir menos lo que debía recibir (negativo = faltante). */
+    @Column(precision = 12, scale = 2)
+    private BigDecimal handoverDifference;
+
+    @Enumerated(EnumType.STRING)
+    @Column(length = 25)
+    private HandoverResolution handoverResolution;
+
+    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "handover_resolved_by_user_id")
+    private User handoverResolvedBy;
+
+    private LocalDateTime handoverResolvedAt;
+
+    @Column(columnDefinition = "TEXT")
+    private String handoverResolutionNote;
+
+    // ── Movimientos y arqueo (se consolidan al cerrar) ───────────────────────────
+    /** Suma de entradas (aportes + cambio) del corte. */
+    @Column(precision = 12, scale = 2)
+    private BigDecimal entriesTotal;
+
+    /** Suma de retiros del corte (no son gasto: no bajan la utilidad). */
+    @Column(precision = 12, scale = 2)
+    private BigDecimal withdrawalsTotal;
+
+    /** Suma de reembolsos pagados desde la caja del corte. */
+    @Column(precision = 12, scale = 2)
+    private BigDecimal reimbursementsTotal;
+
+    /** Efectivo contado al cerrar; null si nadie lo contó. */
+    @Column(precision = 12, scale = 2)
+    private BigDecimal countedAmount;
+
+    /** Contado menos esperado ({@code closingAmount}); null si nadie contó. */
+    @Column(precision = 12, scale = 2)
+    private BigDecimal cashDifference;
+
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private CashCountMethod countMethod;
+
+    /** Quién contó (o reportó, a distancia) el efectivo al cerrar. */
+    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "counted_by_user_id")
+    private User countedBy;
+
+    /** Foto/captura del conteo reportado a distancia (cierre forzado). */
+    @Column(length = 300)
+    private String countEvidencePath;
+
+    /** Lo que quedó en la caja para el siguiente turno (lo contado, o el esperado si nadie contó). */
+    @Column(precision = 12, scale = 2)
+    private BigDecimal handoverAmount;
+
+    @JsonProperty("previousCutId")
+    public Long getPreviousCutId() {
+        return previousCut != null ? previousCut.getId() : null;
+    }
+
+    @JsonProperty("previousUserName")
+    public String getPreviousUserName() {
+        return previousCut != null && previousCut.getUser() != null ? previousCut.getUser().getName() : null;
+    }
 
     /** Notas libres capturadas por el cajero/ADMIN al abrir o cerrar el corte. */
     @Column(columnDefinition = "TEXT")

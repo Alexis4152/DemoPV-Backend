@@ -2,9 +2,11 @@ package com.boutique.pos.repository;
 
 import com.boutique.pos.model.CashCutStatus;
 import com.boutique.pos.model.CashCut;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -78,6 +80,24 @@ public interface CashCutRepository extends JpaRepository<CashCut, Long> {
      * {@code UserController}. {@code tiendaId} nulo indica SUPER_ADMIN viendo todas las
      * tiendas (no se filtra por tienda).
      */
+    // la caja solo puede tener un corte abierto a la vez
+    Optional<CashCut> findFirstByCashRegisterIdAndStatus(Long cashRegisterId, CashCutStatus status);
+
+    /** Bloqueo pesimista para que dos salidas simultáneas no saquen más efectivo del que hay. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT c FROM CashCut c WHERE c.id = :id")
+    Optional<CashCut> findByIdForUpdate(@Param("id") Long id);
+
+    // "Últimas entregas de caja": cada corte que recibió una caja de un turno anterior.
+    @Query("SELECT c FROM CashCut c WHERE (:tiendaId IS NULL OR c.tienda.id = :tiendaId) " +
+           "AND c.cashRegister IS NOT NULL AND c.expectedOpeningAmount IS NOT NULL " +
+           "ORDER BY c.openedAt DESC")
+    Page<CashCut> findHandovers(@Param("tiendaId") Long tiendaId, Pageable pageable);
+
+    @Query("SELECT COUNT(c) FROM CashCut c WHERE (:tiendaId IS NULL OR c.tienda.id = :tiendaId) " +
+           "AND c.handoverStatus = com.boutique.pos.model.HandoverStatus.DIFFERENCE")
+    long countUnresolvedHandovers(@Param("tiendaId") Long tiendaId);
+
     @Query("SELECT DISTINCT c.user.id, c.user.name FROM CashCut c " +
            "WHERE (:tiendaId IS NULL OR c.tienda.id = :tiendaId) " +
            "ORDER BY c.user.name ASC")

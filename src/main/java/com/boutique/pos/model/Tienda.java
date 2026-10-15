@@ -115,6 +115,14 @@ public class Tienda {
     @Builder.Default
     private Integer pollingIntervalSeconds = 20;
 
+    // Conteo ciego al cerrar corte: el cajero (no un ADMIN/SUPERVISOR) no ve el efectivo
+    // esperado ni sus ventas en efectivo mientras su corte está abierto; cuenta, cierra y
+    // solo entonces ve la diferencia — así no puede "ajustar" su conteo para que cuadre.
+    // Opcional por tienda ("Datos de la tienda"), apagado por default.
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    @Builder.Default
+    private Boolean blindCashCount = false;
+
     // Correo de contacto de ESTA tienda, editable por su ADMIN (o SUPERVISOR/SUPER_ADMIN)
     // en "Datos de la tienda" — es lo único de la configuración de correo que un cliente
     // puede tocar. Nunca se usa como remitente real (Gmail no deja mandar con un "De:"

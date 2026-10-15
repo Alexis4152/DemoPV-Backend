@@ -28,6 +28,9 @@ public interface UserRepository extends JpaRepository<User, Long> {
     boolean existsByEmail(String email);
     /** Lista todos los usuarios, ordenados alfabéticamente por nombre. */
     List<User> findAllByOrderByNameAsc();
+
+    // personal activo de una tienda — para los selects de "¿quién puso/retiró el dinero?" en cajas
+    List<User> findByTiendaIdAndIsActiveTrueOrderByNameAsc(Long tiendaId);
     /** Cuenta cuántos usuarios tienen asignado el rol dado (usado para validar antes de eliminar/desactivar un rol). */
     long countByRole(Role role);
 
