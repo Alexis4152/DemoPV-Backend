@@ -101,7 +101,7 @@ public class CashCutReportExcelService {
         // caja pero no son ventas ni gastos — solo GASTOS baja la utilidad. EFECTIVO
         // ESPERADO es closingAmount; CONTADO/DIFERENCIA, el arqueo (vacío si nadie contó).
         header(sheet, r++, header, "CAJA", "CAJERO", "APERTURA", "CIERRE", "FONDO INICIAL", "TOTAL VENTAS", "VENTAS EFECTIVO",
-                "ENTRADAS", "GASTOS", "RETIROS", "REEMBOLSOS", "EFECTIVO ESPERADO", "CONTADO", "DIFERENCIA");
+                "ENTRADAS", "GASTOS", "RETIROS", "REEMBOLSOS", "PRÉSTAMOS A OTRAS CAJAS", "EFECTIVO ESPERADO", "CONTADO", "DIFERENCIA");
 
         BigDecimal totalVentas = BigDecimal.ZERO, totalGastos = BigDecimal.ZERO, totalRetiros = BigDecimal.ZERO;
         for (CashCut cut : cuts) {
@@ -117,12 +117,13 @@ public class CashCutReportExcelService {
             moneyCell(row, 8, money, cut.getExpenses());
             moneyCell(row, 9, money, cut.getWithdrawalsTotal());
             moneyCell(row, 10, money, cut.getReimbursementsTotal());
-            moneyCell(row, 11, money, cut.getClosingAmount());
+            moneyCell(row, 11, money, cut.getLoansOutTotal());
+            moneyCell(row, 12, money, cut.getClosingAmount());
             if (cut.getCountedAmount() != null) {
-                moneyCell(row, 12, money, cut.getCountedAmount());
-                moneyCell(row, 13, money, cut.getCashDifference());
+                moneyCell(row, 13, money, cut.getCountedAmount());
+                moneyCell(row, 14, money, cut.getCashDifference());
             } else {
-                row.createCell(12).setCellValue("No contado");
+                row.createCell(13).setCellValue("No contado");
             }
             totalVentas = totalVentas.add(nz(cut.getTotalSales()));
             totalGastos = totalGastos.add(nz(cut.getExpenses()));
@@ -142,7 +143,7 @@ public class CashCutReportExcelService {
         cellStyle(utilidadRow, 0, bold);
         moneyCell(utilidadRow, 1, money, totalVentas.subtract(totalGastos));
 
-        autosize(sheet, 14);
+        autosize(sheet, 15);
     }
 
     /**

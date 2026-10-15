@@ -104,6 +104,25 @@ public class CashRegisterService {
         return registerRepository.save(CashRegister.builder().tienda(tienda).name(name).isActive(true).build());
     }
 
+    /**
+     * Reabre una caja que ya hizo su corte de fin de día, para que cualquiera pueda volver a
+     * abrir corte en ella hoy (solo administrador/supervisor). No reenvía ni borra el reporte
+     * ya enviado: los cortes que se hagan después irán en su siguiente fin de día.
+     */
+    @Transactional
+    public CashRegister reopenDay(Long id, User actor) {
+        requireAdmin(actor);
+        Tienda tienda = requireTienda(actor);
+        CashRegister r = registerRepository.findByIdForUpdate(id)
+                .filter(x -> x.getTienda().getId().equals(tienda.getId()))
+                .orElseThrow(() -> new IllegalArgumentException("Caja no encontrada"));
+        if (!CashDayCloseService.isDayClosed(r)) {
+            throw new IllegalStateException("La caja " + r.getName() + " no está cerrada por fin de día");
+        }
+        r.setDayClosed(false);
+        return registerRepository.save(r);
+    }
+
     /** Renombra o activa/desactiva una caja. Una caja en uso no se puede desactivar. */
     @Transactional
     public CashRegister update(Long id, CashRegisterRequest req, User actor) {

@@ -49,6 +49,7 @@ ALTER TABLE cash_cuts
     DROP COLUMN IF EXISTS entries_total,
     DROP COLUMN IF EXISTS withdrawals_total,
     DROP COLUMN IF EXISTS reimbursements_total,
+    DROP COLUMN IF EXISTS loans_out_total,
     DROP COLUMN IF EXISTS counted_amount,
     DROP COLUMN IF EXISTS cash_difference,
     DROP COLUMN IF EXISTS count_method,

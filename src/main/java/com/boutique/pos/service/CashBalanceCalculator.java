@@ -18,7 +18,7 @@ import java.math.BigDecimal;
  * cierre), {@link CashMovementService} (tope de las salidas) y {@link CashRegisterService}
  * (efectivo esperado de las cajas en uso), para que los tres usen exactamente la misma fórmula:
  *
- * <pre>esperado = fondo inicial + ventas en efectivo + entradas − gastos − retiros − reembolsos</pre>
+ * <pre>esperado = fondo inicial + ventas en efectivo + entradas − gastos − retiros − reembolsos − préstamos a otras cajas</pre>
  *
  * Las ventas con tarjeta/transferencia no son dinero físico: se reportan pero no suman.
  */
@@ -55,10 +55,12 @@ public class CashBalanceCalculator {
         }
 
         BigDecimal entries = BigDecimal.ZERO, expenses = BigDecimal.ZERO, withdrawals = BigDecimal.ZERO, reimbursements = BigDecimal.ZERO;
+        BigDecimal loansOut = BigDecimal.ZERO;
         for (Object[] row : movementRepository.sumByTypeForCut(cut.getId())) {
             BigDecimal sum = (BigDecimal) row[1];
             switch ((CashMovementType) row[0]) {
-                case CONTRIBUTION, FLOAT, SHORTAGE_PAYMENT -> entries = entries.add(sum);
+                case CONTRIBUTION, FLOAT, SHORTAGE_PAYMENT, LOAN_IN -> entries = entries.add(sum);
+                case LOAN_OUT -> loansOut = loansOut.add(sum);
                 case EXPENSE -> expenses = expenses.add(sum);
                 case WITHDRAWAL -> withdrawals = withdrawals.add(sum);
                 case REIMBURSEMENT -> reimbursements = reimbursements.add(sum);
@@ -66,7 +68,8 @@ public class CashBalanceCalculator {
         }
 
         BigDecimal opening = cut.getOpeningAmount() != null ? cut.getOpeningAmount() : BigDecimal.ZERO;
-        BigDecimal expected = opening.add(cash).add(entries).subtract(expenses).subtract(withdrawals).subtract(reimbursements);
+        BigDecimal expected = opening.add(cash).add(entries)
+                .subtract(expenses).subtract(withdrawals).subtract(reimbursements).subtract(loansOut);
 
         return CashCutSummary.builder()
                 .openingAmount(opening)
@@ -74,6 +77,7 @@ public class CashBalanceCalculator {
                 .totalTransactions(transactions)
                 .cancelledCount(cancelledCount).cancelledTotal(cancelledTotal)
                 .entriesTotal(entries).expensesTotal(expenses).withdrawalsTotal(withdrawals).reimbursementsTotal(reimbursements)
+                .loansOutTotal(loansOut)
                 .expectedCash(expected)
                 .build();
     }

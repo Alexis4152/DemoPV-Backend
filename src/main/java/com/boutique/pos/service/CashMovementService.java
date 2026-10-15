@@ -245,6 +245,21 @@ public class CashMovementService {
                 if (concept == null) throw new IllegalStateException("Escribe el motivo del aporte");
                 m.setPerson(findPerson(req.getPersonId(), tienda, actor));
             }
+            case LOAN_OUT, LOAN_IN -> {
+                // Préstamo entre cajas: cada caja registra su lado por separado (la que presta
+                // una salida, la que recibe una entrada); aquí solo se anota cuál es la otra.
+                if (req.getCounterpartRegisterId() == null) throw new IllegalStateException("Elige la otra caja");
+                CashRegister other = cashRegisterRepository.findById(req.getCounterpartRegisterId())
+                        .filter(r -> r.getTienda().getId().equals(tienda.getId()))
+                        .orElseThrow(() -> new IllegalArgumentException("Caja no encontrada"));
+                if (m.getCashRegister() != null && other.getId().equals(m.getCashRegister().getId())) {
+                    throw new IllegalStateException("Elige una caja distinta a la tuya");
+                }
+                m.setCounterpartRegister(other);
+                if (concept == null) {
+                    concept = (m.getType() == CashMovementType.LOAN_OUT ? "Préstamo a " : "Préstamo de ") + other.getName();
+                }
+            }
             default -> { /* FLOAT: concepto opcional */ }
         }
         m.setConcept(concept);

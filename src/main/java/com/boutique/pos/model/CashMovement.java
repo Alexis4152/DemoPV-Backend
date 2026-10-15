@@ -99,6 +99,17 @@ public class CashMovement {
     @Column(precision = 12, scale = 2)
     private BigDecimal countedRemaining;
 
+    /** Préstamo entre cajas: la otra caja (a la que se prestó o de la que se recibió). */
+    @JsonIgnore
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "counterpart_register_id")
+    private CashRegister counterpartRegister;
+
+    @JsonProperty("counterpartRegisterName")
+    public String getCounterpartRegisterName() {
+        return counterpartRegister != null ? counterpartRegister.getName() : null;
+    }
+
     /** Reembolso que creó (aporte) o que pagó (pago de reembolso). */
     @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)

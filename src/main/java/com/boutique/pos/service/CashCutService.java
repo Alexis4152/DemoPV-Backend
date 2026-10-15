@@ -295,8 +295,11 @@ public class CashCutService {
         if (!Boolean.TRUE.equals(register.getIsActive())) {
             throw new IllegalStateException("La caja " + register.getName() + " está desactivada");
         }
-        if (CashDayCloseService.isDayClosed(register)) {
-            throw new IllegalStateException("La caja " + register.getName() + " ya hizo su corte de fin de día. Se vuelve a abrir con el cierre programado o al día siguiente.");
+        // Tras su corte de fin de día, la caja solo la vuelve a abrir el mismo día un
+        // administrador o supervisor (el cajero espera al cierre programado o al día siguiente).
+        if (CashDayCloseService.isDayClosed(register) && !tenantScope.isAdminLevel(actor)) {
+            throw new IllegalStateException("La caja " + register.getName() + " ya hizo su corte de fin de día. "
+                    + "Solo un administrador o supervisor puede volver a abrirla hoy.");
         }
         register.setDayClosed(false); // si se reabrió por cambio de día (respaldo del job), se limpia
         Optional<CashCut> busy = cashCutRepository.findFirstByCashRegisterIdAndStatus(register.getId(), CashCutStatus.OPEN);
@@ -560,6 +563,7 @@ public class CashCutService {
         cut.setEntriesTotal(summary.getEntriesTotal());
         cut.setWithdrawalsTotal(summary.getWithdrawalsTotal());
         cut.setReimbursementsTotal(summary.getReimbursementsTotal());
+        cut.setLoansOutTotal(summary.getLoansOutTotal());
         cut.setClosingAmount(expected);
         cut.setCountedAmount(counted);
         cut.setCashDifference(counted != null ? counted.subtract(expected) : null);

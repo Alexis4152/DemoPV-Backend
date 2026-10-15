@@ -44,6 +44,9 @@ public class CashMovementRequest {
     /** Reembolso a pagar (solo {@code REIMBURSEMENT}). */
     private Long reimbursementId;
 
+    /** Préstamo entre cajas (LOAN_OUT / LOAN_IN): la otra caja de la tienda. */
+    private Long counterpartRegisterId;
+
     /** Con la caja cerrada: lo que el admin contó que queda después del movimiento (opcional). */
     @PositiveOrZero
     @DecimalMax(value = "9999999999.99", message = "El número es excesivamente grande — el máximo permitido es 9,999,999,999.99")

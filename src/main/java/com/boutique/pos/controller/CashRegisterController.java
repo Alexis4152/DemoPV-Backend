@@ -60,6 +60,13 @@ public class CashRegisterController {
         return ResponseEntity.ok(ApiResponse.ok(cashRegisterService.update(id, req, actor), "Caja actualizada"));
     }
 
+    /** Reabre una caja que ya hizo su corte de fin de día (solo administrador/supervisor). */
+    @PostMapping("/{id}/reopen-day")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    public ResponseEntity<ApiResponse<CashRegister>> reopenDay(@PathVariable Long id, @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(cashRegisterService.reopenDay(id, actor), "Caja reabierta"));
+    }
+
     /** Retiro o entrada de efectivo con la caja cerrada (entre turnos). */
     @PostMapping("/{id}/movements")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")

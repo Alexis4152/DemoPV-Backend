@@ -15,7 +15,11 @@ public enum CashMovementType {
     /** Entrada: cambio o fondo extra que se agrega a la caja y no se reembolsa. */
     FLOAT(false),
     /** Entrada: pago o abono de un {@link Shortage} (faltante) que entra a la caja. */
-    SHORTAGE_PAYMENT(false);
+    SHORTAGE_PAYMENT(false),
+    /** Salida: préstamo de efectivo a otra caja de la tienda. NO es gasto (el dinero sigue en la tienda). */
+    LOAN_OUT(true),
+    /** Entrada: préstamo de efectivo recibido de otra caja de la tienda. No es ingreso. */
+    LOAN_IN(false);
 
     private final boolean outflow;
 

@@ -40,5 +40,7 @@ public class CashCutSummary {
     private BigDecimal expensesTotal;
     private BigDecimal withdrawalsTotal;
     private BigDecimal reimbursementsTotal;
+    // Préstamos a otras cajas: restan del efectivo pero no son gasto (no bajan la utilidad).
+    private BigDecimal loansOutTotal;
     private BigDecimal expectedCash;
 }

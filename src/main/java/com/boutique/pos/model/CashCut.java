@@ -197,6 +197,10 @@ public class CashCut {
     @Column(precision = 12, scale = 2)
     private BigDecimal reimbursementsTotal;
 
+    /** Suma de préstamos a otras cajas (no son gasto: no bajan la utilidad). */
+    @Column(precision = 12, scale = 2)
+    private BigDecimal loansOutTotal;
+
     /** Efectivo contado al cerrar; null si nadie lo contó. */
     @Column(precision = 12, scale = 2)
     private BigDecimal countedAmount;

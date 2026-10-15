@@ -130,7 +130,7 @@ CREATE INDEX IF NOT EXISTS idx_shortage_payments_shortage ON shortage_payments(s
 -- rehace esta restricción al arrancar (CashMovementTypeConstraintMigration).
 ALTER TABLE cash_movements DROP CONSTRAINT IF EXISTS cash_movements_type_check;
 ALTER TABLE cash_movements ADD CONSTRAINT cash_movements_type_check
-    CHECK (type IN ('EXPENSE', 'WITHDRAWAL', 'REIMBURSEMENT', 'CONTRIBUTION', 'FLOAT', 'SHORTAGE_PAYMENT'));
+    CHECK (type IN ('EXPENSE', 'WITHDRAWAL', 'REIMBURSEMENT', 'CONTRIBUTION', 'FLOAT', 'SHORTAGE_PAYMENT', 'LOAN_OUT', 'LOAN_IN'));
 
 -- ── Resolución de diferencias del arqueo de cierre ──
 ALTER TABLE cash_cuts ADD COLUMN IF NOT EXISTS arqueo_status              VARCHAR(12) NOT NULL DEFAULT 'NONE';
@@ -156,3 +156,7 @@ CREATE TABLE IF NOT EXISTS cash_report_recipients (
     email      VARCHAR(150)
 );
 CREATE INDEX IF NOT EXISTS idx_cash_report_recipients_tienda ON cash_report_recipients(tienda_id);
+
+-- ── Préstamos entre cajas (salida LOAN_OUT en la que presta, entrada LOAN_IN en la que recibe) ──
+ALTER TABLE cash_movements ADD COLUMN IF NOT EXISTS counterpart_register_id BIGINT REFERENCES cash_registers(id);
+ALTER TABLE cash_cuts      ADD COLUMN IF NOT EXISTS loans_out_total         NUMERIC(12,2);
