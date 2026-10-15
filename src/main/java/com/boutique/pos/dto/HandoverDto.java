@@ -17,6 +17,7 @@ import java.util.List;
 public record HandoverDto(Long cutId,
                           String registerName,
                           Long fromCutId,
+                          Long fromUserId,
                           String fromUserName,
                           LocalDateTime fromClosedAt,
                           String toUserName,
@@ -31,4 +32,6 @@ public record HandoverDto(Long cutId,
                           String resolvedByName,
                           LocalDateTime resolvedAt,
                           String resolutionNote,
-                          List<CashMovement> gapMovements) {}
+                          List<CashMovement> gapMovements,
+                          Long shortageId,
+                          String shortagePersonName) {}

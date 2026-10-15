@@ -13,7 +13,8 @@ import java.util.List;
  * trae {@code pending}: el desglose de lo que recibirá quien la abra (lo que dejó el último
  * corte, los movimientos con la caja cerrada y el monto final).
  */
-public record CashRegisterStatusDto(Long id, String name, boolean isActive, OpenCut openCut, Pending pending) {
+public record CashRegisterStatusDto(Long id, String name, boolean isActive, OpenCut openCut, Pending pending,
+                                    boolean dayClosed, LocalDateTime lastDayCloseAt) {
 
     public record OpenCut(Long id, Long userId, String userName, LocalDateTime openedAt, BigDecimal expectedCash) {}
 

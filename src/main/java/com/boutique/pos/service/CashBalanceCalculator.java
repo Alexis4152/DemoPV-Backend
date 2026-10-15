@@ -2,9 +2,8 @@ package com.boutique.pos.service;
 
 import com.boutique.pos.dto.CashCutSummary;
 import com.boutique.pos.model.CashCut;
-import com.boutique.pos.model.CashMovement;
+import com.boutique.pos.model.CashMovementType;
 import com.boutique.pos.model.PaymentMethod;
-import com.boutique.pos.model.Sale;
 import com.boutique.pos.model.SaleStatus;
 import com.boutique.pos.repository.CashMovementRepository;
 import com.boutique.pos.repository.SaleRepository;
@@ -12,7 +11,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
-import java.util.List;
 
 /**
  * Calcula los totales de un corte a partir de sus ventas y sus movimientos de efectivo, y
@@ -37,27 +35,33 @@ public class CashBalanceCalculator {
         BigDecimal cancelledTotal = BigDecimal.ZERO;
         int transactions = 0, cancelledCount = 0;
 
-        List<Sale> sales = saleRepository.findByCashCutId(cut.getId());
-        for (Sale s : sales) {
-            if (s.getStatus() == SaleStatus.CANCELLED) {
-                cancelledCount++;
-                cancelledTotal = cancelledTotal.add(s.getTotal());
+        // Consultas agregadas (no se carga ninguna venta ni movimiento): esto corre en casi
+        // todo el flujo de cortes y no debe crecer con el número de ventas del turno.
+        for (Object[] row : saleRepository.sumByCashCut(cut.getId())) {
+            PaymentMethod method = (PaymentMethod) row[0];
+            SaleStatus status = (SaleStatus) row[1];
+            int count = ((Number) row[2]).intValue();
+            BigDecimal sum = (BigDecimal) row[3];
+            if (status == SaleStatus.CANCELLED) {
+                cancelledCount += count;
+                cancelledTotal = cancelledTotal.add(sum);
                 continue;
             }
-            transactions++;
-            total = total.add(s.getTotal());
-            if (s.getPaymentMethod() == PaymentMethod.CASH) cash = cash.add(s.getTotal());
-            else if (s.getPaymentMethod() == PaymentMethod.CARD) card = card.add(s.getTotal());
-            else if (s.getPaymentMethod() == PaymentMethod.TRANSFER) transfer = transfer.add(s.getTotal());
+            transactions += count;
+            total = total.add(sum);
+            if (method == PaymentMethod.CASH) cash = cash.add(sum);
+            else if (method == PaymentMethod.CARD) card = card.add(sum);
+            else if (method == PaymentMethod.TRANSFER) transfer = transfer.add(sum);
         }
 
         BigDecimal entries = BigDecimal.ZERO, expenses = BigDecimal.ZERO, withdrawals = BigDecimal.ZERO, reimbursements = BigDecimal.ZERO;
-        for (CashMovement m : movementRepository.findByCashCut_IdOrderByCreatedAtAsc(cut.getId())) {
-            switch (m.getType()) {
-                case CONTRIBUTION, FLOAT -> entries = entries.add(m.getAmount());
-                case EXPENSE -> expenses = expenses.add(m.getAmount());
-                case WITHDRAWAL -> withdrawals = withdrawals.add(m.getAmount());
-                case REIMBURSEMENT -> reimbursements = reimbursements.add(m.getAmount());
+        for (Object[] row : movementRepository.sumByTypeForCut(cut.getId())) {
+            BigDecimal sum = (BigDecimal) row[1];
+            switch ((CashMovementType) row[0]) {
+                case CONTRIBUTION, FLOAT, SHORTAGE_PAYMENT -> entries = entries.add(sum);
+                case EXPENSE -> expenses = expenses.add(sum);
+                case WITHDRAWAL -> withdrawals = withdrawals.add(sum);
+                case REIMBURSEMENT -> reimbursements = reimbursements.add(sum);
             }
         }
 

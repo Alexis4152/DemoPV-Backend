@@ -4,6 +4,8 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.Fetch;
+import org.hibernate.annotations.FetchMode;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
@@ -47,7 +49,12 @@ public class Role {
     private Tienda tienda;
 
     /** Secciones de la app ({@link AppSection}) a las que este rol da acceso. */
+    // FetchMode.SELECT en ambas colecciones: se cargan con su propia consulta, nunca con
+    // JOIN. Con JOIN, cualquier entidad que referencie VARIOS usuarios (p. ej. un corte:
+    // cajero, quién cerró, quién contó, quién resolvió...) multiplicaba las filas por
+    // secciones × permisos de CADA rol — producto cartesiano que llegó a agotar la memoria.
     @ElementCollection(fetch = FetchType.EAGER)
+    @Fetch(FetchMode.SELECT)
     @CollectionTable(name = "role_sections", joinColumns = @JoinColumn(name = "role_id"))
     @Enumerated(EnumType.STRING)
     @Column(name = "section", nullable = false, length = 20)
@@ -63,6 +70,7 @@ public class Role {
     // salvo lo explícitamente otorgado", para que ningún rol existente (CASHIER, SELLER,
     // uno personalizado) amanezca con capacidades nuevas de la nada al desplegar esto.
     @ElementCollection(fetch = FetchType.EAGER)
+    @Fetch(FetchMode.SELECT)
     @CollectionTable(name = "role_action_grants", joinColumns = @JoinColumn(name = "role_id"))
     @Column(name = "grant_key", nullable = false, length = 40)
     @Builder.Default

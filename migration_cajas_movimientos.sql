@@ -97,3 +97,62 @@ CREATE TABLE IF NOT EXISTS cash_movements (
 CREATE INDEX IF NOT EXISTS idx_cash_movements_cut      ON cash_movements(cash_cut_id);
 CREATE INDEX IF NOT EXISTS idx_cash_movements_register ON cash_movements(cash_register_id);
 CREATE INDEX IF NOT EXISTS idx_cash_movements_received ON cash_movements(received_by_cut_id);
+
+-- ── Faltantes (diferencias de entrega resueltas como faltante, a cargo de una persona) ──
+CREATE TABLE IF NOT EXISTS shortages (
+    id                  BIGSERIAL PRIMARY KEY,
+    tienda_id           BIGINT NOT NULL REFERENCES tiendas(id),
+    person_user_id      BIGINT NOT NULL REFERENCES users(id),
+    amount              NUMERIC(12,2) NOT NULL,
+    paid_amount         NUMERIC(12,2) NOT NULL DEFAULT 0,
+    status              VARCHAR(10) NOT NULL DEFAULT 'PENDING',
+    source_cut_id       BIGINT REFERENCES cash_cuts(id),
+    reason              VARCHAR(200),
+    created_by_user_id  BIGINT NOT NULL REFERENCES users(id),
+    created_at          TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_shortages_tienda_status ON shortages(tienda_id, status);
+
+CREATE TABLE IF NOT EXISTS shortage_payments (
+    id                      BIGSERIAL PRIMARY KEY,
+    shortage_id             BIGINT NOT NULL REFERENCES shortages(id),
+    amount                  NUMERIC(12,2) NOT NULL,
+    method                  VARCHAR(15) NOT NULL,
+    cash_movement_id        BIGINT REFERENCES cash_movements(id),
+    reference               VARCHAR(100),
+    receipt_path            VARCHAR(300),
+    registered_by_user_id   BIGINT NOT NULL REFERENCES users(id),
+    created_at              TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_shortage_payments_shortage ON shortage_payments(shortage_id);
+
+-- El tipo SHORTAGE_PAYMENT (pago de faltante que entra a la caja). El backend también
+-- rehace esta restricción al arrancar (CashMovementTypeConstraintMigration).
+ALTER TABLE cash_movements DROP CONSTRAINT IF EXISTS cash_movements_type_check;
+ALTER TABLE cash_movements ADD CONSTRAINT cash_movements_type_check
+    CHECK (type IN ('EXPENSE', 'WITHDRAWAL', 'REIMBURSEMENT', 'CONTRIBUTION', 'FLOAT', 'SHORTAGE_PAYMENT'));
+
+-- ── Resolución de diferencias del arqueo de cierre ──
+ALTER TABLE cash_cuts ADD COLUMN IF NOT EXISTS arqueo_status              VARCHAR(12) NOT NULL DEFAULT 'NONE';
+ALTER TABLE cash_cuts ADD COLUMN IF NOT EXISTS arqueo_resolution          VARCHAR(15);
+ALTER TABLE cash_cuts ADD COLUMN IF NOT EXISTS arqueo_resolved_by_user_id BIGINT REFERENCES users(id);
+ALTER TABLE cash_cuts ADD COLUMN IF NOT EXISTS arqueo_resolved_at         TIMESTAMP;
+ALTER TABLE cash_cuts ADD COLUMN IF NOT EXISTS arqueo_resolution_note     TEXT;
+-- Faltantes: si salieron de una entrega (HANDOVER) o del arqueo al cerrar (CLOSE).
+ALTER TABLE shortages ADD COLUMN IF NOT EXISTS origin VARCHAR(10) NOT NULL DEFAULT 'HANDOVER';
+-- Cortes cerrados antes de esto: el backend también lo hace al arrancar (CashCutArqueoBackfill).
+UPDATE cash_cuts SET arqueo_status = 'DIFFERENCE' WHERE status = 'CLOSED' AND arqueo_status = 'NONE' AND counted_amount IS NOT NULL AND cash_difference <> 0;
+UPDATE cash_cuts SET arqueo_status = 'OK'         WHERE status = 'CLOSED' AND arqueo_status = 'NONE' AND counted_amount IS NOT NULL AND cash_difference = 0;
+
+-- ── Corte de fin de día por caja y destinatarios del reporte ──
+ALTER TABLE cash_registers ADD COLUMN IF NOT EXISTS day_closed        BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE cash_registers ADD COLUMN IF NOT EXISTS last_day_close_at TIMESTAMP;
+-- El supervisor (dueño) recibe el reporte de fin de día por default.
+ALTER TABLE tiendas ADD COLUMN IF NOT EXISTS report_to_supervisor BOOLEAN NOT NULL DEFAULT TRUE;
+CREATE TABLE IF NOT EXISTS cash_report_recipients (
+    id         BIGSERIAL PRIMARY KEY,
+    tienda_id  BIGINT NOT NULL REFERENCES tiendas(id),
+    user_id    BIGINT REFERENCES users(id),
+    email      VARCHAR(150)
+);
+CREATE INDEX IF NOT EXISTS idx_cash_report_recipients_tienda ON cash_report_recipients(tienda_id);

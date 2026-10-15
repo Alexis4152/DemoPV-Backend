@@ -58,6 +58,17 @@ public class CashRegister {
 
     private LocalDateTime pendingCountedAt;
 
+    /**
+     * {@code true} tras su "Corte de fin de día": no se puede abrir hasta que el job
+     * programado la reabra (o hasta el día siguiente, si el job no corre). Ver CashDayCloseService.
+     */
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    @Builder.Default
+    private Boolean dayClosed = false;
+
+    /** Último fin de día (manual o del job): los cortes cerrados después van en el siguiente reporte. */
+    private LocalDateTime lastDayCloseAt;
+
     /** Último corte cerrado en esta caja (de él sale la entrega pendiente). */
     @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)

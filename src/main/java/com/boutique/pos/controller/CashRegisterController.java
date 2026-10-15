@@ -7,10 +7,12 @@ import com.boutique.pos.dto.CashRegisterStatusDto;
 import com.boutique.pos.dto.HandoverDto;
 import com.boutique.pos.dto.HandoverResolveRequest;
 import com.boutique.pos.dto.PageResponse;
+import com.boutique.pos.dto.ReportRecipientsRequest;
 import com.boutique.pos.model.CashMovement;
 import com.boutique.pos.model.CashRegister;
 import com.boutique.pos.model.User;
 import com.boutique.pos.service.CashMovementService;
+import com.boutique.pos.service.CashReportRecipientService;
 import com.boutique.pos.service.CashRegisterService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +37,7 @@ public class CashRegisterController {
 
     private final CashRegisterService cashRegisterService;
     private final CashMovementService cashMovementService;
+    private final CashReportRecipientService recipientService;
 
     @GetMapping
     @PreAuthorize("@sectionAccess.check('CASH_CUTS')")
@@ -71,6 +74,21 @@ public class CashRegisterController {
     @PreAuthorize("@sectionAccess.check('CASH_CUTS')")
     public ResponseEntity<ApiResponse<List<CashRegisterService.PersonDto>>> people(@AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(cashRegisterService.people(actor), null));
+    }
+
+    /** A quién le llega el reporte de fin de día de la tienda (y la lista efectiva). */
+    @GetMapping("/report-recipients")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    public ResponseEntity<ApiResponse<CashReportRecipientService.RecipientsConfig>> reportRecipients(@AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(recipientService.get(actor), null));
+    }
+
+    /** Configura los destinatarios del reporte de fin de día (solo SUPERVISOR o SUPER_ADMIN). */
+    @PutMapping("/report-recipients")
+    @PreAuthorize("hasAnyRole('SUPER_ADMIN', 'SUPERVISOR')")
+    public ResponseEntity<ApiResponse<CashReportRecipientService.RecipientsConfig>> updateReportRecipients(
+            @Valid @RequestBody ReportRecipientsRequest req, @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(recipientService.update(req, actor), "Destinatarios guardados"));
     }
 
     @GetMapping("/handovers")
