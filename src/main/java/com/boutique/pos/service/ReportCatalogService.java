@@ -478,7 +478,8 @@ public class ReportCatalogService {
 
     private Report cortesCaja(Ctx c, Filters f) {
         CashCutStatus status = enumOrNull(f.status(), CashCutStatus.class);
-        Page<CashCut> page = cashCutRepository.search(c.tiendaId(), c.start(), c.end(), status, null,
+        // null, null: sin filtro de cajero ni de estado del arqueo (CashCutRepository#search).
+        Page<CashCut> page = cashCutRepository.search(c.tiendaId(), c.start(), c.end(), status, null, null,
                 PageRequest.of(0, c.limit()));
         List<Column> columns = List.of(
                 new Column("id", "Folio", "number"),
