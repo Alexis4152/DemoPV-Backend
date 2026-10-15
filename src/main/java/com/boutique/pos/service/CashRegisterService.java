@@ -10,11 +10,14 @@ import com.boutique.pos.model.CashMovement;
 import com.boutique.pos.model.CashMovementType;
 import com.boutique.pos.model.CashRegister;
 import com.boutique.pos.model.HandoverStatus;
+import com.boutique.pos.model.Shortage;
+import com.boutique.pos.model.ShortageOrigin;
 import com.boutique.pos.model.Tienda;
 import com.boutique.pos.model.User;
 import com.boutique.pos.repository.CashCutRepository;
 import com.boutique.pos.repository.CashMovementRepository;
 import com.boutique.pos.repository.CashRegisterRepository;
+import com.boutique.pos.repository.ShortageRepository;
 import com.boutique.pos.repository.UserRepository;
 import com.boutique.pos.security.TenantScope;
 import lombok.RequiredArgsConstructor;
@@ -47,6 +50,7 @@ public class CashRegisterService {
     private final UserRepository userRepository;
     private final CashBalanceCalculator calculator;
     private final CashMovementService movementService;
+    private final ShortageRepository shortageRepository;
     private final TenantScope tenantScope;
 
     /** Cajas de la tienda del actor con su estado (en uso o cerrada con su entrega pendiente). */
@@ -71,7 +75,7 @@ public class CashRegisterService {
             return new CashRegisterStatusDto(r.getId(), r.getName(), Boolean.TRUE.equals(r.getIsActive()),
                     new CashRegisterStatusDto.OpenCut(c.getId(), c.getUser().getId(), c.getUser().getName(),
                             c.getOpenedAt(), admin ? calculator.expectedCash(c) : null),
-                    null);
+                    null, false, r.getLastDayCloseAt());
         }
         CashCut last = r.getLastCut();
         CashRegisterStatusDto.Pending pending = new CashRegisterStatusDto.Pending(
@@ -86,7 +90,8 @@ public class CashRegisterService {
                 last != null ? last.getCountMethod() : null,
                 last != null ? name(last.getCountedBy()) : null,
                 movementRepository.findByCashRegisterIdAndCashCutIsNullAndReceivedByCutIsNullOrderByCreatedAtAsc(r.getId()));
-        return new CashRegisterStatusDto(r.getId(), r.getName(), Boolean.TRUE.equals(r.getIsActive()), null, pending);
+        return new CashRegisterStatusDto(r.getId(), r.getName(), Boolean.TRUE.equals(r.getIsActive()), null, pending,
+                CashDayCloseService.isDayClosed(r), r.getLastDayCloseAt());
     }
 
     /** Da de alta una caja nueva en la tienda del actor. */
@@ -129,14 +134,19 @@ public class CashRegisterService {
     public List<PersonDto> people(User actor) {
         Tienda tienda = requireTienda(actor);
         List<PersonDto> result = new ArrayList<>(userRepository.findByTiendaIdAndIsActiveTrueOrderByNameAsc(tienda.getId())
-                .stream().map(u -> new PersonDto(u.getId(), u.getName())).toList());
+                .stream().map(u -> new PersonDto(u.getId(), u.getName(), roleName(u))).toList());
         if (result.stream().noneMatch(p -> p.id().equals(actor.getId()))) {
-            result.add(0, new PersonDto(actor.getId(), actor.getName()));
+            result.add(0, new PersonDto(actor.getId(), actor.getName(), roleName(actor)));
         }
         return result;
     }
 
-    public record PersonDto(Long id, String name) {}
+    /** {@code role}: nombre del rol (ADMIN, CASHIER, SUPERVISOR, uno personalizado...) para mostrarlo junto al nombre. */
+    public record PersonDto(Long id, String name, String role) {}
+
+    private static String roleName(User u) {
+        return u.getRole() != null ? u.getRole().getName() : null;
+    }
 
     // ── Entregas entre turnos ──────────────────────────────────────────────────────
 
@@ -197,7 +207,21 @@ public class CashRegisterService {
                     cut.setOpeningAmount(cut.getExpectedOpeningAmount());
                 }
             }
-            case SHORTAGE -> { /* queda registrado como faltante */ }
+            case SHORTAGE -> {
+                // Un faltante (diferencia negativa) queda a cargo de una persona, que lo va
+                // cubriendo desde la pestaña Faltantes. Un sobrante solo queda registrado.
+                if (cut.getHandoverDifference() != null && cut.getHandoverDifference().signum() < 0) {
+                    if (req.getResponsibleId() == null) throw new IllegalStateException("Indica quién es responsable del faltante");
+                    shortageRepository.save(Shortage.builder()
+                            .tienda(cut.getTienda())
+                            .person(movementService.findPerson(req.getResponsibleId(), cut.getTienda(), actor))
+                            .amount(cut.getHandoverDifference().abs())
+                            .sourceCut(cut)
+                            .reason(req.getNote().trim())
+                            .createdBy(actor)
+                            .build());
+                }
+            }
         }
 
         cut.setHandoverStatus(HandoverStatus.RESOLVED);
@@ -210,10 +234,12 @@ public class CashRegisterService {
 
     private HandoverDto toHandover(CashCut c) {
         CashCut prev = c.getPreviousCut();
+        Optional<Shortage> shortage = shortageRepository.findFirstBySourceCut_IdAndOrigin(c.getId(), ShortageOrigin.HANDOVER);
         return new HandoverDto(
                 c.getId(),
                 c.getCashRegister() != null ? c.getCashRegister().getName() : null,
                 prev != null ? prev.getId() : null,
+                prev != null && prev.getUser() != null ? prev.getUser().getId() : null,
                 prev != null ? name(prev.getUser()) : null,
                 prev != null ? prev.getClosedAt() : null,
                 name(c.getUser()),
@@ -232,7 +258,9 @@ public class CashRegisterService {
                 name(c.getHandoverResolvedBy()),
                 c.getHandoverResolvedAt(),
                 c.getHandoverResolutionNote(),
-                movementRepository.findByReceivedByCutIdOrderByCreatedAtAsc(c.getId()));
+                movementRepository.findByReceivedByCutIdOrderByCreatedAtAsc(c.getId()),
+                shortage.map(Shortage::getId).orElse(null),
+                shortage.map(s -> name(s.getPerson())).orElse(null));
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────────

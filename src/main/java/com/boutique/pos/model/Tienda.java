@@ -123,6 +123,13 @@ public class Tienda {
     @Builder.Default
     private Boolean blindCashCount = false;
 
+    // El supervisor (dueño) recibe el reporte de fin de día de cada caja por default; puede
+    // desactivarlo si prefiere que solo les llegue a los destinatarios que configuró (ver
+    // CashReportRecipient / CashReportRecipientService).
+    @Column(nullable = false, columnDefinition = "boolean default true")
+    @Builder.Default
+    private Boolean reportToSupervisor = true;
+
     // Correo de contacto de ESTA tienda, editable por su ADMIN (o SUPERVISOR/SUPER_ADMIN)
     // en "Datos de la tienda" — es lo único de la configuración de correo que un cliente
     // puede tocar. Nunca se usa como remitente real (Gmail no deja mandar con un "De:"

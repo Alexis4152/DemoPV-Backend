@@ -13,7 +13,9 @@ public enum CashMovementType {
     /** Entrada: aporte de una persona que la tienda le debe regresar (genera un {@link Reimbursement}). */
     CONTRIBUTION(false),
     /** Entrada: cambio o fondo extra que se agrega a la caja y no se reembolsa. */
-    FLOAT(false);
+    FLOAT(false),
+    /** Entrada: pago o abono de un {@link Shortage} (faltante) que entra a la caja. */
+    SHORTAGE_PAYMENT(false);
 
     private final boolean outflow;
 

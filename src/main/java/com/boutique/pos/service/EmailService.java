@@ -159,6 +159,40 @@ public class EmailService {
         }
     }
 
+    /**
+     * Envía el reporte de fin de día de UNA caja (un correo, un Excel con sus cortes del día).
+     *
+     * @param registerName nombre de la caja, para el asunto y el texto del correo
+     */
+    @Async
+    public void sendCashRegisterDayReportEmail(Tienda tienda, String registerName, int cutCount, byte[] excelBytes, String toEmail) {
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite el fin de día de {} / {}", tienda.getName(), registerName);
+            return;
+        }
+        try {
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            applySenderAndReplyTo(helper, cfg, tienda);
+            helper.setTo(toEmail);
+            helper.setSubject("Corte de fin de día — " + registerName + " · " + tienda.getName());
+            helper.setText(
+                    "Se hizo el corte de fin de día de " + registerName + " en " + tienda.getName() + ".\n" +
+                    "Incluye " + cutCount + " corte(s) del día (traspasos y corte final).\n\n" +
+                    "Adjuntamos el reporte detallado en Excel."
+            );
+            String safeName = registerName.replaceAll("[^A-Za-z0-9_-]+", "-");
+            helper.addAttachment("fin-de-dia-" + safeName + "-" + java.time.LocalDate.now() + ".xlsx",
+                    new org.springframework.core.io.ByteArrayResource(excelBytes));
+            sender.send(message);
+            log.info("Fin de día de {} / {} ({} corte(s)) enviado a {}", tienda.getName(), registerName, cutCount, toEmail);
+        } catch (MessagingException | RuntimeException e) {
+            log.error("No se pudo enviar el fin de día de {} / {} a {}: {}", tienda.getName(), registerName, toEmail, e.getMessage());
+        }
+    }
+
     // @Async por el mismo motivo que los otros dos envíos: AuthService ya generó el token y
     // respondió al frontend (con el mismo mensaje genérico, exista o no el correo) antes de
     // que este correo termine de mandarse.

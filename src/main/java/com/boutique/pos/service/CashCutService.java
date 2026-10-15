@@ -1,5 +1,6 @@
 package com.boutique.pos.service;
 
+import com.boutique.pos.dto.ArqueoResolveRequest;
 import com.boutique.pos.dto.CashCutCloseRequest;
 import com.boutique.pos.dto.CashCutForceCloseRequest;
 import com.boutique.pos.dto.CashCutOpenRequest;
@@ -11,11 +12,14 @@ import com.boutique.pos.model.CashCutStatus;
 import com.boutique.pos.model.CashMovement;
 import com.boutique.pos.model.CashRegister;
 import com.boutique.pos.model.HandoverStatus;
+import com.boutique.pos.model.Shortage;
+import com.boutique.pos.model.ShortageOrigin;
 import com.boutique.pos.model.Tienda;
 import com.boutique.pos.model.User;
 import com.boutique.pos.repository.CashCutRepository;
 import com.boutique.pos.repository.CashMovementRepository;
 import com.boutique.pos.repository.CashRegisterRepository;
+import com.boutique.pos.repository.ShortageRepository;
 import com.boutique.pos.repository.UserRepository;
 import com.boutique.pos.security.TenantScope;
 import lombok.RequiredArgsConstructor;
@@ -63,6 +67,10 @@ public class CashCutService {
     private final CashMovementRepository movementRepository;
     private final UserRepository userRepository;
     private final CashBalanceCalculator calculator;
+    private final ShortageRepository shortageRepository;
+    private final CashDayCloseService dayCloseService;
+    private final CashCutReportNotifier reportNotifier;
+    private final CashMovementService movementService;
     private final TenantScope tenantScope;
 
     /**
@@ -95,10 +103,81 @@ public class CashCutService {
      * @param actor usuario que consulta; acota el resultado a su tienda
      * @return página de cortes que cumplen los filtros
      */
-    public Page<CashCut> findAll(LocalDateTime from, LocalDateTime to, CashCutStatus status, Long userId, Pageable pageable, User actor) {
+    public Page<CashCut> findAll(LocalDateTime from, LocalDateTime to, CashCutStatus status, Long userId,
+                                 HandoverStatus arqueoStatus, Pageable pageable, User actor) {
         LocalDateTime effectiveFrom = from != null ? from : MIN_DATE;
         LocalDateTime effectiveTo = to != null ? to : MAX_DATE;
-        return cashCutRepository.search(tenantScope.scopeId(actor), effectiveFrom, effectiveTo, status, userId, pageable);
+        return cashCutRepository.search(tenantScope.scopeId(actor), effectiveFrom, effectiveTo, status, userId, arqueoStatus, pageable);
+    }
+
+    /** Cortes con diferencia de arqueo todavía sin resolver, en la tienda del actor. */
+    public long unresolvedArqueoCount(User actor) {
+        return cashCutRepository.countUnresolvedArqueos(tenantScope.scopeId(actor));
+    }
+
+    /**
+     * Resuelve la diferencia del arqueo de cierre de un corte (contado vs. esperado). La
+     * diferencia nunca se borra: queda RESOLVED con su causa, quién y cuándo.
+     * <ul>
+     *   <li>Faltante confirmado: se genera un {@link Shortage} a cargo del responsable, que se
+     *   cobra desde Faltantes.</li>
+     *   <li>Sobrante confirmado: solo queda registrado (el dinero ya está en la caja).</li>
+     *   <li>Error de conteo: el dinero sí cuadraba; si la caja sigue cerrada y este fue su
+     *   último corte, su entrega pendiente (calculada con el conteo equivocado) se corrige.</li>
+     * </ul>
+     * Se resuelve sobre la diferencia efectiva ({@link CashCut#getEffectiveCashDifference}),
+     * y solo después de resolver la diferencia al recibir la caja, porque el arqueo depende
+     * de ese conteo.
+     */
+    @Transactional
+    public CashCut resolveArqueo(Long id, ArqueoResolveRequest req, User actor) {
+        if (!tenantScope.isAdminLevel(actor)) {
+            throw new AccessDeniedException("Solo un administrador o supervisor puede resolver diferencias de arqueo");
+        }
+        CashCut cut = lockVisible(id, actor);
+        if (cut.getArqueoStatus() != HandoverStatus.DIFFERENCE) {
+            throw new IllegalStateException("Este corte no tiene una diferencia de arqueo pendiente");
+        }
+        if (cut.getHandoverStatus() == HandoverStatus.DIFFERENCE) {
+            throw new IllegalStateException("Primero resuelve la diferencia al recibir la caja de este corte (pestaña Cajas): el arqueo depende de ese conteo");
+        }
+        BigDecimal diff = cut.getEffectiveCashDifference();
+        switch (req.getResolution()) {
+            case SHORTAGE -> {
+                if (diff.signum() >= 0) throw new IllegalStateException("En este arqueo no faltó dinero");
+                if (req.getResponsibleId() == null) throw new IllegalStateException("Indica quién es responsable del faltante");
+                shortageRepository.save(Shortage.builder()
+                        .tienda(cut.getTienda())
+                        .person(movementService.findPerson(req.getResponsibleId(), cut.getTienda(), actor))
+                        .amount(diff.abs())
+                        .sourceCut(cut)
+                        .origin(ShortageOrigin.CLOSE)
+                        .reason(req.getNote().trim())
+                        .createdBy(actor)
+                        .build());
+            }
+            case SURPLUS -> {
+                if (diff.signum() <= 0) throw new IllegalStateException("En este arqueo no sobró dinero");
+            }
+            case COUNT_ERROR -> {
+                CashRegister register = cut.getCashRegister();
+                if (register != null && diff.signum() != 0) {
+                    CashRegister r = cashRegisterRepository.findByIdForUpdate(register.getId()).orElseThrow();
+                    boolean stillClosed = cashCutRepository.findFirstByCashRegisterIdAndStatus(r.getId(), CashCutStatus.OPEN).isEmpty();
+                    boolean isLastCut = r.getLastCut() != null && r.getLastCut().getId().equals(cut.getId());
+                    if (stillClosed && isLastCut && r.getPendingAmount() != null) {
+                        r.setPendingAmount(r.getPendingAmount().subtract(diff).max(BigDecimal.ZERO));
+                        cashRegisterRepository.save(r);
+                    }
+                }
+            }
+        }
+        cut.setArqueoStatus(HandoverStatus.RESOLVED);
+        cut.setArqueoResolution(req.getResolution());
+        cut.setArqueoResolvedBy(actor);
+        cut.setArqueoResolvedAt(LocalDateTime.now());
+        cut.setArqueoResolutionNote(req.getNote().trim());
+        return cashCutRepository.save(cut);
     }
 
     /**
@@ -216,6 +295,10 @@ public class CashCutService {
         if (!Boolean.TRUE.equals(register.getIsActive())) {
             throw new IllegalStateException("La caja " + register.getName() + " está desactivada");
         }
+        if (CashDayCloseService.isDayClosed(register)) {
+            throw new IllegalStateException("La caja " + register.getName() + " ya hizo su corte de fin de día. Se vuelve a abrir con el cierre programado o al día siguiente.");
+        }
+        register.setDayClosed(false); // si se reabrió por cambio de día (respaldo del job), se limpia
         Optional<CashCut> busy = cashCutRepository.findFirstByCashRegisterIdAndStatus(register.getId(), CashCutStatus.OPEN);
         if (busy.isPresent()) {
             throw new IllegalStateException("La caja " + register.getName() + " ya está en uso por " + busy.get().getUser().getName());
@@ -322,6 +405,23 @@ public class CashCutService {
      * @throws IllegalStateException si el corte ya estaba cerrado o falta la nota
      * @throws IllegalArgumentException si el corte no existe o el actor no tiene permiso
      */
+    /**
+     * Corte de fin de día: el mismo cierre con arqueo que un traspaso ({@link #close}), pero
+     * además manda el reporte de los cortes del día de esa caja (un correo, un Excel) a los
+     * destinatarios de la tienda y bloquea la caja hasta que el job la reabra (o hasta el día
+     * siguiente). El efectivo contado se queda en la caja para quien la abra después.
+     */
+    @Transactional
+    public CashCut endOfDay(Long id, CashCutCloseRequest req, User actor) {
+        CashCut closed = close(id, req, actor);
+        if (closed.getCashRegister() != null) {
+            dayCloseService.finishDay(closed.getCashRegister().getId());
+        } else {
+            reportNotifier.notify(List.of(closed)); // corte anterior a las cajas: solo su reporte
+        }
+        return closed;
+    }
+
     @Transactional
     public CashCut close(Long id, CashCutCloseRequest req, User actor) {
         CashCut cut = lockVisible(id, actor);
@@ -467,6 +567,8 @@ public class CashCutService {
         cut.setCountedBy(countedBy);
         cut.setCountEvidencePath(evidencePath);
         cut.setHandoverAmount(handover);
+        cut.setArqueoStatus(counted == null ? HandoverStatus.NONE
+                : counted.compareTo(expected) == 0 ? HandoverStatus.OK : HandoverStatus.DIFFERENCE);
         cut.setStatus(CashCutStatus.CLOSED);
         cut.setClosedAt(now);
         cut.setClosedBy(closedBy);

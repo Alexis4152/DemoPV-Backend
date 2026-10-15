@@ -32,6 +32,9 @@ public class HandoverResolveRequest {
 
     private WithdrawalDestination destination;
 
+    /** Para {@code SHORTAGE} con faltante: quién lo debe cubrir (se le genera un {@code Shortage}). */
+    private Long responsibleId;
+
     @NotBlank(message = "La nota es obligatoria")
     @Size(max = 200, message = "La nota no puede tener más de 200 caracteres")
     private String note;

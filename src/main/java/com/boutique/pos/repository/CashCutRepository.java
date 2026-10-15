@@ -65,13 +65,19 @@ public interface CashCutRepository extends JpaRepository<CashCut, Long> {
            "AND c.openedAt BETWEEN :from AND :to " +
            "AND (:status IS NULL OR c.status = :status) " +
            "AND (:userId IS NULL OR c.user.id = :userId) " +
+           "AND (:arqueoStatus IS NULL OR c.arqueoStatus = :arqueoStatus) " +
            "ORDER BY c.openedAt DESC")
     Page<CashCut> search(@Param("tiendaId") Long tiendaId,
                           @Param("from") LocalDateTime from,
                           @Param("to") LocalDateTime to,
                           @Param("status") CashCutStatus status,
                           @Param("userId") Long userId,
+                          @Param("arqueoStatus") com.boutique.pos.model.HandoverStatus arqueoStatus,
                           Pageable pageable);
+
+    @Query("SELECT COUNT(c) FROM CashCut c WHERE (:tiendaId IS NULL OR c.tienda.id = :tiendaId) " +
+           "AND c.arqueoStatus = com.boutique.pos.model.HandoverStatus.DIFFERENCE")
+    long countUnresolvedArqueos(@Param("tiendaId") Long tiendaId);
 
     /**
      * Cajeros distintos que tienen al menos un corte de caja en la tienda dada — para
@@ -80,6 +86,14 @@ public interface CashCutRepository extends JpaRepository<CashCut, Long> {
      * {@code UserController}. {@code tiendaId} nulo indica SUPER_ADMIN viendo todas las
      * tiendas (no se filtra por tienda).
      */
+    // Fin de día: cortes de una caja cerrados después de su último fin de día.
+    @Query("SELECT c FROM CashCut c WHERE c.cashRegister.id = :registerId " +
+           "AND c.status = com.boutique.pos.model.CashCutStatus.CLOSED AND c.closedAt > :from ORDER BY c.closedAt ASC")
+    List<CashCut> findClosedByRegisterSince(@Param("registerId") Long registerId, @Param("from") LocalDateTime from);
+
+    // Cortes sin caja (anteriores a las cajas) cerrados en un rango: los reporta el job por tienda.
+    List<CashCut> findByCashRegisterIsNullAndStatusAndClosedAtBetween(CashCutStatus status, LocalDateTime from, LocalDateTime to);
+
     // la caja solo puede tener un corte abierto a la vez
     Optional<CashCut> findFirstByCashRegisterIdAndStatus(Long cashRegisterId, CashCutStatus status);
 

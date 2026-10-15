@@ -163,6 +163,27 @@ public class CashCut {
     @Column(columnDefinition = "TEXT")
     private String handoverResolutionNote;
 
+    // ── Resolución de la diferencia del arqueo de cierre (contado vs. esperado) ─────
+    /** NONE si nadie contó al cerrar; OK si cuadró; DIFFERENCE pendiente; RESOLVED ya resuelta. */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 12, columnDefinition = "varchar(12) default 'NONE'")
+    @Builder.Default
+    private HandoverStatus arqueoStatus = HandoverStatus.NONE;
+
+    @Enumerated(EnumType.STRING)
+    @Column(length = 15)
+    private ArqueoResolution arqueoResolution;
+
+    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "arqueo_resolved_by_user_id")
+    private User arqueoResolvedBy;
+
+    private LocalDateTime arqueoResolvedAt;
+
+    @Column(columnDefinition = "TEXT")
+    private String arqueoResolutionNote;
+
     // ── Movimientos y arqueo (se consolidan al cerrar) ───────────────────────────
     /** Suma de entradas (aportes + cambio) del corte. */
     @Column(precision = 12, scale = 2)
@@ -201,6 +222,23 @@ public class CashCut {
     /** Lo que quedó en la caja para el siguiente turno (lo contado, o el esperado si nadie contó). */
     @Column(precision = 12, scale = 2)
     private BigDecimal handoverAmount;
+
+    /**
+     * Diferencia del arqueo tomando en cuenta la recepción de la caja. El esperado al cerrar
+     * parte del fondo que se contó al recibir; si la diferencia al recibir se resolvió como
+     * error de conteo cuando el corte ya estaba cerrado (su fondo no se pudo corregir), ese
+     * fondo — y con él el esperado — quedó desfasado justo por esa diferencia: se descuenta
+     * aquí. Ej.: debía recibir $100, contó $1,000 (+$900, error de conteo); al cerrar esperaba
+     * $1,000 y contó $800 (−$200) → la diferencia real del turno es +$700.
+     */
+    @JsonProperty("effectiveCashDifference")
+    public BigDecimal getEffectiveCashDifference() {
+        if (cashDifference == null) return null;
+        boolean receiveCountError = handoverResolution == HandoverResolution.COUNT_ERROR
+                && handoverDifference != null && expectedOpeningAmount != null && openingAmount != null
+                && openingAmount.compareTo(expectedOpeningAmount) != 0;
+        return receiveCountError ? cashDifference.add(handoverDifference) : cashDifference;
+    }
 
     @JsonProperty("previousCutId")
     public Long getPreviousCutId() {

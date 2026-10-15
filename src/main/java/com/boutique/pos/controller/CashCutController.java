@@ -1,6 +1,7 @@
 package com.boutique.pos.controller;
 
 import com.boutique.pos.dto.ApiResponse;
+import com.boutique.pos.dto.ArqueoResolveRequest;
 import com.boutique.pos.dto.CashCutCloseRequest;
 import com.boutique.pos.dto.CashCutForceCloseRequest;
 import com.boutique.pos.dto.CashCutOpenRequest;
@@ -10,6 +11,7 @@ import com.boutique.pos.dto.PageResponse;
 import com.boutique.pos.model.CashCut;
 import com.boutique.pos.model.CashCutStatus;
 import com.boutique.pos.model.CashMovement;
+import com.boutique.pos.model.HandoverStatus;
 import com.boutique.pos.model.User;
 import com.boutique.pos.service.CashCutService;
 import com.boutique.pos.service.CashMovementService;
@@ -67,11 +69,12 @@ public class CashCutController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
             @RequestParam(required = false) CashCutStatus status,
             @RequestParam(required = false) Long userId,
+            @RequestParam(required = false) HandoverStatus arqueoStatus,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @AuthenticationPrincipal User actor) {
         Pageable pageable = PageRequest.of(page, size);
-        Page<CashCut> result = cashCutService.findAll(from, to, status, userId, pageable, actor);
+        Page<CashCut> result = cashCutService.findAll(from, to, status, userId, arqueoStatus, pageable, actor);
         return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
     }
 
@@ -172,6 +175,34 @@ public class CashCutController {
                                                        @Valid @RequestBody CashCutCloseRequest req,
                                                        @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(cashCutService.close(id, req, actor), "Corte cerrado"));
+    }
+
+    /** Cortes con diferencia de arqueo sin resolver (contador de la pestaña Historial). */
+    @GetMapping("/count-differences/unresolved-count")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    public ResponseEntity<ApiResponse<Long>> unresolvedArqueoCount(@AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(cashCutService.unresolvedArqueoCount(actor), null));
+    }
+
+    /** Resuelve la diferencia del arqueo de cierre (faltante, sobrante o error de conteo). */
+    @PostMapping("/{id}/resolve-count")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    public ResponseEntity<ApiResponse<CashCut>> resolveCount(@PathVariable Long id,
+                                                              @Valid @RequestBody ArqueoResolveRequest req,
+                                                              @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(cashCutService.resolveArqueo(id, req, actor), "Diferencia resuelta"));
+    }
+
+    /**
+     * Corte de fin de día de la caja: cierre con arqueo + reporte del día de esa caja a los
+     * destinatarios de la tienda + la caja queda bloqueada hasta el job o el día siguiente.
+     */
+    @PostMapping("/{id}/end-of-day")
+    @PreAuthorize("@sectionAccess.check('CASH_CUTS')")
+    public ResponseEntity<ApiResponse<CashCut>> endOfDay(@PathVariable Long id,
+                                                          @Valid @RequestBody CashCutCloseRequest req,
+                                                          @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(cashCutService.endOfDay(id, req, actor), "Corte de fin de día realizado"));
     }
 
     /** Cierre forzado por un administrador, indicando cómo se contó el efectivo. */
