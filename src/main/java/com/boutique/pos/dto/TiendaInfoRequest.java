@@ -104,4 +104,7 @@ public class TiendaInfoRequest {
     @Min(value = 5, message = "El intervalo de actualización no puede ser menor a 5 segundos")
     @Max(value = 300, message = "El intervalo de actualización no puede ser mayor a 300 segundos")
     private Integer pollingIntervalSeconds;
+
+    // Conteo ciego al cerrar corte (Tienda.blindCashCount). null = apagado.
+    private Boolean blindCashCount;
 }

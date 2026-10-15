@@ -1,13 +1,18 @@
 package com.boutique.pos.controller;
 
 import com.boutique.pos.dto.ApiResponse;
-import com.boutique.pos.dto.CashCutRequest;
+import com.boutique.pos.dto.CashCutCloseRequest;
+import com.boutique.pos.dto.CashCutForceCloseRequest;
+import com.boutique.pos.dto.CashCutOpenRequest;
+import com.boutique.pos.dto.CashMovementRequest;
 import com.boutique.pos.dto.CashCutSummary;
 import com.boutique.pos.dto.PageResponse;
 import com.boutique.pos.model.CashCut;
 import com.boutique.pos.model.CashCutStatus;
+import com.boutique.pos.model.CashMovement;
 import com.boutique.pos.model.User;
 import com.boutique.pos.service.CashCutService;
+import com.boutique.pos.service.CashMovementService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -18,6 +23,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -26,8 +32,8 @@ import java.util.Optional;
 /**
  * Controlador de cortes de caja ("CashCut"), expuesto bajo {@code /api/cash-cuts}.
  * <p>
- * Cada cajero/vendedor abre y cierra su propio corte diario (efectivo esperado
- * vs. contado); el historial completo en forma de tabla solo lo puede consultar
+ * Cada cajero/vendedor abre su corte recibiendo una caja y lo cierra con arqueo
+ * (efectivo esperado vs. contado); el historial completo en forma de tabla solo lo puede consultar
  * un ADMIN (de su propia tienda) o SUPER_ADMIN (de todas). El resto de las
  * operaciones sobre el corte propio están protegidas por la sección dinámica
  * {@code CASH_CUTS} (o {@code DASHBOARD} cuando el dato se reutiliza en un widget).
@@ -38,6 +44,7 @@ import java.util.Optional;
 public class CashCutController {
 
     private final CashCutService cashCutService;
+    private final CashMovementService cashMovementService;
 
     // tabla/historial de cortes: solo ADMIN (de su propia tienda) o SUPER_ADMIN (todas)
     /**
@@ -145,32 +152,68 @@ public class CashCutController {
     }
 
     /**
-     * Abre un nuevo corte de caja para el usuario autenticado (normalmente con
-     * el fondo/efectivo inicial). Requiere acceso a la sección {@code CASH_CUTS}.
-     *
-     * @param req   datos de apertura del corte
-     * @param actor usuario autenticado que abre el corte
+     * Abre un corte recibiendo una caja: el cajero indica cuánto efectivo contó y confirma
+     * que está de acuerdo (ver {@link CashCutService#open}). Requiere {@code CASH_CUTS}.
      */
     @PostMapping("/open")
     @PreAuthorize("@sectionAccess.check('CASH_CUTS')")
-    public ResponseEntity<ApiResponse<CashCut>> open(@Valid @RequestBody CashCutRequest req,
+    public ResponseEntity<ApiResponse<CashCut>> open(@Valid @RequestBody CashCutOpenRequest req,
                                                       @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(cashCutService.open(req, actor), "Corte abierto"));
     }
 
     /**
-     * Cierra un corte de caja existente, registrando el efectivo/valores contados
-     * al final del turno.
-     *
-     * @param id    identificador del corte a cerrar
-     * @param req   datos de cierre (efectivo contado, notas, etc.)
-     * @param actor usuario autenticado que cierra el corte
+     * Cierra un corte con arqueo: el efectivo contado queda en la caja para el siguiente
+     * turno (ver {@link CashCutService#close}).
      */
     @PostMapping("/{id}/close")
     @PreAuthorize("@sectionAccess.check('CASH_CUTS')")
     public ResponseEntity<ApiResponse<CashCut>> close(@PathVariable Long id,
-                                                       @RequestBody CashCutRequest req,
+                                                       @Valid @RequestBody CashCutCloseRequest req,
                                                        @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(cashCutService.close(id, req, actor), "Corte cerrado"));
+    }
+
+    /** Cierre forzado por un administrador, indicando cómo se contó el efectivo. */
+    @PostMapping("/{id}/force-close")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    public ResponseEntity<ApiResponse<CashCut>> forceClose(@PathVariable Long id,
+                                                            @Valid @RequestBody CashCutForceCloseRequest req,
+                                                            @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(cashCutService.forceClose(id, req, actor), "Corte cerrado"));
+    }
+
+    /** Movimientos de efectivo (gastos, retiros, aportes...) registrados en un corte. */
+    @GetMapping("/{id}/movements")
+    @PreAuthorize("@sectionAccess.check('CASH_CUTS')")
+    public ResponseEntity<ApiResponse<List<CashMovement>>> movements(@PathVariable Long id, @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(cashCutService.movements(id, actor), null));
+    }
+
+    /** Movimientos con la caja cerrada que el corte vio al recibir la caja. */
+    @GetMapping("/{id}/received-movements")
+    @PreAuthorize("@sectionAccess.check('CASH_CUTS')")
+    public ResponseEntity<ApiResponse<List<CashMovement>>> receivedMovements(@PathVariable Long id, @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(cashCutService.receivedMovements(id, actor), null));
+    }
+
+    /**
+     * Registra un movimiento de efectivo en un corte abierto. Lo hace el dueño del corte o
+     * un administrador; los retiros, solo administradores (ver {@link CashMovementService#registerOnCut}).
+     */
+    @PostMapping("/{id}/movements")
+    @PreAuthorize("@sectionAccess.check('CASH_CUTS')")
+    public ResponseEntity<ApiResponse<CashMovement>> addMovement(@PathVariable Long id,
+                                                                  @Valid @RequestBody CashMovementRequest req,
+                                                                  @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(cashMovementService.registerOnCut(id, req, actor), "Movimiento registrado"));
+    }
+
+    /** Sube la foto de un comprobante; devuelve su ruta para mandarla en el movimiento/pago. */
+    @PostMapping(value = "/receipts", consumes = "multipart/form-data")
+    @PreAuthorize("@sectionAccess.check('CASH_CUTS')")
+    public ResponseEntity<ApiResponse<String>> uploadReceipt(@RequestParam("file") MultipartFile file,
+                                                              @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(cashMovementService.uploadReceipt(file, actor), "Comprobante cargado"));
     }
 }
