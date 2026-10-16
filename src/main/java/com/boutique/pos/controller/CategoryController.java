@@ -42,7 +42,7 @@ public class CategoryController {
      * @param actor usuario autenticado; determina el filtro por tienda
      */
     @GetMapping
-    @PreAuthorize("@sectionAccess.checkAny('INVENTORY', 'POS')")
+    @PreAuthorize("@sectionAccess.checkAny('INVENTORY', 'POS', 'RAW_MATERIALS')")
     public ResponseEntity<ApiResponse<List<Category>>> list(@AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(categoryService.findAll(actor), null));
     }
@@ -86,7 +86,7 @@ public class CategoryController {
      * @param actor usuario autenticado
      */
     @GetMapping("/{id}")
-    @PreAuthorize("@sectionAccess.checkAny('INVENTORY', 'POS')")
+    @PreAuthorize("@sectionAccess.checkAny('INVENTORY', 'POS', 'RAW_MATERIALS')")
     public ResponseEntity<ApiResponse<Category>> get(@PathVariable Long id, @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(categoryService.findById(id, actor), null));
     }
