@@ -314,6 +314,7 @@ public class UserService {
         u.setIsActive(true);
         u.setCreatedBy(actor);
         User saved = userRepository.save(u);
+        applyMaxTiendas(saved, req.getMaxTiendas(), actor);
         applySupervisedTiendas(saved, req.getSupervisedTiendaIds(), actor);
         emailService.sendNewUserPasswordEmail(saved, tempPassword, frontendUrl + "/login");
         return saved;
@@ -372,6 +373,7 @@ public class UserService {
         u.setDeletedBy(null);
         u.setUpdatedBy(actor);
         User saved = userRepository.save(u);
+        applyMaxTiendas(saved, req.getMaxTiendas(), actor);
         applySupervisedTiendas(saved, req.getSupervisedTiendaIds(), actor);
         emailService.sendNewUserPasswordEmail(saved, tempPassword, frontendUrl + "/login");
         return saved;
@@ -490,6 +492,7 @@ public class UserService {
         }
         u.setUpdatedBy(actor);
         User saved = userRepository.save(u);
+        applyMaxTiendas(saved, req.getMaxTiendas(), actor);
         applySupervisedTiendas(saved, req.getSupervisedTiendaIds(), actor);
         return saved;
     }
@@ -572,6 +575,20 @@ public class UserService {
      *                            campo); una lista vacía sí quita todas las que tuviera
      * @param actor quien hace el cambio; se ignora silenciosamente si no es SUPER_ADMIN
      */
+    /**
+     * Fija el máximo de tiendas del plan contratado de un SUPERVISOR (null = sin límite).
+     * Solo lo puede hacer SUPER_ADMIN; si el usuario ya no es SUPERVISOR, se limpia.
+     */
+    private void applyMaxTiendas(User target, Integer maxTiendas, User actor) {
+        if (!tenantScope.isSuperAdmin(actor)) return;
+        boolean isSupervisor = target.getRole() != null && "SUPERVISOR".equals(target.getRole().getName());
+        Integer next = isSupervisor ? maxTiendas : null;
+        if (!java.util.Objects.equals(target.getMaxTiendas(), next)) {
+            target.setMaxTiendas(next);
+            userRepository.save(target);
+        }
+    }
+
     private void applySupervisedTiendas(User target, List<Long> supervisedTiendaIds, User actor) {
         if (!tenantScope.isSuperAdmin(actor)) return;
         boolean isSupervisorNow = target.getRole() != null && "SUPERVISOR".equals(target.getRole().getName());

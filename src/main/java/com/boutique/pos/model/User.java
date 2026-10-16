@@ -78,6 +78,10 @@ public class User implements UserDetails {
     @Builder.Default
     private Integer failedLoginAttempts = 0;
 
+    /** Solo SUPERVISOR: cuántas tiendas activas puede tener según su plan contratado (lo
+     *  fija SUPER_ADMIN). {@code null} = sin límite. Ver {@code TiendaService#create}. */
+    private Integer maxTiendas;
+
     /** Si tiene un valor futuro, la cuenta está bloqueada temporalmente por demasiados
      *  intentos fallidos — ver {@link #isAccountNonLocked()}. */
     private LocalDateTime lockedUntil;

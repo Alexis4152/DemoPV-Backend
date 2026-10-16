@@ -11,6 +11,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
 
 /**
  * CRUD de tiendas (sucursales/negocios) y gestión de su color de marca (theming).
@@ -104,6 +106,14 @@ public class TiendaService {
      */
     @Transactional
     public Tienda create(TiendaRequest req, User actor) {
+        if (tenantScope.isSupervisor(actor)) {
+            Integer max = actor.getMaxTiendas();
+            long used = tiendaRepository.countBySupervisorIdAndIsActiveTrue(actor.getId());
+            if (max != null && used >= max) {
+                throw new IllegalStateException("Tu plan contratado te permite capturar hasta " + max + " tienda"
+                        + (max == 1 ? "" : "s") + " y ya tienes " + used + ". Para agregar más, pide que amplíen tu plan.");
+            }
+        }
         Tienda t = new Tienda();
         t.setName(req.getName());
         t.setIsActive(true);
@@ -112,6 +122,22 @@ public class TiendaService {
         Tienda saved = tiendaRepository.save(t);
         roleService.seedDefaultRolesForTienda(saved);
         return saved;
+    }
+
+    /**
+     * Plan del SUPERVISOR: máximo de tiendas que puede tener ({@code null} = sin límite) y
+     * cuántas activas tiene. Para SUPER_ADMIN no aplica (sin límite).
+     */
+    public Map<String, Object> plan(User actor) {
+        Map<String, Object> plan = new HashMap<>();
+        if (tenantScope.isSupervisor(actor)) {
+            plan.put("maxTiendas", actor.getMaxTiendas());
+            plan.put("usedTiendas", tiendaRepository.countBySupervisorIdAndIsActiveTrue(actor.getId()));
+        } else {
+            plan.put("maxTiendas", null);
+            plan.put("usedTiendas", null);
+        }
+        return plan;
     }
 
     /**
