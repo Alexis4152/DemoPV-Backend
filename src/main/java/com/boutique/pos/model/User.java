@@ -39,6 +39,11 @@ public class User implements UserDetails {
     @Column(nullable = false, unique = true, length = 150)
     private String email;
 
+    /** Teléfono (10 dígitos, solo números). Opcional; SOLO sirve para iniciar sesión en
+     *  lugar del correo, con la misma contraseña. Único entre usuarios. */
+    @Column(unique = true, length = 15)
+    private String phone;
+
     @Column(nullable = false)
     @JsonIgnore
     private String password;

@@ -112,19 +112,20 @@ public class AuthService {
     // (Spring Data), así que el contador debe quedar confirmado ANTES de lanzar el error, no
     // envuelto junto con él.
     public LoginResult login(LoginRequest req) {
+        String email = resolveLoginEmail(req.getEmail());
         Authentication auth;
         try {
             auth = authManager.authenticate(
-                    new UsernamePasswordAuthenticationToken(req.getEmail(), req.getPassword())
+                    new UsernamePasswordAuthenticationToken(email, req.getPassword())
             );
         } catch (LockedException e) {
-            String detail = userRepository.findByEmail(req.getEmail())
+            String detail = userRepository.findByEmail(email)
                     .map(User::getLockedUntil)
                     .map(until -> "Intenta de nuevo en " + Math.max(1, Duration.between(LocalDateTime.now(), until).toMinutes()) + " minuto(s).")
                     .orElse("Intenta de nuevo más tarde.");
             throw new IllegalStateException("Cuenta bloqueada temporalmente por múltiples intentos fallidos. " + detail);
         } catch (BadCredentialsException e) {
-            registerFailedLoginAttempt(req.getEmail());
+            registerFailedLoginAttempt(email);
             throw e;
         }
         User user = (User) auth.getPrincipal();
@@ -170,6 +171,21 @@ public class AuthService {
                 .mustChangePassword(user.getMustChangePassword())
                 .build();
         return new LoginResult(body, refreshToken);
+    }
+
+    /**
+     * Lo que se escribió en "Correo o teléfono" → el correo de la cuenta. Con {@code @} es un
+     * correo y se usa tal cual; si no, se toman solo los dígitos y, si son 10 y hay un
+     * usuario con ese teléfono, se usa su correo. Si no hay ninguno se regresa lo escrito,
+     * y la autenticación falla con el mismo error genérico de credenciales inválidas (no
+     * revela si el teléfono existe).
+     */
+    private String resolveLoginEmail(String identifier) {
+        String value = identifier.trim();
+        if (value.contains("@")) return value;
+        String digits = value.replaceAll("\\D", "");
+        if (digits.length() != 10) return value;
+        return userRepository.findByPhone(digits).map(User::getEmail).orElse(value);
     }
 
     // Mismos tres roles de administración que ya distingue UserService#ROLE_RANK (ahí para

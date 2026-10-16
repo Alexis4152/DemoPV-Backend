@@ -27,6 +27,11 @@ public class UserRequest {
     @NotBlank
     @Size(max = 150, message = "El correo no puede tener más de 150 caracteres")
     private String email;
+    // Opcional: teléfono para iniciar sesión en lugar del correo (10 dígitos; se aceptan
+    // espacios o guiones y se guardan solo los números — ver UserService#normalizePhone).
+    // Vacío o null = sin teléfono.
+    @Size(max = 20, message = "El teléfono no puede tener más de 20 caracteres")
+    private String phone;
     // Solo aplica en actualización, y es opcional (si no se envía, la contraseña actual no
     // cambia) — es la vía para que un ADMIN le resetee la contraseña a alguien manualmente.
     // Al CREAR un usuario este campo se ignora siempre: la contraseña inicial nunca la
