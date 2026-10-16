@@ -110,7 +110,10 @@ public class UserService {
         // siempre regresaría vacío aunque sí existan, algo confuso para el SUPER_ADMIN que
         // acaba de dar de alta un Supervisor y quiere volver a encontrarlo.
         Long scope = tenantScope.isSuperAdmin(actor) && isPlatformRole(roleId) ? null : tenantScope.scopeId(actor);
-        Page<User> result = userRepository.search(scope, effectiveFrom, effectiveTo, name, email, roleId, isActive, pageable);
+        // SUPER_ADMIN dentro de una tienda: la lista sin filtro de rol trae también a los
+        // supervisores (no tienen tienda), que es donde se les edita el plan y sus tiendas.
+        boolean withSupervisors = tenantScope.isSuperAdmin(actor) && roleId == null && scope != null;
+        Page<User> result = userRepository.search(scope, effectiveFrom, effectiveTo, name, email, roleId, isActive, withSupervisors, pageable);
         markActiveSessions(result.getContent());
         return result;
     }

@@ -49,8 +49,12 @@ public interface UserRepository extends JpaRepository<User, Long> {
      * llegan con un valor real desde el service (nunca {@code null}), por la limitación de Postgres
      * para inferir el tipo de un parámetro timestamp nulo (ver comentario arriba).
      */
+    // withSupervisors: además de los de la tienda, los SUPERVISOR de plataforma (sin
+    // tienda) — para que SUPER_ADMIN los encuentre en la lista sin tener que filtrar por rol.
     @Query("SELECT u FROM User u WHERE " +
-           "(:tiendaId IS NULL OR u.tienda.id = :tiendaId) " +
+           "(:tiendaId IS NULL OR u.tienda.id = :tiendaId " +
+           " OR (:withSupervisors = true AND u.tienda IS NULL AND u.role.id IN " +
+           "     (SELECT r.id FROM Role r WHERE r.name = 'SUPERVISOR' AND r.tienda IS NULL))) " +
            "AND u.createdAt BETWEEN :from AND :to " +
            "AND (:name IS NULL OR LOWER(u.name) LIKE LOWER(CONCAT('%', CAST(:name AS string), '%'))) " +
            "AND (:email IS NULL OR LOWER(u.email) LIKE LOWER(CONCAT('%', CAST(:email AS string), '%'))) " +
@@ -64,6 +68,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
                        @Param("email") String email,
                        @Param("roleId") Long roleId,
                        @Param("isActive") Boolean isActive,
+                       @Param("withSupervisors") boolean withSupervisors,
                        Pageable pageable);
 
     // para avisarle por correo al/los admin(es) de una tienda cuando se autocierra un corte
