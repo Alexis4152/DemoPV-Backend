@@ -24,7 +24,7 @@ public class RawMaterialTransferRequest {
     @DecimalMax(value = "9999999999.99", message = "El precio no puede ser mayor a 9,999,999,999.99")
     private BigDecimal newProductPrice;
     private Long newProductCategoryId;
-    @Size(max = 100, message = "El código de barras no puede tener más de 100 caracteres")
+    @Size(max = 100, message = "El código de producto no puede tener más de 100 caracteres")
     private String newProductBarcode;
 
     @Size(max = 255, message = "La nota no puede tener más de 255 caracteres")

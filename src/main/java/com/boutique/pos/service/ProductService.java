@@ -468,7 +468,7 @@ public class ProductService {
         if (barcode == null || barcode.isBlank()) return;
         Product existing = productRepository.findByBarcodeExact(barcode, tiendaId).orElse(null);
         if (existing != null && !existing.getId().equals(excludeProductId)) {
-            throw new FieldConflictException("barcode", "Ya existe un producto con ese código de barras: " + existing.getName());
+            throw new FieldConflictException("barcode", "Ya existe un producto con ese código de producto: " + existing.getName());
         }
     }
 

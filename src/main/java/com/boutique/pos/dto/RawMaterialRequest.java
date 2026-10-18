@@ -13,7 +13,7 @@ public class RawMaterialRequest {
     private String name;
     @Size(max = 500, message = "La descripción no puede tener más de 500 caracteres")
     private String description;
-    @Size(max = 100, message = "El código de barras no puede tener más de 100 caracteres")
+    @Size(max = 100, message = "El código de producto no puede tener más de 100 caracteres")
     private String barcode;
     @PositiveOrZero
     @DecimalMax(value = "9999999999.99", message = "El costo no puede ser mayor a 9,999,999,999.99")
