@@ -43,7 +43,11 @@ public class RateLimitInterceptor implements HandlerInterceptor {
             // Manda un correo de aviso al admin de la tienda por cada apartado solicitado:
             // límite bajo para que nadie lo use para inundarle el correo, o para saturar el
             // endpoint con solicitudes falsas (segundo hallazgo de la auditoría).
-            "POST:/api/public/tiendas/{slug}/apartados", new Rule(5, Duration.ofMinutes(1))
+            "POST:/api/public/tiendas/{slug}/apartados", new Rule(5, Duration.ofMinutes(1)),
+            // Manda un correo a CADA SUPER_ADMIN activo por solicitud — mismo límite bajo
+            // que forgot-password, por el mismo motivo (nadie debe poder usarlo para
+            // inundarles el correo ni para saturar la tabla con solicitudes falsas).
+            "POST:/api/public/arco-requests", new Rule(3, Duration.ofMinutes(15))
     );
 
     private final RateLimiterService rateLimiterService;

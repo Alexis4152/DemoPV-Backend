@@ -2,6 +2,7 @@ package com.boutique.pos.service;
 
 import com.boutique.pos.model.Apartado;
 import com.boutique.pos.model.ApartadoItem;
+import com.boutique.pos.model.ArcoRequest;
 import com.boutique.pos.model.MailConfig;
 import com.boutique.pos.model.Sale;
 import com.boutique.pos.model.Tienda;
@@ -651,6 +652,53 @@ public class EmailService {
             log.info("Aviso de vencimiento del apartado {} enviado al cliente ({})", apartado.getId(), toEmail);
         } catch (MessagingException | RuntimeException e) {
             log.error("No se pudo enviar el aviso de vencimiento del apartado {} a {} (cliente): {}", apartado.getId(), toEmail, e.getMessage());
+        }
+    }
+
+    // Se manda a CADA SUPER_ADMIN activo (ver UserRepository#findActiveSuperAdmins) — una
+    // sola llamada por destinatario, igual patrón que sendCashCutReportEmail cuando una
+    // tienda tiene varios admins. Correo de plataforma (applySystemSender), nunca de una
+    // tienda: la solicitud en sí no pertenece a ninguna.
+    /**
+     * Avisa por correo a un SUPER_ADMIN que llegó una solicitud ARCO nueva, con los datos
+     * de contacto de quien la hizo y el detalle que haya escrito.
+     *
+     * @param request solicitud recién creada (estado {@code PENDING})
+     * @param adminLink URL (del frontend) a la pantalla de "Solicitudes ARCO" para atenderla
+     * @param toEmail correo del SUPER_ADMIN a notificar
+     */
+    @Async
+    public void sendArcoRequestEmail(ArcoRequest request, String adminLink, String toEmail) {
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite el aviso de la solicitud ARCO {}", request.getId());
+            return;
+        }
+        try {
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            applySystemSender(helper, cfg);
+            helper.setTo(toEmail);
+            helper.setSubject("Nueva solicitud ARCO (" + request.getType().label() + ")");
+            StringBuilder body = new StringBuilder();
+            body.append("Llegó una nueva solicitud de derechos ARCO:\n\n");
+            body.append("Tipo: ").append(request.getType().label()).append("\n");
+            body.append("Nombre: ").append(request.getRequesterName()).append("\n");
+            body.append("Correo: ").append(request.getRequesterEmail()).append("\n");
+            if (request.getRequesterPhone() != null && !request.getRequesterPhone().isBlank()) {
+                body.append("Teléfono: ").append(request.getRequesterPhone()).append("\n");
+            }
+            body.append("\nDetalle:\n");
+            body.append(request.getDetails() != null && !request.getDetails().isBlank()
+                    ? request.getDetails() : "(sin detalle adicional)");
+            body.append("\n\nAtiéndela aquí:\n").append(adminLink);
+            helper.setText(body.toString());
+
+            sender.send(message);
+            log.info("Aviso de solicitud ARCO {} enviado a {}", request.getId(), toEmail);
+        } catch (MessagingException | RuntimeException e) {
+            log.error("No se pudo enviar el aviso de la solicitud ARCO {} a {}: {}", request.getId(), toEmail, e.getMessage());
         }
     }
 }

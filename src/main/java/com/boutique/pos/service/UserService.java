@@ -108,9 +108,24 @@ public class UserService {
         // (tienda_id null), así que nunca calzarían con el filtro normal de "tienda que
         // esté actuando" — sin este caso especial, filtrar por ese rol en Usuarios.jsx
         // siempre regresaría vacío aunque sí existan, algo confuso para el SUPER_ADMIN que
-        // acaba de dar de alta un Supervisor y quiere volver a encontrarlo.
+        // acaba de dar de alta un Supervisor y quiere volver a encontrarlo. Este bypass
+        // SOLO aplica para SUPER_ADMIN — un Supervisor/Admin/Cajero sigue viendo nada más
+        // los usuarios de su propia tienda, nunca a otro Supervisor ni gente de otra tienda.
         Long scope = tenantScope.isSuperAdmin(actor) && isPlatformRole(roleId) ? null : tenantScope.scopeId(actor);
-        Page<User> result = userRepository.search(scope, effectiveFrom, effectiveTo, name, email, roleId, isActive, pageable);
+
+        // Además: con la lista acotada a una tienda (scope != null) y sin un filtro de rol
+        // que lo excluya, SUPER_ADMIN ve también al Supervisor ASIGNADO a esa tienda en
+        // particular (Tienda#getSupervisor(), no cualquier Supervisor) — así "ver todos los
+        // usuarios de la tienda en la que está" incluye de verdad a todos, sin tener que ir
+        // a filtrar por rol aparte. Nunca aplica para Admin/Cajero (ellos nunca disparan el
+        // bypass de arriba, así que tampoco deben ganar este extra).
+        Long tiendaSupervisorId = null;
+        if (scope != null && tenantScope.isSuperAdmin(actor) && (roleId == null || isRoleNamed(roleId, "SUPERVISOR"))) {
+            tiendaSupervisorId = tiendaRepository.findById(scope)
+                    .map(Tienda::getSupervisor).map(User::getId).orElse(null);
+        }
+
+        Page<User> result = userRepository.search(scope, effectiveFrom, effectiveTo, name, email, roleId, isActive, tiendaSupervisorId, pageable);
         markActiveSessions(result.getContent());
         return result;
     }
@@ -133,6 +148,18 @@ public class UserService {
         if (roleId == null) return false;
         try {
             return roleService.findById(roleId).getTienda() == null;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    /** {@code true} si el id de rol dado es exactamente el rol llamado {@code name} —
+     *  más estricto que {@link #isPlatformRole}, que acepta cualquier rol sin tienda
+     *  (SUPER_ADMIN incluido). {@code false} (nunca truena) si el id es null o no existe. */
+    private boolean isRoleNamed(Long roleId, String name) {
+        if (roleId == null) return false;
+        try {
+            return name.equals(roleService.findById(roleId).getName());
         } catch (IllegalArgumentException e) {
             return false;
         }
