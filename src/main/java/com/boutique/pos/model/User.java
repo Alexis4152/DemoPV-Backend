@@ -39,6 +39,11 @@ public class User implements UserDetails {
     @Column(nullable = false, unique = true, length = 150)
     private String email;
 
+    /** Teléfono (10 dígitos, solo números). Opcional; SOLO sirve para iniciar sesión en
+     *  lugar del correo, con la misma contraseña. Único entre usuarios. */
+    @Column(unique = true, length = 15)
+    private String phone;
+
     @Column(nullable = false)
     @JsonIgnore
     private String password;
@@ -72,6 +77,10 @@ public class User implements UserDetails {
     @Column(nullable = false)
     @Builder.Default
     private Integer failedLoginAttempts = 0;
+
+    /** Solo SUPERVISOR: cuántas tiendas activas puede tener según su plan contratado (lo
+     *  fija SUPER_ADMIN). {@code null} = sin límite. Ver {@code TiendaService#create}. */
+    private Integer maxTiendas;
 
     /** Si tiene un valor futuro, la cuenta está bloqueada temporalmente por demasiados
      *  intentos fallidos — ver {@link #isAccountNonLocked()}. */

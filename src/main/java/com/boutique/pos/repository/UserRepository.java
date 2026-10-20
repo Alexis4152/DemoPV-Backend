@@ -24,6 +24,9 @@ import java.util.Optional;
 public interface UserRepository extends JpaRepository<User, Long> {
     /** Busca un usuario por su correo electrónico (usado en el login). */
     Optional<User> findByEmail(String email);
+
+    /** Usuario con ese teléfono (solo dígitos), para iniciar sesión con teléfono. */
+    Optional<User> findByPhone(String phone);
     /** Indica si ya existe un usuario registrado con ese correo. */
     boolean existsByEmail(String email);
     /** Lista todos los usuarios, ordenados alfabéticamente por nombre. */

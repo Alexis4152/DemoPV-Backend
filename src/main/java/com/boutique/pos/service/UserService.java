@@ -328,10 +328,12 @@ public class UserService {
         if (tienda == null && tenantScope.isPlatformActor(actor) && !isPlatformRole(role)) {
             throw new IllegalStateException("Elige una tienda para poder dar de alta un usuario");
         }
+        String phone = normalizePhone(req.getPhone(), null);
         String tempPassword = generateTempPassword();
         User u = new User();
         u.setName(req.getName());
         u.setEmail(req.getEmail());
+        u.setPhone(phone);
         u.setPassword(passwordEncoder.encode(tempPassword));
         u.setMustChangePassword(true);
         u.setRole(role);
@@ -339,9 +341,31 @@ public class UserService {
         u.setIsActive(true);
         u.setCreatedBy(actor);
         User saved = userRepository.save(u);
+        applyMaxTiendas(saved, req.getMaxTiendas(), actor);
         applySupervisedTiendas(saved, req.getSupervisedTiendaIds(), actor);
         emailService.sendNewUserPasswordEmail(saved, tempPassword, frontendUrl + "/login");
         return saved;
+    }
+
+    /**
+     * Normaliza y valida el teléfono de un usuario: se quedan solo los dígitos (acepta
+     * espacios, guiones o paréntesis al capturar), vacío = sin teléfono. Debe tener 10
+     * dígitos y no puede usarlo otro usuario (aunque esté desactivado), porque sirve para
+     * iniciar sesión.
+     *
+     * @param raw valor capturado (puede ser null o vacío)
+     * @param selfId id del propio usuario al editar/reactivar, para no chocar consigo mismo
+     * @return el teléfono solo con dígitos, o {@code null}
+     * @throws FieldConflictException (campo {@code phone}) si no son 10 dígitos o ya lo usa otro usuario
+     */
+    private String normalizePhone(String raw, Long selfId) {
+        if (raw == null || raw.isBlank()) return null;
+        String digits = raw.replaceAll("\\D", "");
+        if (digits.length() != 10) throw new FieldConflictException("phone", "El teléfono debe tener 10 dígitos");
+        userRepository.findByPhone(digits)
+                .filter(other -> !other.getId().equals(selfId))
+                .ifPresent(other -> { throw new FieldConflictException("phone", "El teléfono ya lo usa otro usuario"); });
+        return digits;
     }
 
     /**
@@ -363,8 +387,10 @@ public class UserService {
         if (tienda == null && tenantScope.isPlatformActor(actor) && !isPlatformRole(role)) {
             throw new IllegalStateException("Elige una tienda para poder reactivar este usuario");
         }
+        String phone = normalizePhone(req.getPhone(), u.getId());
         String tempPassword = generateTempPassword();
         u.setName(req.getName());
+        u.setPhone(phone);
         u.setPassword(passwordEncoder.encode(tempPassword));
         u.setMustChangePassword(true);
         u.setRole(role);
@@ -374,6 +400,7 @@ public class UserService {
         u.setDeletedBy(null);
         u.setUpdatedBy(actor);
         User saved = userRepository.save(u);
+        applyMaxTiendas(saved, req.getMaxTiendas(), actor);
         applySupervisedTiendas(saved, req.getSupervisedTiendaIds(), actor);
         emailService.sendNewUserPasswordEmail(saved, tempPassword, frontendUrl + "/login");
         return saved;
@@ -413,8 +440,10 @@ public class UserService {
         userRepository.findByEmail(req.getEmail())
                 .filter(existing -> !existing.getId().equals(u.getId()))
                 .ifPresent(existing -> { throw new FieldConflictException("email", "El correo ya está registrado"); });
+        String phone = normalizePhone(req.getPhone(), u.getId());
         u.setName(req.getName());
         u.setEmail(req.getEmail());
+        u.setPhone(phone);
         if (req.getPassword() != null && !req.getPassword().isBlank()) {
             // Longitud validada AQUÍ, no con @Size en UserRequest — ver el porqué en ese
             // DTO: este es el único punto donde el campo password de verdad se usa.
@@ -490,6 +519,7 @@ public class UserService {
         }
         u.setUpdatedBy(actor);
         User saved = userRepository.save(u);
+        applyMaxTiendas(saved, req.getMaxTiendas(), actor);
         applySupervisedTiendas(saved, req.getSupervisedTiendaIds(), actor);
         return saved;
     }
@@ -572,6 +602,20 @@ public class UserService {
      *                            campo); una lista vacía sí quita todas las que tuviera
      * @param actor quien hace el cambio; se ignora silenciosamente si no es SUPER_ADMIN
      */
+    /**
+     * Fija el máximo de tiendas del plan contratado de un SUPERVISOR (null = sin límite).
+     * Solo lo puede hacer SUPER_ADMIN; si el usuario ya no es SUPERVISOR, se limpia.
+     */
+    private void applyMaxTiendas(User target, Integer maxTiendas, User actor) {
+        if (!tenantScope.isSuperAdmin(actor)) return;
+        boolean isSupervisor = target.getRole() != null && "SUPERVISOR".equals(target.getRole().getName());
+        Integer next = isSupervisor ? maxTiendas : null;
+        if (!java.util.Objects.equals(target.getMaxTiendas(), next)) {
+            target.setMaxTiendas(next);
+            userRepository.save(target);
+        }
+    }
+
     private void applySupervisedTiendas(User target, List<Long> supervisedTiendaIds, User actor) {
         if (!tenantScope.isSuperAdmin(actor)) return;
         boolean isSupervisorNow = target.getRole() != null && "SUPERVISOR".equals(target.getRole().getName());

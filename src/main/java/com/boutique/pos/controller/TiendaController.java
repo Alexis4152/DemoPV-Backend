@@ -82,6 +82,12 @@ public class TiendaController {
      * @param req   datos de la tienda a crear
      * @param actor usuario autenticado que realiza la creación
      */
+    /** Plan del SUPERVISOR: {@code maxTiendas} (null = sin límite) y {@code usedTiendas} activas. */
+    @GetMapping("/plan")
+    public ResponseEntity<ApiResponse<java.util.Map<String, Object>>> plan(@AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(tiendaService.plan(actor), null));
+    }
+
     @PostMapping
     public ResponseEntity<ApiResponse<Tienda>> create(@Valid @RequestBody TiendaRequest req, @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(tiendaService.create(req, actor), "Tienda creada"));

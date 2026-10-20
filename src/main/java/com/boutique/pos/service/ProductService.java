@@ -397,6 +397,26 @@ public class ProductService {
     }
 
     /**
+     * Suma piezas a un producto que llegan de otro módulo (hoy, materia prima pasada a
+     * inventario) y registra la entrada con su referencia. El producto debe venir ya
+     * bloqueado ({@link #findByIdForUpdate}) dentro de la transacción del llamador.
+     *
+     * @throws FieldConflictException (campo {@code quantity}) si el stock resultante desbordaría un {@code int}
+     */
+    public void receiveStock(Product p, int quantity, String reason, String reference, User actor) {
+        int previous = p.getStock();
+        long newStockLong = (long) previous + quantity;
+        if (newStockLong > Integer.MAX_VALUE) {
+            throw new FieldConflictException("quantity", "El número es excesivamente grande — el máximo permitido es 2,147,483,647");
+        }
+        p.setStock((int) newStockLong);
+        productRepository.save(p);
+        InventoryMovement mv = recordMovement(p, actor, MovementType.IN, quantity, previous, reason);
+        mv.setReference(reference);
+        movementRepository.save(mv);
+    }
+
+    /**
      * Desactiva (borrado suave) un producto: marca {@code isActive=false} y registra
      * quién y cuándo lo eliminó, sin borrar la fila ni su historial de movimientos.
      *
@@ -448,7 +468,7 @@ public class ProductService {
         if (barcode == null || barcode.isBlank()) return;
         Product existing = productRepository.findByBarcodeExact(barcode, tiendaId).orElse(null);
         if (existing != null && !existing.getId().equals(excludeProductId)) {
-            throw new FieldConflictException("barcode", "Ya existe un producto con ese código de barras: " + existing.getName());
+            throw new FieldConflictException("barcode", "Ya existe un producto con ese código de producto: " + existing.getName());
         }
     }
 
@@ -512,7 +532,7 @@ public class ProductService {
      * @param previous stock antes del movimiento
      * @param reason motivo del movimiento, para mostrar en el historial
      */
-    private void recordMovement(Product product, User actor, MovementType type,
+    private InventoryMovement recordMovement(Product product, User actor, MovementType type,
                                  int quantity, int previous, String reason) {
         InventoryMovement mv = new InventoryMovement();
         mv.setProduct(product);
@@ -522,6 +542,6 @@ public class ProductService {
         mv.setPreviousStock(previous);
         mv.setNewStock(previous + (type == MovementType.IN ? quantity : -quantity));
         mv.setReason(reason);
-        movementRepository.save(mv);
+        return movementRepository.save(mv);
     }
 }
