@@ -16,4 +16,8 @@ public class TiendaRequest {
     @NotBlank
     @Size(max = 150, message = "El nombre no puede tener más de 150 caracteres")
     private String name;
+
+    // Exclusivos de SUPER_ADMIN: si los envía un SUPERVISOR se ignoran en TiendaService.
+    private Boolean cardPaymentEnabled;
+    private Boolean openpayEnabled;
 }

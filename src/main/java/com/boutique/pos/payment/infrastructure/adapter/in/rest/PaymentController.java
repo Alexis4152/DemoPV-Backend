@@ -1,5 +1,6 @@
 package com.boutique.pos.payment.infrastructure.adapter.in.rest;
 
+import com.boutique.pos.model.Tienda;
 import com.boutique.pos.model.User;
 import com.boutique.pos.payment.application.port.in.CreatePaymentUseCase;
 import com.boutique.pos.payment.application.port.in.GetPaymentStatusUseCase;
@@ -10,6 +11,7 @@ import com.boutique.pos.payment.domain.model.PaymentTransaction;
 import com.boutique.pos.payment.infrastructure.adapter.in.rest.dto.CreatePaymentRequest;
 import com.boutique.pos.payment.infrastructure.adapter.in.rest.dto.PaymentResponse;
 import com.boutique.pos.payment.infrastructure.adapter.in.rest.dto.RefundRequest;
+import com.boutique.pos.security.TenantScope;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -37,17 +39,20 @@ public class PaymentController {
     private final GetPaymentStatusUseCase getPaymentStatusUseCase;
     private final RefundPaymentUseCase refundPaymentUseCase;
     private final PaymentRestMapper mapper;
+    private final TenantScope tenantScope;
 
     public PaymentController(
             CreatePaymentUseCase createPaymentUseCase,
             GetPaymentStatusUseCase getPaymentStatusUseCase,
             RefundPaymentUseCase refundPaymentUseCase,
-            PaymentRestMapper mapper
+            PaymentRestMapper mapper,
+            TenantScope tenantScope
     ) {
         this.createPaymentUseCase = createPaymentUseCase;
         this.getPaymentStatusUseCase = getPaymentStatusUseCase;
         this.refundPaymentUseCase = refundPaymentUseCase;
         this.mapper = mapper;
+        this.tenantScope = tenantScope;
     }
 
     @PostMapping
@@ -71,7 +76,12 @@ public class PaymentController {
             throw new IllegalArgumentException("Para pagos con tarjeta ('CARD') el campo 'sourceId' (token de tarjeta) es obligatorio.");
         }
 
-        Long tiendaId = (actor != null && actor.getTienda() != null) ? actor.getTienda().getId() : null;
+        Tienda tienda = actor != null ? tenantScope.tiendaForWrite(actor) : null;
+        if (tienda != null && !Boolean.TRUE.equals(tienda.getOpenpayEnabled())) {
+            throw new IllegalStateException("Los pagos mediante la pasarela Openpay no están habilitados para esta tienda.");
+        }
+
+        Long tiendaId = tienda != null ? tienda.getId() : null;
         var command = mapper.toCommand(request, tiendaId);
         PaymentTransaction transaction = createPaymentUseCase.execute(command);
 

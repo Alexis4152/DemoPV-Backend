@@ -85,6 +85,14 @@ public class TiendaInfoService {
         tienda.setPollingIntervalSeconds(req.getPollingIntervalSeconds() != null ? req.getPollingIntervalSeconds() : 20);
         tienda.setBlindCashCount(Boolean.TRUE.equals(req.getBlindCashCount()));
         tienda.setContactEmail(req.getContactEmail());
+        if (tenantScope.isSuperAdmin(actor)) {
+            if (req.getCardPaymentEnabled() != null) {
+                tienda.setCardPaymentEnabled(req.getCardPaymentEnabled());
+            }
+            if (req.getOpenpayEnabled() != null) {
+                tienda.setOpenpayEnabled(req.getOpenpayEnabled());
+            }
+        }
         updateSlug(tienda, req.getPublicSlug());
 
         tienda.setUpdatedBy(actor);

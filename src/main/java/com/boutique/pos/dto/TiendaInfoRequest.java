@@ -107,4 +107,8 @@ public class TiendaInfoRequest {
 
     // Conteo ciego al cerrar corte (Tienda.blindCashCount). null = apagado.
     private Boolean blindCashCount;
+
+    // Métodos de pago de la tienda (exclusivos de SUPER_ADMIN; ignorados si edita ADMIN o SUPERVISOR).
+    private Boolean cardPaymentEnabled;
+    private Boolean openpayEnabled;
 }

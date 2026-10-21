@@ -2,6 +2,7 @@ package com.boutique.pos.controller;
 
 import com.boutique.pos.dto.ApiResponse;
 import com.boutique.pos.dto.TiendaInfoRequest;
+import com.boutique.pos.dto.TiendaPaymentConfigRequest;
 import com.boutique.pos.dto.TiendaRequest;
 import com.boutique.pos.dto.TiendaThemeRequest;
 import com.boutique.pos.model.Tienda;
@@ -103,6 +104,22 @@ public class TiendaController {
     @PutMapping("/{id}")
     public ResponseEntity<ApiResponse<Tienda>> update(@PathVariable Long id, @Valid @RequestBody TiendaRequest req, @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(tiendaService.update(id, req, actor), "Tienda actualizada"));
+    }
+
+    /**
+     * Habilita o deshabilita el pago con tarjeta y/o la pasarela Openpay para una o N
+     * tiendas en bloque. Exclusivo del rol {@code SUPER_ADMIN}.
+     *
+     * @param req   ids de las tiendas y banderas de métodos de pago a aplicar
+     * @param actor usuario autenticado ({@code SUPER_ADMIN})
+     */
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @PutMapping("/payment-methods")
+    public ResponseEntity<ApiResponse<List<Tienda>>> updatePaymentMethods(
+            @Valid @RequestBody TiendaPaymentConfigRequest req,
+            @AuthenticationPrincipal User actor
+    ) {
+        return ResponseEntity.ok(ApiResponse.ok(tiendaService.updatePaymentMethods(req, actor), "Métodos de pago actualizados"));
     }
 
     /**

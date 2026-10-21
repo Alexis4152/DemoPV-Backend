@@ -98,7 +98,7 @@ public class SaleController {
      * @param actor usuario autenticado
      */
     @GetMapping("/{id}")
-    @PreAuthorize("@sectionAccess.check('SALES')")
+    @PreAuthorize("@sectionAccess.checkAny('SALES', 'POS')")
     public ResponseEntity<ApiResponse<Sale>> get(@PathVariable Long id, @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(saleService.findById(id, actor), null));
     }

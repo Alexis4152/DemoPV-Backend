@@ -1,5 +1,6 @@
 package com.boutique.pos.service;
 
+import com.boutique.pos.dto.TiendaPaymentConfigRequest;
 import com.boutique.pos.dto.TiendaRequest;
 import com.boutique.pos.model.Tienda;
 import com.boutique.pos.model.User;
@@ -117,6 +118,16 @@ public class TiendaService {
         Tienda t = new Tienda();
         t.setName(req.getName());
         t.setIsActive(true);
+        t.setCardPaymentEnabled(false);
+        t.setOpenpayEnabled(false);
+        if (tenantScope.isSuperAdmin(actor)) {
+            if (req.getCardPaymentEnabled() != null) {
+                t.setCardPaymentEnabled(req.getCardPaymentEnabled());
+            }
+            if (req.getOpenpayEnabled() != null) {
+                t.setOpenpayEnabled(req.getOpenpayEnabled());
+            }
+        }
         t.setCreatedBy(actor);
         if (tenantScope.isSupervisor(actor)) t.setSupervisor(actor);
         Tienda saved = tiendaRepository.save(t);
@@ -141,10 +152,12 @@ public class TiendaService {
     }
 
     /**
-     * Actualiza el nombre de una tienda, si el actor puede administrarla.
+     * Actualiza el nombre de una tienda, si el actor puede administrarla. Si el actor es
+     * {@code SUPER_ADMIN}, también permite actualizar {@code cardPaymentEnabled} y
+     * {@code openpayEnabled}.
      *
      * @param id id de la tienda
-     * @param req nuevos datos (nombre)
+     * @param req nuevos datos (nombre y, opcionalmente para SUPER_ADMIN, banderas de pago)
      * @param actor usuario que hace el cambio; queda registrado como {@code updatedBy}
      * @return la tienda actualizada
      * @throws AccessDeniedException si el actor no puede administrar esa tienda
@@ -155,8 +168,47 @@ public class TiendaService {
             throw new AccessDeniedException("No tienes permiso para modificar esta tienda");
         }
         t.setName(req.getName());
+        if (tenantScope.isSuperAdmin(actor)) {
+            if (req.getCardPaymentEnabled() != null) {
+                t.setCardPaymentEnabled(req.getCardPaymentEnabled());
+            }
+            if (req.getOpenpayEnabled() != null) {
+                t.setOpenpayEnabled(req.getOpenpayEnabled());
+            }
+        }
         t.setUpdatedBy(actor);
         return tiendaRepository.save(t);
+    }
+
+    /**
+     * Habilita o deshabilita el pago con tarjeta (terminal física) y/o la pasarela Openpay
+     * para una o N tiendas de forma masiva. Exclusivo del rol {@code SUPER_ADMIN}.
+     *
+     * @param req ids de las tiendas a modificar y los estados de {@code cardPaymentEnabled}
+     *            y/o {@code openpayEnabled}
+     * @param actor usuario autenticado; debe ser {@code SUPER_ADMIN}
+     * @return lista de tiendas actualizadas
+     * @throws AccessDeniedException si el actor no tiene el rol {@code SUPER_ADMIN}
+     */
+    @Transactional
+    public List<Tienda> updatePaymentMethods(TiendaPaymentConfigRequest req, User actor) {
+        if (!tenantScope.isSuperAdmin(actor)) {
+            throw new AccessDeniedException("Solo el SUPER_ADMIN puede habilitar o deshabilitar métodos de pago por tienda");
+        }
+        List<Tienda> tiendas = tiendaRepository.findAllById(req.getTiendaIds());
+        if (tiendas.isEmpty()) {
+            throw new IllegalArgumentException("No se encontraron las tiendas seleccionadas");
+        }
+        for (Tienda t : tiendas) {
+            if (req.getCardPaymentEnabled() != null) {
+                t.setCardPaymentEnabled(req.getCardPaymentEnabled());
+            }
+            if (req.getOpenpayEnabled() != null) {
+                t.setOpenpayEnabled(req.getOpenpayEnabled());
+            }
+            t.setUpdatedBy(actor);
+        }
+        return tiendaRepository.saveAll(tiendas);
     }
 
     /**

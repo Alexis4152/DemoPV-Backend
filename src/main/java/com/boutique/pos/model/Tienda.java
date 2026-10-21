@@ -140,6 +140,18 @@ public class Tienda {
     @Column(name = "contact_email", length = 150)
     private String contactEmail;
 
+    // ── Métodos de pago controlados exclusivamente por SUPER_ADMIN ────────────
+    // Ambos inician en false por defecto: solo un SUPER_ADMIN puede habilitar o
+    // deshabilitar el cobro con tarjeta (terminal física) y la pasarela digital
+    // Openpay (Tarjeta Openpay, Paynet y SPEI) para una o N tiendas.
+    @Column(name = "card_payment_enabled", nullable = false, columnDefinition = "boolean default false")
+    @Builder.Default
+    private Boolean cardPaymentEnabled = false;
+
+    @Column(name = "openpay_enabled", nullable = false, columnDefinition = "boolean default false")
+    @Builder.Default
+    private Boolean openpayEnabled = false;
+
     // LAZY: evita el ciclo User→Tienda(EAGER)→createdBy(User)→Tienda→... (User carga su Tienda en EAGER).
     // JsonIgnoreProperties evita además que, al serializar, Jackson expanda role/tienda de
     // este User anidado — sin esto, Tienda.updatedBy→role→tienda→updatedBy→... es un ciclo

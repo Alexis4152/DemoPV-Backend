@@ -151,6 +151,17 @@ public class SaleService {
         // cambiar a media sesión aunque el SUPER_ADMIN cambie de tienda actuante después.
         Tienda tienda = openCut.getTienda();
 
+        boolean isOpenpaySale = req.getOrderId() != null && !req.getOrderId().isBlank();
+        if (isOpenpaySale) {
+            if (tienda != null && !Boolean.TRUE.equals(tienda.getOpenpayEnabled())) {
+                throw new IllegalStateException("Los pagos mediante la pasarela Openpay no están habilitados para esta tienda");
+            }
+        } else if (req.getPaymentMethod() == PaymentMethod.CARD) {
+            if (tienda != null && !Boolean.TRUE.equals(tienda.getCardPaymentEnabled())) {
+                throw new IllegalStateException("El pago con tarjeta no está habilitado para esta tienda");
+            }
+        }
+
         Sale sale = new Sale();
         sale.setUser(actor);
         sale.setCashCut(openCut);
@@ -391,6 +402,11 @@ public class SaleService {
     public Sale completeFromApartado(Apartado apartado, PaymentMethod paymentMethod, BigDecimal amountReceived, String customerEmailOverride, User actor) {
         CashCut openCut = cashCutRepository.findFirstByUserIdAndStatus(actor.getId(), CashCutStatus.OPEN)
                 .orElseThrow(() -> new IllegalStateException("Debes abrir un corte de caja antes de completar un apartado"));
+
+        if (paymentMethod == PaymentMethod.CARD && apartado.getTienda() != null
+                && !Boolean.TRUE.equals(apartado.getTienda().getCardPaymentEnabled())) {
+            throw new IllegalStateException("El pago con tarjeta no está habilitado para esta tienda");
+        }
 
         String effectiveEmail = (customerEmailOverride != null && !customerEmailOverride.isBlank())
                 ? customerEmailOverride : apartado.getCustomerEmail();
