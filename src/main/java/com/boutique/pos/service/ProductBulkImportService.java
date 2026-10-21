@@ -49,7 +49,7 @@ public class ProductBulkImportService {
     private static final int MAX_INLINE_ERRORS = 10;
 
     private static final String[] HEADERS = {
-            "Nombre*", "Descripción", "Código de barras", "Precio*", "Costo",
+            "Nombre*", "Descripción", "Código de producto", "Precio*", "Costo",
             "Stock", "Stock mínimo", "Unidad", "Categoría*",
     };
 
@@ -136,7 +136,7 @@ public class ProductBulkImportService {
                                 .collect(Collectors.joining("; ")));
                     }
                     if (req.getBarcode() != null && !seenBarcodes.add(req.getBarcode())) {
-                        throw new IllegalArgumentException("Código de barras repetido dentro del mismo archivo");
+                        throw new IllegalArgumentException("Código de producto repetido dentro del mismo archivo");
                     }
                     productService.create(req, actor);
                     created++;

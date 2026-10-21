@@ -5,9 +5,12 @@ import com.boutique.pos.dto.BulkImportResult;
 import com.boutique.pos.dto.InventoryAdjustRequest;
 import com.boutique.pos.dto.PageResponse;
 import com.boutique.pos.dto.ProductRequest;
+import com.boutique.pos.exception.FieldConflictException;
 import com.boutique.pos.model.Product;
 import com.boutique.pos.model.ProductImage;
 import com.boutique.pos.model.User;
+import com.boutique.pos.security.SectionAccessService;
+import com.boutique.pos.service.InventoryCountSheetService;
 import com.boutique.pos.service.ProductBulkImportService;
 import com.boutique.pos.service.ProductImageService;
 import com.boutique.pos.service.ProductService;
@@ -17,11 +20,15 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.Duration;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -42,6 +49,12 @@ public class ProductController {
     private final ProductService productService;
     private final ProductImageService productImageService;
     private final ProductBulkImportService productBulkImportService;
+    private final SectionAccessService sectionAccess;
+    private final InventoryCountSheetService inventoryCountSheetService;
+
+    // Ventana para que un rol con CREATE (sin EDIT) suba las fotos del producto que acaba de
+    // crear — ver uploadImage. Holgada para varias fotos pesadas en una conexión lenta.
+    private static final Duration NEW_PRODUCT_IMAGE_WINDOW = Duration.ofMinutes(10);
 
     /**
      * Lista todos los productos de la tienda del usuario autenticado.
@@ -192,47 +205,54 @@ public class ProductController {
     }
 
     /**
-     * Crea un nuevo producto en la tienda del usuario autenticado. Solo
-     * disponible para el rol ADMIN.
+     * Crea un nuevo producto en la tienda del usuario autenticado. Requiere la acción
+     * CREATE otorgada en INVENTORY (siempre disponible para ADMIN/SUPER_ADMIN/SUPERVISOR;
+     * para cualquier otro rol, ej. CASHIER, debe otorgarse explícitamente desde "Roles y
+     * Permisos" — ver {@code SectionAccessService#checkAction}).
      *
      * @param req   datos del producto a crear
      * @param actor usuario autenticado que realiza la creación
      */
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    @PreAuthorize("@sectionAccess.checkAction('INVENTORY', 'CREATE')")
     public ResponseEntity<ApiResponse<Product>> create(@Valid @RequestBody ProductRequest req,
                                                         @AuthenticationPrincipal User actor) {
+        // Solo el alta desde el formulario exige stock inicial: la carga masiva y la
+        // conversión de materia prima (que crea el producto en 0 y luego le suma piezas)
+        // llaman a ProductService#create directo y pueden crearlo en 0.
+        if (req.getStock() == null || req.getStock() < 1) {
+            throw new FieldConflictException("stock", "Captura el stock inicial (mínimo 1)");
+        }
         return ResponseEntity.ok(ApiResponse.ok(productService.create(req, actor), "Producto creado"));
     }
 
     /**
-     * Actualiza los datos de un producto existente. Solo disponible para el rol
-     * ADMIN.
+     * Actualiza los datos de un producto existente. Requiere la acción EDIT otorgada en
+     * INVENTORY (ver {@link #create} para el criterio).
      *
      * @param id    identificador del producto a actualizar
      * @param req   nuevos datos del producto
      * @param actor usuario autenticado que realiza la actualización
      */
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    @PreAuthorize("@sectionAccess.checkAction('INVENTORY', 'EDIT')")
     public ResponseEntity<ApiResponse<Product>> update(@PathVariable Long id,
                                                         @Valid @RequestBody ProductRequest req,
                                                         @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(productService.update(id, req, actor), "Producto actualizado"));
     }
 
-    // cualquier rol con acceso a la sección de Inventario puede ajustar stock (no solo ADMIN)
     /**
-     * Aplica un ajuste manual de stock (entrada o salida) sobre un producto.
-     * A diferencia de crear/editar/eliminar, no se restringe al rol ADMIN: basta
-     * con tener acceso a la sección {@code INVENTORY}.
+     * Aplica un ajuste manual de stock (entrada o salida) sobre un producto. Cuenta como
+     * una edición del producto — requiere la acción EDIT otorgada en INVENTORY (ver
+     * {@link #create} para el criterio).
      *
      * @param id    identificador del producto a ajustar
      * @param req   datos del ajuste (cantidad, motivo, etc.)
      * @param actor usuario autenticado que realiza el ajuste
      */
     @PostMapping("/{id}/adjust-stock")
-    @PreAuthorize("@sectionAccess.check('INVENTORY')")
+    @PreAuthorize("@sectionAccess.checkAction('INVENTORY', 'EDIT')")
     public ResponseEntity<ApiResponse<Product>> adjustStock(@PathVariable Long id,
                                                              @Valid @RequestBody InventoryAdjustRequest req,
                                                              @AuthenticationPrincipal User actor) {
@@ -240,14 +260,14 @@ public class ProductController {
     }
 
     /**
-     * Desactiva (baja lógica) un producto existente. Solo disponible para el
-     * rol ADMIN.
+     * Desactiva (baja lógica) un producto existente. Requiere la acción DELETE otorgada
+     * en INVENTORY (ver {@link #create} para el criterio).
      *
      * @param id    identificador del producto a desactivar
      * @param actor usuario autenticado que realiza la baja
      */
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    @PreAuthorize("@sectionAccess.checkAction('INVENTORY', 'DELETE')")
     public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id, @AuthenticationPrincipal User actor) {
         productService.deactivate(id, actor);
         return ResponseEntity.ok(ApiResponse.ok(null, "Producto desactivado"));
@@ -265,18 +285,36 @@ public class ProductController {
         return ResponseEntity.ok(ApiResponse.ok(productImageService.list(product.getId()), null));
     }
 
-    /** Sube una foto nueva para el producto. Solo ADMIN (igual que crear/editar el producto). */
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    /**
+     * Sube una foto nueva para el producto. Requiere la acción EDIT en INVENTORY (la
+     * galería se administra como parte de editar el producto) — o, para quien solo tiene
+     * CREATE, únicamente sobre un producto que él mismo acaba de dar de alta: al agregar un
+     * producto, Inventory.jsx primero lo crea y luego sube las fotos elegidas, así que sin
+     * esta excepción un rol con CREATE y sin EDIT creaba el producto pero se quedaba sin
+     * fotos (403). El límite de tiempo evita que CREATE sirva para tocar la galería de
+     * productos que ya existían.
+     */
+    @PreAuthorize("@sectionAccess.checkAction('INVENTORY', 'EDIT') or @sectionAccess.checkAction('INVENTORY', 'CREATE')")
     @PostMapping(value = "/{id}/images", consumes = "multipart/form-data")
     public ResponseEntity<ApiResponse<ProductImage>> uploadImage(@PathVariable Long id,
                                                                   @RequestParam("file") MultipartFile file,
                                                                   @AuthenticationPrincipal User actor) {
         Product product = productService.findById(id, actor);
+        if (!sectionAccess.checkAction("INVENTORY", "EDIT") && !isFreshlyCreatedBy(product, actor)) {
+            throw new AccessDeniedException("Solo puedes agregar fotos a un producto que acabas de crear");
+        }
         return ResponseEntity.ok(ApiResponse.ok(productImageService.upload(product, file), "Foto agregada"));
     }
 
-    /** Marca una foto como portada del producto. Solo ADMIN. */
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    /** {@code true} si el producto lo creó {@code actor} hace menos de {@link #NEW_PRODUCT_IMAGE_WINDOW}. */
+    private boolean isFreshlyCreatedBy(Product product, User actor) {
+        return product.getCreatedBy() != null && product.getCreatedBy().getId().equals(actor.getId())
+                && product.getCreatedAt() != null
+                && product.getCreatedAt().isAfter(LocalDateTime.now().minus(NEW_PRODUCT_IMAGE_WINDOW));
+    }
+
+    /** Marca una foto como portada del producto. Requiere la acción EDIT en INVENTORY. */
+    @PreAuthorize("@sectionAccess.checkAction('INVENTORY', 'EDIT')")
     @PutMapping("/{id}/images/{imageId}/primary")
     public ResponseEntity<ApiResponse<Void>> setPrimaryImage(@PathVariable Long id, @PathVariable Long imageId,
                                                               @AuthenticationPrincipal User actor) {
@@ -285,8 +323,9 @@ public class ProductController {
         return ResponseEntity.ok(ApiResponse.ok(null, "Portada actualizada"));
     }
 
-    /** Borra una foto del producto. Solo ADMIN. */
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    /** Borra una foto del producto. Requiere la acción EDIT en INVENTORY (igual que subir
+     *  o marcar portada — administrar la galería es parte de editar el producto). */
+    @PreAuthorize("@sectionAccess.checkAction('INVENTORY', 'EDIT')")
     @DeleteMapping("/{id}/images/{imageId}")
     public ResponseEntity<ApiResponse<Void>> deleteImage(@PathVariable Long id, @PathVariable Long imageId,
                                                           @AuthenticationPrincipal User actor) {
@@ -299,11 +338,11 @@ public class ProductController {
 
     /**
      * Descarga la plantilla (.xlsx) de carga masiva, con las columnas esperadas y una fila
-     * de ejemplo. Disponible para ADMIN/SUPER_ADMIN/SUPERVISOR — es de solo lectura, sin
+     * de ejemplo. Requiere el mismo permiso que crear un producto — es de solo lectura, sin
      * ningún riesgo, a diferencia de la carga real (ver {@link #bulkImport}).
      */
     @GetMapping("/bulk-import/template")
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    @PreAuthorize("@sectionAccess.checkAction('INVENTORY', 'CREATE')")
     public ResponseEntity<byte[]> bulkImportTemplate() {
         byte[] xlsx = productBulkImportService.buildTemplate();
         return ResponseEntity.ok()
@@ -313,11 +352,36 @@ public class ProductController {
     }
 
     /**
+     * Descarga la hoja de conteo físico de inventario en Excel: nombre del producto, cantidad
+     * actual en sistema y "Cantidad real" en blanco. Libre para cualquiera con acceso a
+     * INVENTORY (sin acción específica): es de solo lectura, pensada para que el propio
+     * cajero haga el conteo.
+     */
+    @GetMapping("/count-sheet.xlsx")
+    @PreAuthorize("@sectionAccess.check('INVENTORY')")
+    public ResponseEntity<byte[]> countSheetExcel(@AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok()
+                .header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                .header("Content-Disposition", "attachment; filename=\"inventario-" + LocalDate.now() + ".xlsx\"")
+                .body(inventoryCountSheetService.buildExcel(actor));
+    }
+
+    /** Igual que {@link #countSheetExcel}, en PDF listo para imprimir. */
+    @GetMapping("/count-sheet.pdf")
+    @PreAuthorize("@sectionAccess.check('INVENTORY')")
+    public ResponseEntity<byte[]> countSheetPdf(@AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok()
+                .header("Content-Type", "application/pdf")
+                .header("Content-Disposition", "attachment; filename=\"inventario-" + LocalDate.now() + ".pdf\"")
+                .body(inventoryCountSheetService.buildPdf(actor));
+    }
+
+    /**
      * Procesa un archivo de carga masiva de productos, creando uno por cada fila válida y
      * reportando el resto como errores (sin tumbar la carga completa por una fila mala).
-     * Restringido a SUPER_ADMIN.
+     * Mismo permiso que crear un producto individual (INVENTORY:CREATE).
      */
-    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @PreAuthorize("@sectionAccess.checkAction('INVENTORY', 'CREATE')")
     @PostMapping(value = "/bulk-import", consumes = "multipart/form-data")
     public ResponseEntity<ApiResponse<BulkImportResult>> bulkImport(@RequestParam("file") MultipartFile file,
                                                                      @AuthenticationPrincipal User actor) {

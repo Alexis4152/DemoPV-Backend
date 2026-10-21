@@ -32,7 +32,7 @@ public class ProductRequest {
     @Size(max = 500, message = "La descripción no puede tener más de 500 caracteres")
     private String description;
     // Máximo alineado a products.barcode VARCHAR(100).
-    @Size(max = 100, message = "El código de barras no puede tener más de 100 caracteres")
+    @Size(max = 100, message = "El código de producto no puede tener más de 100 caracteres")
     private String barcode;
     // Máximo alineado a products.price NUMERIC(12,2) — 10 dígitos enteros + 2 decimales;
     // sin este tope, un valor mayor pasa la validación pero truena al guardar con un

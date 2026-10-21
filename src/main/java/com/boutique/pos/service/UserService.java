@@ -7,6 +7,7 @@ import com.boutique.pos.model.Role;
 import com.boutique.pos.model.Tienda;
 import com.boutique.pos.model.User;
 import com.boutique.pos.repository.CashCutRepository;
+import com.boutique.pos.repository.RefreshTokenRepository;
 import com.boutique.pos.repository.RoleRepository;
 import com.boutique.pos.repository.TiendaRepository;
 import com.boutique.pos.repository.UserRepository;
@@ -18,6 +19,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
@@ -44,6 +46,7 @@ public class UserService {
     private final RoleRepository roleRepository;
     private final TiendaRepository tiendaRepository;
     private final CashCutRepository cashCutRepository;
+    private final RefreshTokenRepository refreshTokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final TenantScope tenantScope;
     private final EmailService emailService;
@@ -69,8 +72,12 @@ public class UserService {
     // solo puede dar de alta, editar el rol de, o dar de baja usuarios con un rol
     // ESTRICTAMENTE por debajo del suyo — nunca uno de su mismo nivel ni uno superior (ver
     // assertCanAssignRole/assertCanManage). Los tres roles de sistema tienen un rango fijo;
-    // cualquier otro nombre (CASHIER, SELLER, o un rol personalizado que un ADMIN cree
-    // desde "Roles y Permisos") cae en UNRANKED_ROLE, por debajo de ADMIN.
+    // cualquier otro nombre (CASHIER, o un rol personalizado que un SUPER_ADMIN cree desde
+    // "Roles y Permisos") cae en UNRANKED_ROLE, por debajo de ADMIN. Excepción: entre dos
+    // roles SIN rango sí se permite administrarse entre sí (ver canManageRank) — si no,
+    // el permiso fino USERS:CREATE/EDIT/DELETE que se le puede dar a CASHIER o a un rol
+    // personalizado en "Roles y Permisos" nunca tendría efecto real, porque ninguno de esos
+    // roles tiene nada por debajo de él en esta jerarquía.
     private static final Map<String, Integer> ROLE_RANK = Map.of(
             "SUPER_ADMIN", 0,
             "SUPERVISOR", 1,
@@ -101,9 +108,38 @@ public class UserService {
         // (tienda_id null), así que nunca calzarían con el filtro normal de "tienda que
         // esté actuando" — sin este caso especial, filtrar por ese rol en Usuarios.jsx
         // siempre regresaría vacío aunque sí existan, algo confuso para el SUPER_ADMIN que
-        // acaba de dar de alta un Supervisor y quiere volver a encontrarlo.
+        // acaba de dar de alta un Supervisor y quiere volver a encontrarlo. Este bypass
+        // SOLO aplica para SUPER_ADMIN — un Supervisor/Admin/Cajero sigue viendo nada más
+        // los usuarios de su propia tienda, nunca a otro Supervisor ni gente de otra tienda.
         Long scope = tenantScope.isSuperAdmin(actor) && isPlatformRole(roleId) ? null : tenantScope.scopeId(actor);
-        return userRepository.search(scope, effectiveFrom, effectiveTo, name, email, roleId, isActive, pageable);
+
+        // Además: con la lista acotada a una tienda (scope != null) y sin un filtro de rol
+        // que lo excluya, SUPER_ADMIN ve también al Supervisor ASIGNADO a esa tienda en
+        // particular (Tienda#getSupervisor(), no cualquier Supervisor) — así "ver todos los
+        // usuarios de la tienda en la que está" incluye de verdad a todos, sin tener que ir
+        // a filtrar por rol aparte. Nunca aplica para Admin/Cajero (ellos nunca disparan el
+        // bypass de arriba, así que tampoco deben ganar este extra).
+        Long tiendaSupervisorId = null;
+        if (scope != null && tenantScope.isSuperAdmin(actor) && (roleId == null || isRoleNamed(roleId, "SUPERVISOR"))) {
+            tiendaSupervisorId = tiendaRepository.findById(scope)
+                    .map(Tienda::getSupervisor).map(User::getId).orElse(null);
+        }
+
+        Page<User> result = userRepository.search(scope, effectiveFrom, effectiveTo, name, email, roleId, isActive, tiendaSupervisorId, pageable);
+        markActiveSessions(result.getContent());
+        return result;
+    }
+
+    // Un solo query para toda la página (nunca uno por fila) — ver RefreshTokenRepository
+    // #findUserIdsWithActiveSession. Alimenta la columna "Sesión activa" de Usuarios.jsx,
+    // desde donde un admin puede cerrarle la sesión a alguien (ver forceLogout).
+    private void markActiveSessions(List<User> users) {
+        if (users.isEmpty()) return;
+        List<Long> ids = users.stream().map(User::getId).toList();
+        List<Long> activeIds = refreshTokenRepository.findUserIdsWithActiveSession(ids, LocalDateTime.now());
+        for (User u : users) {
+            u.setHasActiveSession(activeIds.contains(u.getId()));
+        }
     }
 
     /** {@code true} si el id de rol dado corresponde a un rol de plataforma (ver {@link
@@ -112,6 +148,18 @@ public class UserService {
         if (roleId == null) return false;
         try {
             return roleService.findById(roleId).getTienda() == null;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    /** {@code true} si el id de rol dado es exactamente el rol llamado {@code name} —
+     *  más estricto que {@link #isPlatformRole}, que acepta cualquier rol sin tienda
+     *  (SUPER_ADMIN incluido). {@code false} (nunca truena) si el id es null o no existe. */
+    private boolean isRoleNamed(Long roleId, String name) {
+        if (roleId == null) return false;
+        try {
+            return name.equals(roleService.findById(roleId).getName());
         } catch (IllegalArgumentException e) {
             return false;
         }
@@ -158,11 +206,15 @@ public class UserService {
         // SUPER_ADMIN puede ver CUALQUIER usuario por id, sin importar en qué tienda esté
         // actuando — incluye a otros usuarios de plataforma (SUPERVISOR) que, al no tener
         // tienda, nunca calzarían con el filtro normal. Mismo criterio que RoleService#findById.
-        if (tenantScope.isSuperAdmin(actor)) return u;
+        if (tenantScope.isSuperAdmin(actor)) {
+            markActiveSessions(List.of(u));
+            return u;
+        }
         Long scope = tenantScope.scopeId(actor);
         if (scope != null && (u.getTienda() == null || !scope.equals(u.getTienda().getId()))) {
             throw new IllegalArgumentException("Usuario no encontrado: " + id);
         }
+        markActiveSessions(List.of(u));
         return u;
     }
 
@@ -172,21 +224,37 @@ public class UserService {
     }
 
     // "Hacia abajo, nunca uno como él o arriba": un SUPERVISOR puede crear ADMIN/CASHIER/
-    // SELLER/roles personalizados pero nunca otro SUPERVISOR ni SUPER_ADMIN; un ADMIN puede
-    // crear CASHIER/SELLER/personalizados pero YA NO otro ADMIN (antes de esta regla sí
-    // podía, sin querer). SUPER_ADMIN puede crear cualquier rol excepto otro SUPER_ADMIN
-    // (esa alta sigue siendo, a propósito, un paso manual fuera de la aplicación).
+    // roles personalizados pero nunca otro SUPERVISOR ni SUPER_ADMIN; un ADMIN puede crear
+    // CASHIER/personalizados pero YA NO otro ADMIN (antes de esta regla sí podía, sin
+    // querer). SUPER_ADMIN puede crear cualquier rol excepto otro SUPER_ADMIN (esa alta
+    // sigue siendo, a propósito, un paso manual fuera de la aplicación). Única excepción a
+    // "estrictamente por debajo": dos roles sin rango (CASHIER, o cualquier personalizado)
+    // sí pueden administrarse entre sí — ver {@link #canManageRank}.
+    /**
+     * {@code true} si un actor con rango {@code actorRank} puede asignar/administrar a un
+     * objetivo con rango {@code targetRank}: estrictamente por debajo en la jerarquía, o
+     * ambos SIN rango (ver {@link #UNRANKED_ROLE}) — entre dos roles sin rango sí se
+     * permite, porque de lo contrario el permiso fino {@code USERS:CREATE/EDIT/DELETE} que
+     * se le puede otorgar a CASHIER o a un rol personalizado desde "Roles y Permisos" nunca
+     * tendría efecto real (ninguno de esos roles tiene nada por debajo de él en esta
+     * jerarquía). Nunca se habilita hacia un rol de gestión (ADMIN/SUPERVISOR/SUPER_ADMIN):
+     * esos siempre quedan fuera de alcance de un actor sin rango.
+     */
+    private boolean canManageRank(int targetRank, int actorRank) {
+        if (actorRank == UNRANKED_ROLE && targetRank == UNRANKED_ROLE) return true;
+        return targetRank > actorRank;
+    }
+
     /**
      * Valida que el actor tenga permiso para asignar el rol dado a un usuario (nuevo o
-     * existente), según la jerarquía de {@link #ROLE_RANK}.
+     * existente), según la jerarquía de {@link #ROLE_RANK} (ver {@link #canManageRank}).
      *
      * @param target rol que se quiere asignar
      * @param actor  usuario que hace la asignación
-     * @throws AccessDeniedException si el rol del actor no es estrictamente superior al
-     *         rol que intenta asignar
+     * @throws AccessDeniedException si el actor no tiene permiso para asignar ese rol
      */
     private void assertCanAssignRole(Role target, User actor) {
-        if (rankOf(target) <= rankOf(actor.getRole())) {
+        if (!canManageRank(rankOf(target), rankOf(actor.getRole()))) {
             throw new AccessDeniedException("No puedes asignar un rol igual o superior al tuyo");
         }
     }
@@ -199,12 +267,11 @@ public class UserService {
      *
      * @param target usuario sobre el que se quiere actuar
      * @param actor  usuario que intenta editarlo/darlo de baja
-     * @throws AccessDeniedException si el rol del actor no es estrictamente superior al
-     *         del usuario objetivo
+     * @throws AccessDeniedException si el actor no tiene permiso para administrar ese usuario
      */
     private void assertCanManage(User target, User actor) {
         if (target.getId().equals(actor.getId())) return;
-        if (rankOf(target.getRole()) <= rankOf(actor.getRole())) {
+        if (!canManageRank(rankOf(target.getRole()), rankOf(actor.getRole()))) {
             throw new AccessDeniedException("No puedes administrar una cuenta de tu mismo nivel o superior");
         }
     }
@@ -245,6 +312,7 @@ public class UserService {
      * @return el usuario creado o reactivado
      * @throws FieldConflictException (campo {@code email}) si el correo ya está registrado y ACTIVO
      */
+    @Transactional
     public User create(UserRequest req, User actor) {
         Optional<User> existing = userRepository.findByEmail(req.getEmail());
         if (existing.isPresent()) {
@@ -260,10 +328,12 @@ public class UserService {
         if (tienda == null && tenantScope.isPlatformActor(actor) && !isPlatformRole(role)) {
             throw new IllegalStateException("Elige una tienda para poder dar de alta un usuario");
         }
+        String phone = normalizePhone(req.getPhone(), null);
         String tempPassword = generateTempPassword();
         User u = new User();
         u.setName(req.getName());
         u.setEmail(req.getEmail());
+        u.setPhone(phone);
         u.setPassword(passwordEncoder.encode(tempPassword));
         u.setMustChangePassword(true);
         u.setRole(role);
@@ -271,9 +341,31 @@ public class UserService {
         u.setIsActive(true);
         u.setCreatedBy(actor);
         User saved = userRepository.save(u);
+        applyMaxTiendas(saved, req.getMaxTiendas(), actor);
         applySupervisedTiendas(saved, req.getSupervisedTiendaIds(), actor);
         emailService.sendNewUserPasswordEmail(saved, tempPassword, frontendUrl + "/login");
         return saved;
+    }
+
+    /**
+     * Normaliza y valida el teléfono de un usuario: se quedan solo los dígitos (acepta
+     * espacios, guiones o paréntesis al capturar), vacío = sin teléfono. Debe tener 10
+     * dígitos y no puede usarlo otro usuario (aunque esté desactivado), porque sirve para
+     * iniciar sesión.
+     *
+     * @param raw valor capturado (puede ser null o vacío)
+     * @param selfId id del propio usuario al editar/reactivar, para no chocar consigo mismo
+     * @return el teléfono solo con dígitos, o {@code null}
+     * @throws FieldConflictException (campo {@code phone}) si no son 10 dígitos o ya lo usa otro usuario
+     */
+    private String normalizePhone(String raw, Long selfId) {
+        if (raw == null || raw.isBlank()) return null;
+        String digits = raw.replaceAll("\\D", "");
+        if (digits.length() != 10) throw new FieldConflictException("phone", "El teléfono debe tener 10 dígitos");
+        userRepository.findByPhone(digits)
+                .filter(other -> !other.getId().equals(selfId))
+                .ifPresent(other -> { throw new FieldConflictException("phone", "El teléfono ya lo usa otro usuario"); });
+        return digits;
     }
 
     /**
@@ -295,8 +387,10 @@ public class UserService {
         if (tienda == null && tenantScope.isPlatformActor(actor) && !isPlatformRole(role)) {
             throw new IllegalStateException("Elige una tienda para poder reactivar este usuario");
         }
+        String phone = normalizePhone(req.getPhone(), u.getId());
         String tempPassword = generateTempPassword();
         u.setName(req.getName());
+        u.setPhone(phone);
         u.setPassword(passwordEncoder.encode(tempPassword));
         u.setMustChangePassword(true);
         u.setRole(role);
@@ -306,6 +400,7 @@ public class UserService {
         u.setDeletedBy(null);
         u.setUpdatedBy(actor);
         User saved = userRepository.save(u);
+        applyMaxTiendas(saved, req.getMaxTiendas(), actor);
         applySupervisedTiendas(saved, req.getSupervisedTiendaIds(), actor);
         emailService.sendNewUserPasswordEmail(saved, tempPassword, frontendUrl + "/login");
         return saved;
@@ -338,14 +433,17 @@ public class UserService {
      * @throws IllegalStateException si el usuario tiene un corte de caja abierto y se le
      *         intenta cambiar a una tienda distinta de la actual
      */
+    @Transactional
     public User update(Long id, UserRequest req, User actor) {
         User u = findById(id, actor);
         assertCanManage(u, actor);
         userRepository.findByEmail(req.getEmail())
                 .filter(existing -> !existing.getId().equals(u.getId()))
                 .ifPresent(existing -> { throw new FieldConflictException("email", "El correo ya está registrado"); });
+        String phone = normalizePhone(req.getPhone(), u.getId());
         u.setName(req.getName());
         u.setEmail(req.getEmail());
+        u.setPhone(phone);
         if (req.getPassword() != null && !req.getPassword().isBlank()) {
             // Longitud validada AQUÍ, no con @Size en UserRequest — ver el porqué en ese
             // DTO: este es el único punto donde el campo password de verdad se usa.
@@ -409,7 +507,7 @@ public class UserService {
         // MISMO NOMBRE en la tienda nueva y lo reasigna — de lo contrario quedaría con un
         // rol "importado" de la tienda anterior, invisible e inmodificable desde "Roles y
         // Permisos" de su tienda nueva.
-        if (!isPlatformRole(u.getRole()) && u.getTienda() != null) {
+        if (u.getRole() != null && !isPlatformRole(u.getRole()) && u.getTienda() != null) {
             Long roleTiendaId = u.getRole().getTienda() != null ? u.getRole().getTienda().getId() : null;
             if (!u.getTienda().getId().equals(roleTiendaId)) {
                 Role matching = roleRepository.findByNameAndTiendaId(u.getRole().getName(), u.getTienda().getId())
@@ -421,6 +519,7 @@ public class UserService {
         }
         u.setUpdatedBy(actor);
         User saved = userRepository.save(u);
+        applyMaxTiendas(saved, req.getMaxTiendas(), actor);
         applySupervisedTiendas(saved, req.getSupervisedTiendaIds(), actor);
         return saved;
     }
@@ -503,6 +602,20 @@ public class UserService {
      *                            campo); una lista vacía sí quita todas las que tuviera
      * @param actor quien hace el cambio; se ignora silenciosamente si no es SUPER_ADMIN
      */
+    /**
+     * Fija el máximo de tiendas del plan contratado de un SUPERVISOR (null = sin límite).
+     * Solo lo puede hacer SUPER_ADMIN; si el usuario ya no es SUPERVISOR, se limpia.
+     */
+    private void applyMaxTiendas(User target, Integer maxTiendas, User actor) {
+        if (!tenantScope.isSuperAdmin(actor)) return;
+        boolean isSupervisor = target.getRole() != null && "SUPERVISOR".equals(target.getRole().getName());
+        Integer next = isSupervisor ? maxTiendas : null;
+        if (!java.util.Objects.equals(target.getMaxTiendas(), next)) {
+            target.setMaxTiendas(next);
+            userRepository.save(target);
+        }
+    }
+
     private void applySupervisedTiendas(User target, List<Long> supervisedTiendaIds, User actor) {
         if (!tenantScope.isSuperAdmin(actor)) return;
         boolean isSupervisorNow = target.getRole() != null && "SUPERVISOR".equals(target.getRole().getName());
@@ -547,5 +660,29 @@ public class UserService {
         u.setDeletedBy(actor);
         u.setDeletedAt(java.time.LocalDateTime.now());
         userRepository.save(u);
+    }
+
+    /**
+     * Cierra a la fuerza la sesión abierta de un usuario — ej. un cajero que se fue a su
+     * casa sin cerrar sesión en el POS. Revoca TODOS sus refresh tokens vigentes (mismo
+     * mecanismo que {@link AuthService#changePassword}), para que ya no pueda renovar su
+     * access token cuando este expire.
+     *
+     * <p><b>No es instantáneo del todo:</b> el access token JWT ya emitido sigue siendo
+     * válido por sí mismo (es stateless, nadie lo consulta contra esta tabla) hasta su
+     * propio vencimiento natural ({@code app.jwt.expiration}, 30 min) — recién en ese
+     * momento, al intentar renovarlo, el refresh token ya revocado lo manda de vuelta al
+     * login. Es la misma limitación que ya tiene cambiar la contraseña de alguien más.</p>
+     *
+     * @param id id del usuario a desloguear
+     * @param actor usuario que ejecuta la acción; debe poder administrar al usuario objetivo
+     *              (misma jerarquía que {@link #assertCanManage})
+     * @throws AccessDeniedException si el actor no puede administrar al usuario objetivo
+     */
+    @Transactional
+    public void forceLogout(Long id, User actor) {
+        User u = findById(id, actor);
+        assertCanManage(u, actor);
+        refreshTokenRepository.revokeAllForUser(u);
     }
 }

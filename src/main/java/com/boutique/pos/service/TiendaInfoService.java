@@ -83,6 +83,7 @@ public class TiendaInfoService {
         tienda.setDefaultApartadoHours(req.getDefaultApartadoHours() != null ? req.getDefaultApartadoHours() : 24);
         tienda.setDailySalesGoal(req.getDailySalesGoal());
         tienda.setPollingIntervalSeconds(req.getPollingIntervalSeconds() != null ? req.getPollingIntervalSeconds() : 20);
+        tienda.setBlindCashCount(Boolean.TRUE.equals(req.getBlindCashCount()));
         tienda.setContactEmail(req.getContactEmail());
         updateSlug(tienda, req.getPublicSlug());
 
@@ -106,6 +107,7 @@ public class TiendaInfoService {
         info.setRazonSocial(req.getRazonSocial());
         info.setTelefono(req.getTelefono());
         info.setPaginaWeb(req.getPaginaWeb());
+        info.setHorario(req.getHorario());
         info.setRedesSociales(req.getRedesSociales());
         info.setNotasAdicionales(req.getNotasAdicionales());
         return tiendaInfoRepository.save(info);

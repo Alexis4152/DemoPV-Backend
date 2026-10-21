@@ -1,6 +1,5 @@
 package com.boutique.pos.dto;
 
-import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
@@ -11,9 +10,10 @@ import lombok.Data;
  */
 @Data
 public class LoginRequest {
-    // Mensaje propio en vez del default de Jakarta ("debe ser una dirección de correo
-    // electrónico con formato correcto") — mismo texto que valida el frontend (Login.jsx).
-    @Email(message = "El correo no tiene un formato válido") @NotBlank
+    // Correo O teléfono (10 dígitos) — el nombre del campo se queda "email" para no
+    // cambiar el contrato con el frontend. Sin @Email: un teléfono no tiene formato de
+    // correo; AuthService#resolveLoginEmail decide cuál es.
+    @NotBlank(message = "Escribe tu correo o teléfono")
     private String email;
     @NotBlank
     private String password;

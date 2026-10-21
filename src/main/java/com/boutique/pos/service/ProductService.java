@@ -174,6 +174,46 @@ public class ProductService {
     }
 
     /**
+     * Igual que {@link #findById(Long)} pero toma un bloqueo pesimista sobre la fila (ver
+     * {@link ProductRepository#findByIdForUpdate}) — usar en vez de {@code findById} justo
+     * antes de leer/modificar el {@code stock} de un producto YA verificado (ej. viene de
+     * la línea de una venta/apartado que ya se comprobó que pertenece a la tienda del
+     * actor), sin necesidad de volver a chequear la tienda.
+     *
+     * <p>Debe llamarse siempre dentro de una transacción activa ({@code @Transactional} en
+     * el método que llama) — el lock solo tiene efecto mientras esa transacción sigue
+     * abierta, se libera al hacer commit/rollback.</p>
+     *
+     * @param id id del producto a bloquear
+     * @return el producto encontrado, con el lock ya tomado
+     * @throws IllegalArgumentException si no existe
+     */
+    public Product findByIdForUpdate(Long id) {
+        return productRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new IllegalArgumentException("Producto no encontrado: " + id));
+    }
+
+    /**
+     * Igual que {@link #findById(Long, User)} (valida que el producto pertenezca a la
+     * tienda del actor) pero tomando el mismo bloqueo pesimista que {@link
+     * #findByIdForUpdate(Long)} — usar cuando el id del producto viene fresco de un
+     * request (ej. una línea de venta nueva) y todavía no se verificó su tienda.
+     *
+     * @param id id del producto a bloquear
+     * @param actor usuario que realiza la operación
+     * @return el producto encontrado, con el lock ya tomado
+     * @throws IllegalArgumentException si no existe o no pertenece a la tienda del actor
+     */
+    public Product findByIdForUpdate(Long id, User actor) {
+        Product p = findByIdForUpdate(id);
+        Long scope = tenantScope.scopeId(actor);
+        if (scope != null && (p.getTienda() == null || !scope.equals(p.getTienda().getId()))) {
+            throw new IllegalArgumentException("Producto no encontrado: " + id);
+        }
+        return p;
+    }
+
+    /**
      * Total histórico de unidades vendidas de cada producto activo de la tienda del actor
      * (ver {@link ProductRepository#totalSoldByProduct}), pensado para los filtros
      * "sin ventas" / "más vendidos" de Inventario. Incluye productos con 0 ventas.
@@ -237,6 +277,7 @@ public class ProductService {
      *         tienda del actor
      * @throws IllegalStateException si es SUPER_ADMIN sin ninguna tienda elegida para actuar
      */
+    @Transactional
     public Product create(ProductRequest req, User actor) {
         Tienda tienda = tenantScope.tiendaForWrite(actor);
         if (tienda == null && tenantScope.isPlatformActor(actor)) {
@@ -259,8 +300,9 @@ public class ProductService {
         p.setTienda(tienda);
         p.setIsActive(true);
         p.setIsReservable(Boolean.TRUE.equals(req.getIsReservable()));
-        validateApartadoDiscountPercent(req.getApartadoDiscountPercent(), req.getPrice(), tienda);
-        p.setApartadoDiscountPercent(req.getApartadoDiscountPercent());
+        BigDecimal apartadoDiscount = effectiveApartadoDiscount(p, req);
+        validateApartadoDiscountPercent(apartadoDiscount, req.getPrice(), tienda);
+        p.setApartadoDiscountPercent(apartadoDiscount);
         p.setCreatedBy(actor);
         Product saved = productRepository.save(p);
 
@@ -298,8 +340,9 @@ public class ProductService {
         p.setUnit(req.getUnit() != null ? req.getUnit() : "pieza");
         p.setCategory(cat);
         if (req.getIsReservable() != null) p.setIsReservable(req.getIsReservable());
-        validateApartadoDiscountPercent(req.getApartadoDiscountPercent(), req.getPrice(), p.getTienda());
-        p.setApartadoDiscountPercent(req.getApartadoDiscountPercent());
+        BigDecimal apartadoDiscount = effectiveApartadoDiscount(p, req);
+        validateApartadoDiscountPercent(apartadoDiscount, req.getPrice(), p.getTienda());
+        p.setApartadoDiscountPercent(apartadoDiscount);
         p.setUpdatedBy(actor);
         return productRepository.save(p);
     }
@@ -327,7 +370,10 @@ public class ProductService {
         if (req.getQuantity() < 0 && !tenantScope.isAdminLevel(actor)) {
             throw new IllegalStateException("Solo un administrador puede quitar piezas del inventario");
         }
-        Product p = findById(id, actor);
+        // findByIdForUpdate (no findById): toma el lock ANTES de leer el stock, para que un
+        // ajuste manual concurrente con una venta/confirmación de apartado sobre el mismo
+        // producto quede serializado en vez de que ambos partan del mismo valor leído.
+        Product p = findByIdForUpdate(id, actor);
         int previous = p.getStock();
         // En long, NO en int: "previous + quantity" con aritmética int normal se desborda
         // en silencio si la suma pasa de Integer.MAX_VALUE (ENV: envuelve a un negativo
@@ -348,6 +394,26 @@ public class ProductService {
         MovementType type = req.getQuantity() >= 0 ? MovementType.IN : MovementType.OUT;
         recordMovement(p, actor, type, Math.abs(req.getQuantity()), previous, req.getReason());
         return p;
+    }
+
+    /**
+     * Suma piezas a un producto que llegan de otro módulo (hoy, materia prima pasada a
+     * inventario) y registra la entrada con su referencia. El producto debe venir ya
+     * bloqueado ({@link #findByIdForUpdate}) dentro de la transacción del llamador.
+     *
+     * @throws FieldConflictException (campo {@code quantity}) si el stock resultante desbordaría un {@code int}
+     */
+    public void receiveStock(Product p, int quantity, String reason, String reference, User actor) {
+        int previous = p.getStock();
+        long newStockLong = (long) previous + quantity;
+        if (newStockLong > Integer.MAX_VALUE) {
+            throw new FieldConflictException("quantity", "El número es excesivamente grande — el máximo permitido es 2,147,483,647");
+        }
+        p.setStock((int) newStockLong);
+        productRepository.save(p);
+        InventoryMovement mv = recordMovement(p, actor, MovementType.IN, quantity, previous, reason);
+        mv.setReference(reference);
+        movementRepository.save(mv);
     }
 
     /**
@@ -402,8 +468,20 @@ public class ProductService {
         if (barcode == null || barcode.isBlank()) return;
         Product existing = productRepository.findByBarcodeExact(barcode, tiendaId).orElse(null);
         if (existing != null && !existing.getId().equals(excludeProductId)) {
-            throw new FieldConflictException("barcode", "Ya existe un producto con ese código de barras: " + existing.getName());
+            throw new FieldConflictException("barcode", "Ya existe un producto con ese código de producto: " + existing.getName());
         }
+    }
+
+    /**
+     * Descuento público de apartados que de verdad aplica: el del request solo si el
+     * producto queda visible en la tienda pública ({@code isReservable}); si no, null. Un
+     * producto que no sale en el catálogo público no tiene a quién mostrarle la oferta — y
+     * el formulario de Inventario solo oculta el campo al desmarcar "Mostrar en la tienda
+     * pública", sin vaciarlo, así que sin esto un valor viejo seguía validándose (y
+     * rechazándose) aunque ya no aplicara.
+     */
+    private BigDecimal effectiveApartadoDiscount(Product p, ProductRequest req) {
+        return Boolean.TRUE.equals(p.getIsReservable()) ? req.getApartadoDiscountPercent() : null;
     }
 
     /**
@@ -454,7 +532,7 @@ public class ProductService {
      * @param previous stock antes del movimiento
      * @param reason motivo del movimiento, para mostrar en el historial
      */
-    private void recordMovement(Product product, User actor, MovementType type,
+    private InventoryMovement recordMovement(Product product, User actor, MovementType type,
                                  int quantity, int previous, String reason) {
         InventoryMovement mv = new InventoryMovement();
         mv.setProduct(product);
@@ -464,6 +542,6 @@ public class ProductService {
         mv.setPreviousStock(previous);
         mv.setNewStock(previous + (type == MovementType.IN ? quantity : -quantity));
         mv.setReason(reason);
-        movementRepository.save(mv);
+        return movementRepository.save(mv);
     }
 }

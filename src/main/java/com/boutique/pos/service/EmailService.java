@@ -2,6 +2,7 @@ package com.boutique.pos.service;
 
 import com.boutique.pos.model.Apartado;
 import com.boutique.pos.model.ApartadoItem;
+import com.boutique.pos.model.ArcoRequest;
 import com.boutique.pos.model.MailConfig;
 import com.boutique.pos.model.Sale;
 import com.boutique.pos.model.Tienda;
@@ -61,19 +62,30 @@ public class EmailService {
         return sender;
     }
 
+    // Nombre visible de los correos que NO son de una tienda en particular — de cuenta/
+    // plataforma, no de una operación (venta, apartado, corte) de ninguna tienda — ver
+    // applySystemSender. Antes estos caían en el mismo "Nexora POS" genérico que
+    // applySenderAndReplyTo usa como respaldo cuando no hay tienda; se separan porque un
+    // correo de "recupera tu contraseña" o "tu cuenta nueva" no tiene nada que ver con el
+    // nombre del producto (POS), es soporte de la plataforma.
+    private static final String SYSTEM_SENDER_NAME = "Nexora Systems Soporte";
+
     /**
      * Pone el remitente (siempre la cuenta autenticada en {@code cfg}, con el nombre de la
      * tienda como texto visible) y, si la tienda capturó un correo propio, lo pone como
      * "Responder a" — para que si el cliente le da "Responder" al ticket, le llegue
-     * directo a la tienda y no a la cuenta centralizada de la plataforma.
+     * directo a la tienda y no a la cuenta centralizada de la plataforma. Para un correo
+     * OPERATIVO de una tienda (ticket, corte de caja, aviso de apartado) — nunca para uno
+     * de cuenta/plataforma, ver {@link #applySystemSender}.
      *
-     * @param tienda tienda dueña del correo, o {@code null} si no aplica (ej. un
-     *               SUPER_ADMIN pidiendo recuperar su contraseña) — en ese caso se usa
-     *               "Nexora POS" como nombre visible y no se pone "Responder a".
+     * @param tienda tienda dueña del correo; en la práctica nunca es {@code null} aquí
+     *               (ticket/corte/apartado siempre pertenecen a una tienda) — si llegara a
+     *               serlo, cae en el mismo nombre de {@link #applySystemSender} y sin
+     *               "Responder a", en vez de tronar.
      */
     private void applySenderAndReplyTo(MimeMessageHelper helper, MailConfig cfg, Tienda tienda) throws MessagingException {
         String display = (tienda != null && tienda.getName() != null && !tienda.getName().isBlank())
-                ? tienda.getName() : "Nexora POS";
+                ? tienda.getName() : SYSTEM_SENDER_NAME;
         try {
             helper.setFrom(new InternetAddress(cfg.getSmtpUsername(), display));
         } catch (UnsupportedEncodingException e) {
@@ -81,6 +93,22 @@ public class EmailService {
         }
         if (tienda != null && tienda.getContactEmail() != null && !tienda.getContactEmail().isBlank()) {
             helper.setReplyTo(tienda.getContactEmail());
+        }
+    }
+
+    /**
+     * Pone el remitente de un correo de CUENTA/PLATAFORMA (recuperar contraseña, alta de
+     * usuario nuevo) — nunca depende de una tienda, aunque el destinatario pertenezca a
+     * una: a diferencia de un ticket o un aviso de apartado, este correo no es una
+     * operación de la tienda, es la plataforma hablándole directo al usuario sobre su
+     * cuenta. Siempre "{@value #SYSTEM_SENDER_NAME}" como nombre visible, sin "Responder a"
+     * (no hay a quién redirigir la respuesta — son correos automáticos de cuenta).
+     */
+    private void applySystemSender(MimeMessageHelper helper, MailConfig cfg) throws MessagingException {
+        try {
+            helper.setFrom(new InternetAddress(cfg.getSmtpUsername(), SYSTEM_SENDER_NAME));
+        } catch (UnsupportedEncodingException e) {
+            helper.setFrom(cfg.getSmtpUsername());
         }
     }
 
@@ -159,6 +187,40 @@ public class EmailService {
         }
     }
 
+    /**
+     * Envía el reporte de fin de día de UNA caja (un correo, un Excel con sus cortes del día).
+     *
+     * @param registerName nombre de la caja, para el asunto y el texto del correo
+     */
+    @Async
+    public void sendCashRegisterDayReportEmail(Tienda tienda, String registerName, int cutCount, byte[] excelBytes, String toEmail) {
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite el fin de día de {} / {}", tienda.getName(), registerName);
+            return;
+        }
+        try {
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            applySenderAndReplyTo(helper, cfg, tienda);
+            helper.setTo(toEmail);
+            helper.setSubject("Corte de fin de día — " + registerName + " · " + tienda.getName());
+            helper.setText(
+                    "Se hizo el corte de fin de día de " + registerName + " en " + tienda.getName() + ".\n" +
+                    "Incluye " + cutCount + " corte(s) del día (traspasos y corte final).\n\n" +
+                    "Adjuntamos el reporte detallado en Excel."
+            );
+            String safeName = registerName.replaceAll("[^A-Za-z0-9_-]+", "-");
+            helper.addAttachment("fin-de-dia-" + safeName + "-" + java.time.LocalDate.now() + ".xlsx",
+                    new org.springframework.core.io.ByteArrayResource(excelBytes));
+            sender.send(message);
+            log.info("Fin de día de {} / {} ({} corte(s)) enviado a {}", tienda.getName(), registerName, cutCount, toEmail);
+        } catch (MessagingException | RuntimeException e) {
+            log.error("No se pudo enviar el fin de día de {} / {} a {}: {}", tienda.getName(), registerName, toEmail, e.getMessage());
+        }
+    }
+
     // @Async por el mismo motivo que los otros dos envíos: AuthService ya generó el token y
     // respondió al frontend (con el mismo mensaje genérico, exista o no el correo) antes de
     // que este correo termine de mandarse.
@@ -179,7 +241,7 @@ public class EmailService {
             JavaMailSender sender = buildSender(cfg);
             MimeMessage message = sender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-            applySenderAndReplyTo(helper, cfg, user.getTienda());
+            applySystemSender(helper, cfg);
             helper.setTo(user.getEmail());
             helper.setSubject("Recupera tu contraseña");
             helper.setText(
@@ -220,7 +282,7 @@ public class EmailService {
             JavaMailSender sender = buildSender(cfg);
             MimeMessage message = sender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-            applySenderAndReplyTo(helper, cfg, user.getTienda());
+            applySystemSender(helper, cfg);
             helper.setTo(user.getEmail());
             helper.setSubject("Tu cuenta en Nexora POS");
             helper.setText(
@@ -590,6 +652,53 @@ public class EmailService {
             log.info("Aviso de vencimiento del apartado {} enviado al cliente ({})", apartado.getId(), toEmail);
         } catch (MessagingException | RuntimeException e) {
             log.error("No se pudo enviar el aviso de vencimiento del apartado {} a {} (cliente): {}", apartado.getId(), toEmail, e.getMessage());
+        }
+    }
+
+    // Se manda a CADA SUPER_ADMIN activo (ver UserRepository#findActiveSuperAdmins) — una
+    // sola llamada por destinatario, igual patrón que sendCashCutReportEmail cuando una
+    // tienda tiene varios admins. Correo de plataforma (applySystemSender), nunca de una
+    // tienda: la solicitud en sí no pertenece a ninguna.
+    /**
+     * Avisa por correo a un SUPER_ADMIN que llegó una solicitud ARCO nueva, con los datos
+     * de contacto de quien la hizo y el detalle que haya escrito.
+     *
+     * @param request solicitud recién creada (estado {@code PENDING})
+     * @param adminLink URL (del frontend) a la pantalla de "Solicitudes ARCO" para atenderla
+     * @param toEmail correo del SUPER_ADMIN a notificar
+     */
+    @Async
+    public void sendArcoRequestEmail(ArcoRequest request, String adminLink, String toEmail) {
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite el aviso de la solicitud ARCO {}", request.getId());
+            return;
+        }
+        try {
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            applySystemSender(helper, cfg);
+            helper.setTo(toEmail);
+            helper.setSubject("Nueva solicitud ARCO (" + request.getType().label() + ")");
+            StringBuilder body = new StringBuilder();
+            body.append("Llegó una nueva solicitud de derechos ARCO:\n\n");
+            body.append("Tipo: ").append(request.getType().label()).append("\n");
+            body.append("Nombre: ").append(request.getRequesterName()).append("\n");
+            body.append("Correo: ").append(request.getRequesterEmail()).append("\n");
+            if (request.getRequesterPhone() != null && !request.getRequesterPhone().isBlank()) {
+                body.append("Teléfono: ").append(request.getRequesterPhone()).append("\n");
+            }
+            body.append("\nDetalle:\n");
+            body.append(request.getDetails() != null && !request.getDetails().isBlank()
+                    ? request.getDetails() : "(sin detalle adicional)");
+            body.append("\n\nAtiéndela aquí:\n").append(adminLink);
+            helper.setText(body.toString());
+
+            sender.send(message);
+            log.info("Aviso de solicitud ARCO {} enviado a {}", request.getId(), toEmail);
+        } catch (MessagingException | RuntimeException e) {
+            log.error("No se pudo enviar el aviso de la solicitud ARCO {} a {}: {}", request.getId(), toEmail, e.getMessage());
         }
     }
 }

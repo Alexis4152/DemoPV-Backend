@@ -27,13 +27,11 @@ public class ApartadoRequest {
     @Size(max = 150, message = "El nombre no puede tener más de 150 caracteres")
     private String customerName;
 
-    // Máximo alineado a apartados.customer_phone VARCHAR(30). Texto libre a propósito (las
-    // notas van en `notes`, no aquí) pero debe verse como un teléfono real: solo dígitos y
-    // separadores típicos, con al menos 7 dígitos — mismo patrón que PublicApartar.jsx.
+    // Celular mexicano: exactamente 10 dígitos, sin lada ni separadores — el frontend ya
+    // solo deja escribir dígitos y corta en 10 (ver PHONE_DIGITS/onlyDigits en
+    // PublicApartar.jsx), esto es el respaldo del lado del servidor para ese mismo formato.
     @NotBlank(message = "El teléfono es obligatorio")
-    @Size(max = 30, message = "El teléfono no puede tener más de 30 caracteres")
-    @Pattern(regexp = "^(?=(?:.*\\d){7,})[0-9+\\-\\s()]+$",
-            message = "El teléfono solo puede tener números, espacios, +, - y paréntesis, con al menos 7 dígitos")
+    @Pattern(regexp = "^[0-9]{10}$", message = "El teléfono debe tener 10 dígitos")
     private String customerPhone;
 
     // Opcional. Máximo alineado a apartados.customer_email VARCHAR(150).

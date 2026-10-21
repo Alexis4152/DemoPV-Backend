@@ -81,10 +81,15 @@ public class RoleController {
      * Crea un nuevo rol, incluyendo las secciones de la aplicación que tendrá
      * habilitadas.
      *
+     * <p>Solo SUPER_ADMIN puede crear roles nuevos — el sistema quedó fijo en 4 roles
+     * (SUPER_ADMIN, SUPERVISOR, ADMIN, CASHIER); un ADMIN/SUPERVISOR de tienda ya solo
+     * puede editar los permisos de los roles que ya existen en su tienda, no agregar más.</p>
+     *
      * @param req   datos del rol a crear (nombre, secciones habilitadas, etc.)
      * @param actor usuario autenticado que realiza la creación
      */
     @PostMapping
+    @PreAuthorize("@sectionAccess.check('ROLES') and hasRole('SUPER_ADMIN')")
     public ResponseEntity<ApiResponse<Role>> create(@Valid @RequestBody RoleRequest req, @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(roleService.create(req, actor), "Rol creado"));
     }

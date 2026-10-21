@@ -32,4 +32,12 @@ public class RoleRequest {
     // por accidente (olvidar marcar cualquier sección).
     @NotEmpty(message = "Selecciona al menos una sección")
     private Set<AppSection> sections;
+
+    // Acciones de mutación (crear/editar/eliminar) habilitadas por sección, codificadas
+    // "SECCION:ACCION" (ej. "INVENTORY:CREATE") — mismo formato que Role#actionGrants.
+    // Opcional: null/vacío es válido y significa "ninguna acción de mutación otorgada" (el
+    // rol solo puede ver, no crear/editar/eliminar nada dentro de las secciones que sí
+    // tiene). Ignorado por completo para roles de gestión (ADMIN/SUPERVISOR/SUPER_ADMIN),
+    // que siempre tienen CRUD total — ver SectionAccessService#checkAction.
+    private Set<String> actionGrants;
 }

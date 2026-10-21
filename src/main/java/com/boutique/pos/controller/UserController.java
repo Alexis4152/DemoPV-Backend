@@ -23,13 +23,21 @@ import java.time.LocalDateTime;
  * <p>
  * Administra los usuarios (cajeros, vendedores, administradores, etc.) de la
  * tienda del usuario autenticado, incluyendo su asignación de rol. Todos los métodos
- * requieren acceso a la sección {@code USERS} (el {@code @PreAuthorize} de la clase);
- * dar de alta, editar y desactivar usuarios además exigen el rol {@code ADMIN}, {@code
- * SUPERVISOR} o {@code SUPER_ADMIN} (ver el {@code @PreAuthorize} de cada uno de esos tres
- * métodos, que repite la sección porque un {@code @PreAuthorize} a nivel de método
- * reemplaza al de la clase en vez de sumarse) — la jerarquía real de qué rol puede asignar
- * qué otro rol la aplica {@link UserService} (ver {@code assertCanAssignRole}), no esta
- * anotación.
+ * requieren acceso a la sección {@code USERS} (el {@code @PreAuthorize} de la clase); dar
+ * de alta, editar, desactivar y forzar el cierre de sesión de un usuario además exigen el
+ * permiso fino correspondiente ({@code USERS:CREATE}/{@code EDIT}/{@code DELETE} — ver el
+ * {@code @PreAuthorize} de cada uno de esos métodos, que repite la sección porque un
+ * {@code @PreAuthorize} a nivel de método reemplaza al de la clase en vez de sumarse; roles
+ * de gestión lo tienen implícito, ver {@code SectionAccessService#checkAction}).
+ * <p>
+ * Esta anotación es solo la primera compuerta. La que de verdad decide quién puede crear,
+ * editar o dar de baja a QUIÉN (y no solo "si puede usar el módulo") es la jerarquía de
+ * {@link UserService} (ver {@code assertCanAssignRole}/{@code assertCanManage}): un actor
+ * solo puede administrar usuarios con un rol estrictamente por debajo del suyo, salvo entre
+ * dos roles sin rango (CASHIER o uno personalizado), que si pueden administrarse entre sí.
+ * Así, aunque un rol personalizado tenga aquí el permiso {@code USERS:CREATE}, nunca podrá
+ * crear/editar/eliminar una cuenta ADMIN/SUPERVISOR/SUPER_ADMIN — esa jerarquía no se toca
+ * desde "Roles y Permisos".
  */
 @RestController
 @RequestMapping("/api/users")
@@ -87,12 +95,8 @@ public class UserController {
      * @param req   datos del usuario a crear (incluye el rol asignado)
      * @param actor usuario autenticado que realiza la creación
      */
-    // hasAnyRole explícito aquí (además del @sectionAccess de la clase, que un
-    // @PreAuthorize a nivel de método REEMPLAZA en vez de sumar) porque cualquiera con la
-    // sección USERS habilitada podía crear/editar/desactivar usuarios — debe ser solo
-    // ADMIN/SUPER_ADMIN.
     @PostMapping
-    @PreAuthorize("@sectionAccess.check('USERS') and hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    @PreAuthorize("@sectionAccess.checkAction('USERS', 'CREATE')")
     public ResponseEntity<ApiResponse<User>> create(@Valid @RequestBody UserRequest req, @AuthenticationPrincipal User actor) {
         // Se checa ANTES de crear/reactivar (que es quien de verdad decide y ejecuta) solo
         // para poder avisarle al admin qué pasó de verdad — ver UserService#create.
@@ -112,7 +116,7 @@ public class UserController {
      * @param actor usuario autenticado que realiza la actualización
      */
     @PutMapping("/{id}")
-    @PreAuthorize("@sectionAccess.check('USERS') and hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    @PreAuthorize("@sectionAccess.checkAction('USERS', 'EDIT')")
     public ResponseEntity<ApiResponse<User>> update(@PathVariable Long id,
                                                      @Valid @RequestBody UserRequest req,
                                                      @AuthenticationPrincipal User actor) {
@@ -126,9 +130,23 @@ public class UserController {
      * @param actor usuario autenticado que realiza la baja
      */
     @DeleteMapping("/{id}")
-    @PreAuthorize("@sectionAccess.check('USERS') and hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    @PreAuthorize("@sectionAccess.checkAction('USERS', 'DELETE')")
     public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id, @AuthenticationPrincipal User actor) {
         userService.deactivate(id, actor);
         return ResponseEntity.ok(ApiResponse.ok(null, "Usuario desactivado"));
+    }
+
+    /**
+     * Cierra a la fuerza la sesión abierta de un usuario (ver {@link UserService#forceLogout}
+     * para el detalle de qué tan inmediato es esto en realidad).
+     *
+     * @param id    identificador del usuario a desloguear
+     * @param actor usuario autenticado que ejecuta la acción
+     */
+    @PostMapping("/{id}/force-logout")
+    @PreAuthorize("@sectionAccess.checkAction('USERS', 'EDIT')")
+    public ResponseEntity<ApiResponse<Void>> forceLogout(@PathVariable Long id, @AuthenticationPrincipal User actor) {
+        userService.forceLogout(id, actor);
+        return ResponseEntity.ok(ApiResponse.ok(null, "Sesión cerrada"));
     }
 }

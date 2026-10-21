@@ -15,6 +15,8 @@ import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.LockedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -22,8 +24,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Base64;
+import java.util.List;
 
 /**
  * Servicio de autenticación del sistema.
@@ -53,6 +57,16 @@ public class AuthService {
     // de exposición si el correo del usuario fuera interceptado.
     private static final long RESET_TOKEN_MINUTES = 30;
 
+    // Fuerza bruta en login, por CUENTA (hallazgo "Alto" de la auditoría de código) — capa
+    // complementaria al límite por IP de RateLimitInterceptor: ese frena a alguien probando
+    // muchas cuentas distintas desde la misma IP, este bloquea el ataque puntual contra UNA
+    // cuenta (aunque venga repartido entre varias IPs). Al llegar al límite se bloquea
+    // temporalmente — ver User#isAccountNonLocked, que Spring Security revisa ANTES de
+    // comparar la contraseña, así que una cuenta ya bloqueada nunca llega a exponer si la
+    // contraseña enviada era o no correcta.
+    private static final int MAX_FAILED_LOGIN_ATTEMPTS = 5;
+    private static final int ACCOUNT_LOCK_MINUTES = 15;
+
     @Value("${app.frontend.url}")
     private String frontendUrl;
 
@@ -79,20 +93,69 @@ public class AuthService {
      * frontend pueda armar el menú sin pedirlas por separado, así como la tienda a la que
      * pertenece (null para usuarios de plataforma tipo SUPER_ADMIN).</p>
      *
+     * <p>Una sola sesión activa por cuenta: si el usuario ya tiene un refresh token vigente
+     * sin revocar (otro dispositivo/navegador con sesión abierta), este login se rechaza —
+     * ver {@code IllegalStateException} más abajo. Excepción: SUPER_ADMIN/SUPERVISOR/ADMIN
+     * nunca se bloquean (ver {@link #isSessionRestrictionExempt}) — en vez de rechazar,
+     * revoca cualquier sesión previa suya y deja esta como la única válida.</p>
+     *
      * @param req credenciales de acceso (correo y contraseña en texto plano)
      * @return el body de sesión de siempre más el refresh token crudo (ver {@link LoginResult})
      * @throws org.springframework.security.core.AuthenticationException si las credenciales son inválidas
+     * @throws IllegalStateException si la cuenta está bloqueada temporalmente por demasiados intentos
+     *         fallidos, o si ya tiene una sesión activa en otro lado
      */
-    @Transactional
+    // Sin @Transactional a propósito: si el método completo fuera una sola transacción, el
+    // guardado del contador de intentos fallidos (registerFailedLoginAttempt) se revertiría
+    // en cuanto la excepción de credenciales inválidas se relanza y sale del método — cada
+    // llamada a userRepository.save()/issueRefreshToken() ya es transaccional por sí misma
+    // (Spring Data), así que el contador debe quedar confirmado ANTES de lanzar el error, no
+    // envuelto junto con él.
     public LoginResult login(LoginRequest req) {
-        Authentication auth = authManager.authenticate(
-                new UsernamePasswordAuthenticationToken(req.getEmail(), req.getPassword())
-        );
+        String email = resolveLoginEmail(req.getEmail());
+        Authentication auth;
+        try {
+            auth = authManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(email, req.getPassword())
+            );
+        } catch (LockedException e) {
+            String detail = userRepository.findByEmail(email)
+                    .map(User::getLockedUntil)
+                    .map(until -> "Intenta de nuevo en " + Math.max(1, Duration.between(LocalDateTime.now(), until).toMinutes()) + " minuto(s).")
+                    .orElse("Intenta de nuevo más tarde.");
+            throw new IllegalStateException("Cuenta bloqueada temporalmente por múltiples intentos fallidos. " + detail);
+        } catch (BadCredentialsException e) {
+            registerFailedLoginAttempt(email);
+            throw e;
+        }
         User user = (User) auth.getPrincipal();
+        if (user.getFailedLoginAttempts() > 0 || user.getLockedUntil() != null) {
+            user.setFailedLoginAttempts(0);
+            user.setLockedUntil(null);
+            userRepository.save(user);
+        }
         if (user.getRole() == null) {
             // Usuario sin rol asignado (típicamente uno insertado a mano en la base sin
             // role_id) — sin esto, el .getRole().getName() de abajo truena con NPE crudo.
             throw new IllegalStateException("Tu cuenta no tiene un rol asignado, contacta a tu administrador");
+        }
+        // Una sola sesión activa por cuenta a la vez — evita que dos cajeros terminen
+        // operando sin querer con el mismo usuario desde dos cajas distintas. Se checa
+        // DESPUÉS de validar credenciales (nunca antes): si fuera antes, cualquiera podría
+        // usar este mensaje para averiguar si una cuenta tiene sesión abierta sin conocer
+        // su contraseña. Para volver a entrar, el usuario debe cerrar sesión él mismo, o un
+        // admin debe cerrársela desde Usuarios (ver UserService#forceLogout).
+        //
+        // EXCEPCIÓN: roles de administración (ADMIN/SUPERVISOR/SUPER_ADMIN) nunca se
+        // bloquean — son justo quienes tendrían que resolver el bloqueo de cualquier otra
+        // cuenta, así que ellos mismos no pueden quedar atrapados sin nadie que se lo
+        // revoque. En vez de bloquear, este login revoca cualquier sesión previa suya y
+        // sigue adelante: siempre gana la ÚLTIMA sesión iniciada, nunca la bloquea.
+        if (isSessionRestrictionExempt(user)) {
+            refreshTokenRepository.revokeAllForUser(user);
+        } else if (refreshTokenRepository.existsByUserAndRevokedFalseAndExpiresAtAfter(user, LocalDateTime.now())) {
+            throw new IllegalStateException(
+                    "Ya hay una sesión activa con este usuario. Ciérrala primero, o pide a tu administrador que la cierre desde Usuarios.");
         }
         String accessToken = jwtTokenProvider.generateAccessToken(user);
         String refreshToken = issueRefreshToken(user);
@@ -103,10 +166,55 @@ public class AuthService {
                 .email(user.getEmail())
                 .role(user.getRole().getName())
                 .sections(user.getRole().getSections().stream().map(Enum::name).toList())
+                .actionGrants(List.copyOf(user.getRole().getActionGrants()))
                 .tienda(user.getTienda())
                 .mustChangePassword(user.getMustChangePassword())
                 .build();
         return new LoginResult(body, refreshToken);
+    }
+
+    /**
+     * Lo que se escribió en "Correo o teléfono" → el correo de la cuenta. Con {@code @} es un
+     * correo y se usa tal cual; si no, se toman solo los dígitos y, si son 10 y hay un
+     * usuario con ese teléfono, se usa su correo. Si no hay ninguno se regresa lo escrito,
+     * y la autenticación falla con el mismo error genérico de credenciales inválidas (no
+     * revela si el teléfono existe).
+     */
+    private String resolveLoginEmail(String identifier) {
+        String value = identifier.trim();
+        if (value.contains("@")) return value;
+        String digits = value.replaceAll("\\D", "");
+        if (digits.length() != 10) return value;
+        return userRepository.findByPhone(digits).map(User::getEmail).orElse(value);
+    }
+
+    // Mismos tres roles de administración que ya distingue UserService#ROLE_RANK (ahí para
+    // la jerarquía de quién puede administrar a quién; aquí para quién nunca se queda
+    // bloqueado afuera). Un rol personalizado que un ADMIN cree desde "Roles y Permisos"
+    // SÍ queda sujeto a la restricción — solo estos tres roles del sistema son "de gestión".
+    private static final java.util.Set<String> SESSION_RESTRICTION_EXEMPT_ROLES =
+            java.util.Set.of("SUPER_ADMIN", "SUPERVISOR", "ADMIN");
+
+    /** {@code true} si el rol del usuario queda exento del bloqueo de "una sola sesión
+     *  activa" al hacer login (ver el bloque de arriba en {@link #login}). */
+    private boolean isSessionRestrictionExempt(User user) {
+        return SESSION_RESTRICTION_EXEMPT_ROLES.contains(user.getRole().getName());
+    }
+
+    /** Suma un intento fallido a la cuenta con ese correo (si existe) y la bloquea
+     *  {@value #ACCOUNT_LOCK_MINUTES} minutos al llegar a {@value #MAX_FAILED_LOGIN_ATTEMPTS}.
+     *  Silencioso si el correo no existe — un correo desconocido ya lo rechazó Spring
+     *  Security con el mismo {@link BadCredentialsException} genérico, no hay cuenta que
+     *  bloquear ni falta rastro de intentos fallidos contra un correo que no es de nadie. */
+    private void registerFailedLoginAttempt(String email) {
+        userRepository.findByEmail(email).ifPresent(user -> {
+            int attempts = user.getFailedLoginAttempts() + 1;
+            user.setFailedLoginAttempts(attempts);
+            if (attempts >= MAX_FAILED_LOGIN_ATTEMPTS) {
+                user.setLockedUntil(LocalDateTime.now().plusMinutes(ACCOUNT_LOCK_MINUTES));
+            }
+            userRepository.save(user);
+        });
     }
 
     /**
@@ -252,6 +360,24 @@ public class AuthService {
         actor.setMustChangePassword(false);
         userRepository.save(actor);
         refreshTokenRepository.revokeAllForUser(actor);
+    }
+
+    // Un token revocado sigue teniendo su expiresAt original (8h para refresh, 30 min para
+    // reset), así que también queda cubierto por este borrado dentro de esa misma ventana —
+    // no hace falta una purga aparte por "revoked"/"used". Invocado por TokenPurgeJob.
+    /**
+     * Borra de las tablas {@code refresh_tokens} y {@code password_reset_tokens} las filas
+     * ya vencidas, para que no crezcan sin límite con el tiempo (hallazgo "Baja" de la
+     * auditoría de código: ninguna de las dos se purgaba nunca).
+     *
+     * @return cuántas filas se borraron en total, para el log del job
+     */
+    @Transactional
+    public int purgeExpiredTokens() {
+        LocalDateTime now = LocalDateTime.now();
+        int refreshDeleted = refreshTokenRepository.deleteExpired(now);
+        int resetDeleted = passwordResetTokenRepository.deleteExpired(now);
+        return refreshDeleted + resetDeleted;
     }
 
     /** Genera un token aleatorio criptográficamente seguro, codificado en base64 URL-safe.

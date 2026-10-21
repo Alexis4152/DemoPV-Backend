@@ -55,6 +55,16 @@ public interface SaleRepository extends JpaRepository<Sale, Long> {
     Optional<Sale> findByOrderId(String orderId);
 
     /**
+     * Totales de las ventas de un corte agrupados por método de pago y estado:
+     * filas {@code [PaymentMethod, SaleStatus, cantidad, suma de total]}. Lo usa el cálculo
+     * del efectivo esperado ({@code CashBalanceCalculator}), que corre en casi todo el flujo
+     * de cortes: una sola consulta agregada en vez de cargar cada venta con sus productos.
+     */
+    @Query("SELECT s.paymentMethod, s.status, COUNT(s), COALESCE(SUM(s.total), 0) FROM Sale s " +
+           "WHERE s.cashCut.id = :cutId GROUP BY s.paymentMethod, s.status")
+    List<Object[]> sumByCashCut(@Param("cutId") Long cutId);
+
+    /**
      * Suma el total de las ventas completadas dentro de un rango de fechas.
      *
      * <p>{@code tiendaId} nulo indica SUPER_ADMIN viendo todas las tiendas (no se filtra por

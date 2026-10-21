@@ -1,10 +1,13 @@
 package com.boutique.pos.security;
 
 import com.boutique.pos.model.AppSection;
+import com.boutique.pos.model.Role;
 import com.boutique.pos.model.User;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
+
+import java.util.Set;
 
 /**
  * Servicio de autorización por sección (RBAC configurable) expuesto como bean {@code
@@ -44,6 +47,35 @@ public class SectionAccessService {
             }
         }
         return false;
+    }
+
+    // Mismos tres roles "de gestión" que AuthService#SESSION_RESTRICTION_EXEMPT_ROLES y
+    // UserService#ROLE_RANK — nunca quedan sujetos a actionGrants, siempre CRUD completo
+    // en cualquier sección que vean. Un rol personalizado (o CASHIER) SÍ queda sujeto.
+    private static final Set<String> MANAGEMENT_ROLES = Set.of("SUPER_ADMIN", "SUPERVISOR", "ADMIN");
+
+    /**
+     * Verifica que el usuario autenticado pueda realizar una ACCIÓN de mutación concreta
+     * (crear/editar/eliminar) dentro de una sección a la que ya tiene acceso — capa más
+     * fina que {@link #check(String)}, que solo valida si ve el módulo en absoluto.
+     *
+     * <p>Los roles "de gestión" ({@link #MANAGEMENT_ROLES}) siempre pasan, sin importar
+     * {@link Role#getActionGrants()}. Para cualquier otro rol, la acción debe estar
+     * explícitamente otorgada (ver {@link Role#getActionGrants()}) — ausente significa sin
+     * permiso, nunca al revés.</p>
+     *
+     * @param section nombre de un {@link AppSection} (ej. {@code "INVENTORY"})
+     * @param action  nombre de la acción (ej. {@code "CREATE"}, {@code "EDIT"}, {@code "DELETE"})
+     * @return {@code true} si el usuario tiene sesión activa, rol, acceso a esa sección, y
+     *         (siendo un rol de gestión, o teniendo esa acción explícitamente otorgada)
+     */
+    public boolean checkAction(String section, String action) {
+        User user = currentUser();
+        if (user == null || user.getRole() == null) return false;
+        Role role = user.getRole();
+        if (!role.getSections().contains(AppSection.valueOf(section))) return false;
+        if (MANAGEMENT_ROLES.contains(role.getName())) return true;
+        return role.getActionGrants().contains(section + ":" + action);
     }
 
     /**

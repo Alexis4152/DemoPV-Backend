@@ -30,6 +30,9 @@ public interface TiendaRepository extends JpaRepository<Tienda, Long> {
      *  equivalente de {@link #findAllByOrderByNameAsc()} pero acotado a su subconjunto. */
     List<Tienda> findBySupervisorIdOrderByNameAsc(Long supervisorId);
 
+    /** Tiendas activas de un SUPERVISOR: las que cuentan contra el máximo de su plan. */
+    long countBySupervisorIdAndIsActiveTrue(Long supervisorId);
+
     // Todo por subconsulta (nunca se lee tienda.supervisor en Java) para no depender de que
     // esa relación LAZY siga "viva" en este punto del request — ver ProductService#
     // searchSiblingStock, el único caller. NULL nunca calza con NULL en SQL, así que una

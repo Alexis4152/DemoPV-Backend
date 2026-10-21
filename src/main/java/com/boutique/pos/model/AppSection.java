@@ -27,5 +27,8 @@ public enum AppSection {
     ROLES,
     /** Apartados: revisar, confirmar, completar y cancelar reservas de productos hechas
      *  desde la tienda pública de apartados. */
-    APARTADOS
+    APARTADOS,
+    /** Materia prima: inventario por piezas que no está a la venta; se puede pasar una
+     *  parte al inventario vendible. */
+    RAW_MATERIALS
 }

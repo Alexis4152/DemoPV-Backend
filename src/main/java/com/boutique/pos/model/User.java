@@ -39,6 +39,11 @@ public class User implements UserDetails {
     @Column(nullable = false, unique = true, length = 150)
     private String email;
 
+    /** Teléfono (10 dígitos, solo números). Opcional; SOLO sirve para iniciar sesión en
+     *  lugar del correo, con la misma contraseña. Único entre usuarios. */
+    @Column(unique = true, length = 15)
+    private String phone;
+
     @Column(nullable = false)
     @JsonIgnore
     private String password;
@@ -65,6 +70,21 @@ public class User implements UserDetails {
     @Column(nullable = false)
     @Builder.Default
     private Boolean mustChangePassword = false;
+
+    /** Intentos de login fallidos consecutivos; se resetea a 0 en cuanto uno tiene éxito.
+     *  Protección contra fuerza bruta (hallazgo "Alto" de la auditoría de código) — ver
+     *  {@link com.boutique.pos.service.AuthService#login}. */
+    @Column(nullable = false)
+    @Builder.Default
+    private Integer failedLoginAttempts = 0;
+
+    /** Solo SUPERVISOR: cuántas tiendas activas puede tener según su plan contratado (lo
+     *  fija SUPER_ADMIN). {@code null} = sin límite. Ver {@code TiendaService#create}. */
+    private Integer maxTiendas;
+
+    /** Si tiene un valor futuro, la cuenta está bloqueada temporalmente por demasiados
+     *  intentos fallidos — ver {@link #isAccountNonLocked()}. */
+    private LocalDateTime lockedUntil;
 
     // LAZY (a diferencia del resto de relaciones de esta clase) porque User se referencia
     // a sí mismo aquí — en EAGER, Hibernate encadena el join User→createdBy→createdBy→...
@@ -102,6 +122,23 @@ public class User implements UserDetails {
     @UpdateTimestamp
     private LocalDateTime updatedAt;
 
+    // No es columna: se calcula al vuelo en UserService#findAll/findById (existe un
+    // refresh token suyo sin revocar y vigente) solo para mostrarse en la tabla de
+    // Usuarios — de ahí el admin puede cerrarle la sesión sin que el cajero tenga que
+    // volver (ver UserService#forceLogout). Default false para cualquier otro punto que
+    // construya un User sin pasar por ese cálculo (ej. tests, otros servicios).
+    //
+    // Modificador `transient` de JAVA a propósito, NO la anotación @Transient de JPA:
+    // Hibernate6Module (registrado en JacksonConfig para las relaciones LAZY) ignora por
+    // default cualquier atributo marcado con la ANOTACIÓN @Transient al serializar a JSON
+    // — hasta con @JsonProperty encima seguía sin aparecer en la respuesta (confirmado
+    // pegándole directo a /api/users). Hibernate igual excluye de la tabla cualquier campo
+    // con el modificador `transient` (lo exige el propio spec de JPA), pero ese módulo de
+    // Jackson solo revisa la anotación, no el modificador — así se le escapa el ignore sin
+    // perder la exclusión de la base de datos.
+    @Builder.Default
+    private transient Boolean hasActiveSession = false;
+
     // ── UserDetails ──────────────────────────────────────────────
 
     /**
@@ -124,7 +161,7 @@ public class User implements UserDetails {
     @Override public String getUsername()              { return email; }
     @Override public boolean isAccountNonExpired()     { return true; }
     @Override public boolean isCredentialsNonExpired() { return true; }
-    @Override public boolean isAccountNonLocked()      { return true; }
+    @Override public boolean isAccountNonLocked()      { return lockedUntil == null || lockedUntil.isBefore(LocalDateTime.now()); }
     /** Un usuario dado de baja (borrado suave, {@code isActive=false}) no puede autenticarse. */
     @Override public boolean isEnabled()               { return Boolean.TRUE.equals(isActive); }
 }

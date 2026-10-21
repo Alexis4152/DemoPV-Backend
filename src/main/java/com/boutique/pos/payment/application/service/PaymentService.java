@@ -6,14 +6,24 @@ import com.boutique.pos.payment.application.port.out.PaymentGatewayPort;
 import com.boutique.pos.payment.application.port.out.PaymentRepositoryPort;
 import com.boutique.pos.payment.domain.exception.PaymentNotFoundException;
 import com.boutique.pos.payment.domain.model.PaymentTransaction;
+import com.boutique.pos.model.InventoryMovement;
+import com.boutique.pos.model.MovementType;
+import com.boutique.pos.model.Product;
 import com.boutique.pos.model.Sale;
+import com.boutique.pos.model.SaleItem;
 import com.boutique.pos.model.SaleStatus;
+import com.boutique.pos.payment.domain.model.PaymentStatus;
+import com.boutique.pos.repository.InventoryMovementRepository;
+import com.boutique.pos.repository.ProductRepository;
 import com.boutique.pos.repository.SaleRepository;
+import com.boutique.pos.service.ProductService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
 
 @Service
 @Transactional
@@ -24,16 +34,31 @@ public class PaymentService implements CreatePaymentUseCase, GetPaymentStatusUse
     private final PaymentGatewayPort paymentGatewayPort;
     private final PaymentRepositoryPort paymentRepositoryPort;
     private final SaleRepository saleRepository;
+    private final ProductService productService;
+    private final ProductRepository productRepository;
+    private final InventoryMovementRepository movementRepository;
 
     @Autowired
-    public PaymentService(PaymentGatewayPort paymentGatewayPort, PaymentRepositoryPort paymentRepositoryPort, SaleRepository saleRepository) {
+    public PaymentService(PaymentGatewayPort paymentGatewayPort,
+                          PaymentRepositoryPort paymentRepositoryPort,
+                          SaleRepository saleRepository,
+                          ProductService productService,
+                          ProductRepository productRepository,
+                          InventoryMovementRepository movementRepository) {
         this.paymentGatewayPort = paymentGatewayPort;
         this.paymentRepositoryPort = paymentRepositoryPort;
         this.saleRepository = saleRepository;
+        this.productService = productService;
+        this.productRepository = productRepository;
+        this.movementRepository = movementRepository;
+    }
+
+    public PaymentService(PaymentGatewayPort paymentGatewayPort, PaymentRepositoryPort paymentRepositoryPort, SaleRepository saleRepository) {
+        this(paymentGatewayPort, paymentRepositoryPort, saleRepository, null, null, null);
     }
 
     public PaymentService(PaymentGatewayPort paymentGatewayPort, PaymentRepositoryPort paymentRepositoryPort) {
-        this(paymentGatewayPort, paymentRepositoryPort, null);
+        this(paymentGatewayPort, paymentRepositoryPort, null, null, null, null);
     }
 
     @Override
@@ -155,12 +180,19 @@ public class PaymentService implements CreatePaymentUseCase, GetPaymentStatusUse
                 log.warn("Transacción {} marcada como FAILED vía webhook", transaction.getId());
             }
             case "charge.refunded" -> {
-                transaction.refund(transaction.getAmount());
+                if (transaction.getStatus() != PaymentStatus.REFUNDED) {
+                    var remaining = transaction.getAmount().subtract(transaction.getRefundedAmount());
+                    if (remaining.signum() > 0) {
+                        transaction.refund(remaining);
+                    }
+                }
                 log.info("Transacción {} marcada como REFUNDED vía webhook", transaction.getId());
                 if (saleRepository != null && transaction.getOrderId() != null) {
                     saleRepository.findByOrderId(transaction.getOrderId()).ifPresent(sale -> {
                         if (sale.getStatus() == SaleStatus.COMPLETED) {
+                            revertSaleStock(sale, "Cancelación de venta #" + sale.getId() + " (Webhook Openpay)");
                             sale.setStatus(SaleStatus.CANCELLED);
+                            sale.setCancelledAt(LocalDateTime.now());
                             sale.setNotes((sale.getNotes() != null ? sale.getNotes() + "\n" : "") + "[Webhook]: Cargo reembolsado en Openpay");
                             saleRepository.save(sale);
                             log.info("Venta ID {} actualizada a CANCELLED tras reembolso de pago vía webhook", sale.getId());
@@ -174,7 +206,9 @@ public class PaymentService implements CreatePaymentUseCase, GetPaymentStatusUse
                 if (saleRepository != null && transaction.getOrderId() != null) {
                     saleRepository.findByOrderId(transaction.getOrderId()).ifPresent(sale -> {
                         if (sale.getStatus() == SaleStatus.PENDING) {
+                            revertSaleStock(sale, "Cancelación de venta #" + sale.getId() + " (Cargo expirado/cancelado en Openpay)");
                             sale.setStatus(SaleStatus.CANCELLED);
+                            sale.setCancelledAt(LocalDateTime.now());
                             sale.setNotes((sale.getNotes() != null ? sale.getNotes() + "\n" : "") + "[Webhook]: Cargo cancelado/expirado en Openpay");
                             saleRepository.save(sale);
                             log.info("Venta ID {} actualizada de PENDING a CANCELLED tras cancelación de cargo en pasarela", sale.getId());
@@ -186,5 +220,29 @@ public class PaymentService implements CreatePaymentUseCase, GetPaymentStatusUse
         }
 
         paymentRepositoryPort.save(transaction);
+    }
+
+    private void revertSaleStock(Sale sale, String reason) {
+        if (productService == null || productRepository == null || movementRepository == null || sale.getItems() == null) {
+            return;
+        }
+        for (SaleItem item : sale.getItems()) {
+            if (item.getProduct() == null) continue;
+            Product p = productService.findByIdForUpdate(item.getProduct().getId());
+            int qty = item.getQuantity().intValue();
+            int previous = p.getStock();
+            p.setStock(previous + qty);
+            productRepository.save(p);
+
+            InventoryMovement mv = new InventoryMovement();
+            mv.setProduct(p);
+            mv.setUser(sale.getUser());
+            mv.setType(MovementType.IN);
+            mv.setQuantity(qty);
+            mv.setPreviousStock(previous);
+            mv.setNewStock(previous + qty);
+            mv.setReason(reason);
+            movementRepository.save(mv);
+        }
     }
 }

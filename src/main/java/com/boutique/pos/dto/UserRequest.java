@@ -1,6 +1,8 @@
 package com.boutique.pos.dto;
 
 import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -27,6 +29,11 @@ public class UserRequest {
     @NotBlank
     @Size(max = 150, message = "El correo no puede tener más de 150 caracteres")
     private String email;
+    // Opcional: teléfono para iniciar sesión en lugar del correo (10 dígitos; se aceptan
+    // espacios o guiones y se guardan solo los números — ver UserService#normalizePhone).
+    // Vacío o null = sin teléfono.
+    @Size(max = 20, message = "El teléfono no puede tener más de 20 caracteres")
+    private String phone;
     // Solo aplica en actualización, y es opcional (si no se envía, la contraseña actual no
     // cambia) — es la vía para que un ADMIN le resetee la contraseña a alguien manualmente.
     // Al CREAR un usuario este campo se ignora siempre: la contraseña inicial nunca la
@@ -50,4 +57,9 @@ public class UserRequest {
     // este Supervisor administra (ver Tienda#getSupervisor()/UserService#applySupervisedTiendas):
     // null = no tocar la asignación actual; lista vacía = quitarle todas.
     private List<Long> supervisedTiendaIds;
+    // Solo aplica si el rol es SUPERVISOR y quien crea/edita es SUPER_ADMIN: máximo de
+    // tiendas activas de su plan contratado. null = sin límite.
+    @Min(value = 0, message = "El máximo de tiendas no puede ser negativo")
+    @Max(value = 1000, message = "El máximo de tiendas no puede ser mayor a 1000")
+    private Integer maxTiendas;
 }

@@ -4,22 +4,22 @@ import com.boutique.pos.model.MailConfig;
 import com.boutique.pos.repository.MailConfigRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 /**
  * Siembra la fila única de {@link MailConfig} la primera vez que arranca la aplicación con
- * la tabla {@code mail_config} vacía, tomando los valores que hasta ahora vivían fijos en
- * application.properties/variables de entorno (una sola cuenta Gmail para todo el sistema).
+ * la tabla {@code mail_config} vacía.
  *
- * <p>A partir de ese primer arranque, {@code spring.mail.*} deja de leerse en tiempo de
- * ejecución (solo lo usa Spring para el bean autoconfigurado que ya no se usa) — un
- * SUPER_ADMIN administra host/usuario/contraseña desde {@code /api/admin/mail-config} (ver
- * {@code MailConfigService}), sin necesitar un redeploy para rotar la contraseña o cambiar
- * de cuenta. Arranques posteriores no tocan la fila ya existente, aunque estos valores por
- * default cambien.</p>
+ * <p>La sembrada queda {@code enabled=false} y SIN credenciales — un host/puerto de
+ * ejemplo (Gmail) nada más como punto de partida. Ya no toma ninguna contraseña real de
+ * {@code application.properties}/variables de entorno (antes sí, y esa contraseña real
+ * terminaba en texto plano tanto en el archivo versionado en git como en esta misma tabla
+ * — hallazgos "Alta"/"Media" de la auditoría de código). Un SUPER_ADMIN captura la cuenta
+ * real desde {@code /api/admin/mail-config} — mientras tanto, el envío de correo
+ * simplemente se omite (ver {@code EmailService}, que ya revisa {@code enabled} antes de
+ * intentar mandar cualquier cosa), sin bloquear el resto de la app.</p>
  */
 @Component
 @Order(20)
@@ -29,28 +29,14 @@ public class MailConfigDataInitializer implements CommandLineRunner {
 
     private final MailConfigRepository mailConfigRepository;
 
-    @Value("${spring.mail.host}")
-    private String defaultHost;
-
-    @Value("${spring.mail.port}")
-    private Integer defaultPort;
-
-    @Value("${spring.mail.username}")
-    private String defaultUsername;
-
-    @Value("${spring.mail.password}")
-    private String defaultPassword;
-
     @Override
     public void run(String... args) {
         if (mailConfigRepository.count() > 0) return;
         mailConfigRepository.save(MailConfig.builder()
-                .enabled(true)
-                .smtpHost(defaultHost)
-                .smtpPort(defaultPort)
-                .smtpUsername(defaultUsername)
-                .smtpPassword(defaultPassword)
+                .enabled(false)
+                .smtpHost("smtp.gmail.com")
+                .smtpPort(587)
                 .build());
-        log.info("Configuración de correo inicial sembrada en mail_config (host={}, usuario={})", defaultHost, defaultUsername);
+        log.info("Configuración de correo inicial sembrada en mail_config (deshabilitada, sin credenciales — configúrala en /api/admin/mail-config)");
     }
 }
