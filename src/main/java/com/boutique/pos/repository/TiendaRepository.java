@@ -57,10 +57,11 @@ public interface TiendaRepository extends JpaRepository<Tienda, Long> {
 
     /**
      * Bloqueo pesimista sobre la fila de la tienda — usado por {@code SaleService}/{@code
-     * ApartadoService} para incrementar {@code lastSaleFolio}/{@code lastApartadoFolio} de
-     * forma segura: dos altas simultáneas en la misma tienda quedan serializadas por
-     * Postgres en vez de ambas leer el mismo contador y una perder su incremento (mismo
-     * patrón que {@code ProductRepository#findByIdForUpdate} para el stock).
+     * ApartadoService} para incrementar {@code lastSaleFolio}/{@code lastApartadoFolio}, y
+     * por {@code ProductBarcodeService#nextCode} para el siguiente consecutivo de código de
+     * producto, de forma segura: dos altas simultáneas en la misma tienda quedan
+     * serializadas por Postgres en vez de ambas leer el mismo contador y una perder su
+     * incremento (mismo patrón que {@code ProductRepository#findByIdForUpdate} para el stock).
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT t FROM Tienda t WHERE t.id = :id")

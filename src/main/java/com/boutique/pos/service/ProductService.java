@@ -46,6 +46,7 @@ public class ProductService {
     private final ProductImageRepository productImageRepository;
     private final TiendaRepository tiendaRepository;
     private final TenantScope tenantScope;
+    private final ProductBarcodeService productBarcodeService;
 
     /**
      * Búsqueda paginada de productos activos, con filtros combinables. Cada producto trae
@@ -268,6 +269,9 @@ public class ProductService {
      * motivo "Stock inicial", para que el historial de movimientos explique de dónde
      * salió ese stock.</p>
      *
+     * <p>Si el código de producto viene vacío, se le asigna el siguiente consecutivo de la
+     * tienda (ver {@link ProductBarcodeService}).</p>
+     *
      * @param req datos del producto nuevo, incluyendo el id de su categoría
      * @param actor usuario que lo crea; determina la tienda del producto (la que esté
      *              actuando, si es SUPER_ADMIN — ver {@link TenantScope#tiendaForWrite});
@@ -290,7 +294,7 @@ public class ProductService {
         Product p = new Product();
         p.setName(req.getName());
         p.setDescription(req.getDescription());
-        p.setBarcode(normalizeBarcode(req.getBarcode()));
+        assignBarcode(p, req.getBarcode(), tiendaId);
         p.setPrice(req.getPrice());
         p.setCost(req.getCost() != null ? req.getCost() : java.math.BigDecimal.ZERO);
         p.setStock(req.getStock() != null ? req.getStock() : 0);
@@ -324,16 +328,29 @@ public class ProductService {
      * @return el producto actualizado
      * @throws IllegalArgumentException si el producto o la nueva categoría no existen o
      *         no pertenecen a la tienda del actor
+     * @throws FieldConflictException (campo {@code barcode}) si se intenta cambiar un
+     *         código generado por el sistema
      */
+    @Transactional
     public Product update(Long id, ProductRequest req, User actor) {
         Product p = findById(id, actor);
         Category cat = categoryService.findById(req.getCategoryId(), actor);
         Long tiendaId = p.getTienda() != null ? p.getTienda().getId() : null;
-        validateBarcodeUnique(req.getBarcode(), tiendaId, p.getId());
+
+        // Un código generado puede estar ya impreso en etiquetas: no se cambia. Si el
+        // request lo trae vacío (o igual), simplemente se conserva.
+        if (Boolean.TRUE.equals(p.getBarcodeGenerated())) {
+            String requested = normalizeBarcode(req.getBarcode());
+            if (requested != null && !requested.equals(p.getBarcode())) {
+                throw new FieldConflictException("barcode", "Este código lo generó el sistema y no se puede modificar");
+            }
+        } else {
+            validateBarcodeUnique(req.getBarcode(), tiendaId, p.getId());
+            assignBarcode(p, req.getBarcode(), tiendaId);
+        }
 
         p.setName(req.getName());
         p.setDescription(req.getDescription());
-        p.setBarcode(normalizeBarcode(req.getBarcode()));
         p.setPrice(req.getPrice());
         p.setCost(req.getCost() != null ? req.getCost() : java.math.BigDecimal.ZERO);
         p.setMinStock(req.getMinStock() != null ? req.getMinStock() : 5);
@@ -462,6 +479,50 @@ public class ProductService {
      */
     private String normalizeBarcode(String barcode) {
         return (barcode == null || barcode.isBlank()) ? null : barcode;
+    }
+
+    /**
+     * Productos para imprimir etiquetas de código de barras: los indicados (validando que
+     * sean de la tienda del actor) o, si no se indica ninguno, todos los activos con código
+     * de su tienda en orden alfabético. Los que no tienen código se omiten.
+     *
+     * @param productIds ids a imprimir, o null/vacío para todos
+     * @param actor usuario que imprime
+     * @return productos con código, listos para {@code BarcodeLabelPdfService}
+     * @throws IllegalArgumentException si algún id no existe o es de otra tienda, o si
+     *         ninguno de los productos tiene código
+     */
+    public List<Product> findForLabels(List<Long> productIds, User actor) {
+        List<Product> products;
+        if (productIds == null || productIds.isEmpty()) {
+            Tienda tienda = tenantScope.tiendaForWrite(actor);
+            if (tienda == null) throw new IllegalStateException("Elige una tienda para imprimir etiquetas");
+            products = productRepository.findActiveWithBarcode(tienda.getId());
+        } else {
+            products = productIds.stream()
+                    .map(id -> findById(id, actor))
+                    .filter(p -> p.getBarcode() != null)
+                    .toList();
+        }
+        if (products.isEmpty()) {
+            throw new IllegalArgumentException("No hay productos con código para imprimir. Genera los códigos primero.");
+        }
+        return products;
+    }
+
+    /**
+     * Pone el código capturado o, si viene vacío, el siguiente consecutivo de la tienda
+     * (ver {@link ProductBarcodeService}), para que ningún producto quede sin código.
+     */
+    private void assignBarcode(Product p, String requested, Long tiendaId) {
+        String barcode = normalizeBarcode(requested);
+        if (barcode == null && tiendaId != null) {
+            p.setBarcode(productBarcodeService.nextCode(tiendaId));
+            p.setBarcodeGenerated(true);
+        } else {
+            p.setBarcode(barcode);
+            p.setBarcodeGenerated(false);
+        }
     }
 
     private void validateBarcodeUnique(String barcode, Long tiendaId, Long excludeProductId) {

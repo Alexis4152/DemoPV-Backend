@@ -1,6 +1,9 @@
 package com.boutique.pos.controller;
 
 import com.boutique.pos.dto.ApiResponse;
+import com.boutique.pos.dto.BarcodeLabelRequest;
+import com.boutique.pos.service.BarcodeLabelPdfService;
+import com.boutique.pos.service.ProductBarcodeService;
 import com.boutique.pos.dto.BulkImportResult;
 import com.boutique.pos.dto.InventoryAdjustRequest;
 import com.boutique.pos.dto.PageResponse;
@@ -51,6 +54,12 @@ public class ProductController {
     private final ProductBulkImportService productBulkImportService;
     private final SectionAccessService sectionAccess;
     private final InventoryCountSheetService inventoryCountSheetService;
+    private final ProductBarcodeService productBarcodeService;
+    private final BarcodeLabelPdfService barcodeLabelPdfService;
+
+    // Tope de etiquetas por PDF, para no armar un archivo gigante por error (ej. 500
+    // copias de todo el catálogo).
+    private static final int MAX_LABELS_PER_PDF = 5000;
 
     // Ventana para que un rol con CREATE (sin EDIT) suba las fotos del producto que acaba de
     // crear — ver uploadImage. Holgada para varias fotos pesadas en una conexión lenta.
@@ -374,6 +383,46 @@ public class ProductController {
                 .header("Content-Type", "application/pdf")
                 .header("Content-Disposition", "attachment; filename=\"inventario-" + LocalDate.now() + ".pdf\"")
                 .body(inventoryCountSheetService.buildPdf(actor));
+    }
+
+    /** Cuántos productos activos de la tienda no tienen código todavía. */
+    @GetMapping("/barcodes/missing-count")
+    @PreAuthorize("@sectionAccess.check('INVENTORY')")
+    public ResponseEntity<ApiResponse<Long>> barcodesMissingCount(@AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(productBarcodeService.countMissing(actor)));
+    }
+
+    /**
+     * Asigna un código consecutivo a todos los productos activos de la tienda que no tengan,
+     * en orden alfabético (ver {@link ProductBarcodeService}). Mismo permiso que editar un
+     * producto.
+     */
+    @PostMapping("/barcodes/generate")
+    @PreAuthorize("@sectionAccess.checkAction('INVENTORY', 'EDIT')")
+    public ResponseEntity<ApiResponse<Integer>> generateBarcodes(@AuthenticationPrincipal User actor) {
+        int generated = productBarcodeService.generateMissing(actor);
+        String msg = generated == 0 ? "Todos los productos ya tienen código"
+                : "Se generaron " + generated + " código" + (generated == 1 ? "" : "s");
+        return ResponseEntity.ok(ApiResponse.ok(generated, msg));
+    }
+
+    /**
+     * PDF de etiquetas de código de barras (una por página, del tamaño de la etiqueta): de
+     * los productos indicados o, si no se indica ninguno, de todos los que tienen código.
+     */
+    @PostMapping("/barcode-labels")
+    @PreAuthorize("@sectionAccess.check('INVENTORY')")
+    public ResponseEntity<byte[]> barcodeLabels(@Valid @RequestBody BarcodeLabelRequest req,
+                                                @AuthenticationPrincipal User actor) {
+        List<Product> products = productService.findForLabels(req.getProductIds(), actor);
+        int copies = req.getCopies() != null ? req.getCopies() : 1;
+        if ((long) products.size() * copies > MAX_LABELS_PER_PDF) {
+            throw new IllegalArgumentException("Máximo " + MAX_LABELS_PER_PDF + " etiquetas por impresión; reduce las copias por producto");
+        }
+        return ResponseEntity.ok()
+                .header("Content-Type", "application/pdf")
+                .header("Content-Disposition", "attachment; filename=\"etiquetas-" + LocalDate.now() + ".pdf\"")
+                .body(barcodeLabelPdfService.build(products, copies, req.getSize()));
     }
 
     /**

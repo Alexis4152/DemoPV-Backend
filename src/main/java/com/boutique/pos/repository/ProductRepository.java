@@ -241,4 +241,22 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
     /** Usado únicamente por {@code TiendaPurgeService} (borrado físico y total de una tienda). */
     void deleteByTiendaId(Long tiendaId);
+
+    // Incluye productos desactivados: el UNIQUE(tienda_id, barcode) de la base de datos
+    // también los cuenta, así que un consecutivo usado por uno inactivo no se puede repetir.
+    boolean existsByTiendaIdAndBarcode(Long tiendaId, String barcode);
+
+    // Productos activos sin código, en orden alfabético — el orden en que reciben su
+    // consecutivo al generar códigos (ver ProductBarcodeService#generateMissing).
+    @Query("SELECT p FROM Product p WHERE p.isActive = true AND p.tienda.id = :tiendaId " +
+           "AND p.barcode IS NULL ORDER BY LOWER(p.name) ASC, p.id ASC")
+    List<Product> findActiveWithoutBarcode(@Param("tiendaId") Long tiendaId);
+
+    @Query("SELECT COUNT(p) FROM Product p WHERE p.isActive = true AND p.tienda.id = :tiendaId AND p.barcode IS NULL")
+    long countActiveWithoutBarcode(@Param("tiendaId") Long tiendaId);
+
+    // Productos activos con código, en orden alfabético — para imprimir todas las etiquetas.
+    @Query("SELECT p FROM Product p WHERE p.isActive = true AND p.tienda.id = :tiendaId " +
+           "AND p.barcode IS NOT NULL ORDER BY LOWER(p.name) ASC, p.id ASC")
+    List<Product> findActiveWithBarcode(@Param("tiendaId") Long tiendaId);
 }
