@@ -328,6 +328,7 @@ public class UserService {
         if (tienda == null && tenantScope.isPlatformActor(actor) && !isPlatformRole(role)) {
             throw new IllegalStateException("Elige una tienda para poder dar de alta un usuario");
         }
+        role = reconcileRoleForTienda(role, tienda);
         String phone = normalizePhone(req.getPhone(), null);
         String tempPassword = generateTempPassword();
         User u = new User();
@@ -387,6 +388,7 @@ public class UserService {
         if (tienda == null && tenantScope.isPlatformActor(actor) && !isPlatformRole(role)) {
             throw new IllegalStateException("Elige una tienda para poder reactivar este usuario");
         }
+        role = reconcileRoleForTienda(role, tienda);
         String phone = normalizePhone(req.getPhone(), u.getId());
         String tempPassword = generateTempPassword();
         u.setName(req.getName());
@@ -503,20 +505,11 @@ public class UserService {
         // Role está duplicada por tienda (ver RoleService#seedDefaultRolesForTienda), así
         // que "CASHIER de la tienda 6" y "CASHIER de la tienda 7" son registros distintos
         // aunque se llamen igual. Si el usuario terminó en una tienda distinta de la de su
-        // rol actual (típicamente por el cambio de tienda de arriba), busca el rol del
-        // MISMO NOMBRE en la tienda nueva y lo reasigna — de lo contrario quedaría con un
-        // rol "importado" de la tienda anterior, invisible e inmodificable desde "Roles y
-        // Permisos" de su tienda nueva.
-        if (u.getRole() != null && !isPlatformRole(u.getRole()) && u.getTienda() != null) {
-            Long roleTiendaId = u.getRole().getTienda() != null ? u.getRole().getTienda().getId() : null;
-            if (!u.getTienda().getId().equals(roleTiendaId)) {
-                Role matching = roleRepository.findByNameAndTiendaId(u.getRole().getName(), u.getTienda().getId())
-                        .orElseThrow(() -> new IllegalStateException(
-                                "La tienda destino no tiene un rol llamado \"" + u.getRole().getName()
-                                        + "\" — créalo ahí primero o cambia el rol del usuario antes de moverlo."));
-                u.setRole(matching);
-            }
-        }
+        // rol actual (típicamente por el cambio de tienda de arriba), reconcileRoleForTienda
+        // busca el rol del MISMO NOMBRE en la tienda nueva y lo reasigna — de lo contrario
+        // quedaría con un rol "importado" de la tienda anterior, invisible e inmodificable
+        // desde "Roles y Permisos" de su tienda nueva.
+        u.setRole(reconcileRoleForTienda(u.getRole(), u.getTienda()));
         u.setUpdatedBy(actor);
         User saved = userRepository.save(u);
         applyMaxTiendas(saved, req.getMaxTiendas(), actor);
@@ -569,6 +562,30 @@ public class UserService {
             return tenantScope.tiendaForWrite(actor);
         }
         return actor.getTienda();
+    }
+
+    // RoleService#findById NO valida, para un actor SUPER_ADMIN, que el rol pedido pertenezca
+    // a la tienda del usuario que se está dando de alta/editando/reactivando (ver su propio
+    // JSDoc: "SUPER_ADMIN puede resolver CUALQUIER rol por id"). Sin este resguardo, un
+    // SUPER_ADMIN podía terminar creando un usuario en la tienda A con un rol de la tienda B
+    // — dato inconsistente que después bloquea TiendaPurgeService#purge de la tienda B (la fila
+    // de Role no se puede borrar mientras ese usuario ajeno siga apuntándola).
+    /**
+     * Si el rol dado no pertenece a la tienda dada, lo reemplaza por el rol del MISMO NOMBRE
+     * en esa tienda (las filas de {@link Role} están duplicadas por tienda, ver {@code
+     * RoleService#seedDefaultRolesForTienda}). Sin cambios para roles de plataforma (sin
+     * tienda propia por diseño) ni cuando {@code tienda} es {@code null}.
+     *
+     * @throws IllegalStateException si la tienda destino no tiene un rol con ese nombre
+     */
+    private Role reconcileRoleForTienda(Role role, Tienda tienda) {
+        if (role == null || tienda == null || isPlatformRole(role)) return role;
+        Long roleTiendaId = role.getTienda() != null ? role.getTienda().getId() : null;
+        if (tienda.getId().equals(roleTiendaId)) return role;
+        return roleRepository.findByNameAndTiendaId(role.getName(), tienda.getId())
+                .orElseThrow(() -> new IllegalStateException(
+                        "La tienda elegida no tiene un rol llamado \"" + role.getName()
+                                + "\" — créalo ahí primero o elige un rol distinto."));
     }
 
     /** {@code true} si el rol dado es uno "de plataforma" (SUPER_ADMIN o SUPERVISOR): sin
