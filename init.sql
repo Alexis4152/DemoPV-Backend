@@ -254,6 +254,20 @@ CREATE TABLE IF NOT EXISTS cash_cut_schedule (
     updated_by_user_id  BIGINT REFERENCES users(id)
 );
 
+-- Ventanas de mantenimiento programadas por SUPER_ADMIN, visibles en el Login de TODAS las
+-- tiendas (ver MaintenanceWindowService/PublicMaintenanceController) — de plataforma, no
+-- por tienda. Sin columna de "estado": la fase (programada/en curso) se calcula siempre al
+-- vuelo contra la hora actual, comparándola con start_at/end_at.
+CREATE TABLE IF NOT EXISTS maintenance_windows (
+    id                  BIGSERIAL PRIMARY KEY,
+    start_at            TIMESTAMP NOT NULL,
+    end_at              TIMESTAMP NOT NULL,
+    created_by_user_id  BIGINT REFERENCES users(id),
+    updated_by_user_id  BIGINT REFERENCES users(id),
+    created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP
+);
+
 -- Tokens de un solo uso para el flujo de "olvidé mi contraseña" (ver AuthService en el
 -- backend). Vencen a los 30 minutos de generados y se marcan used=true en cuanto se
 -- usan (o al pedirse uno nuevo, que invalida cualquier anterior sin usar del mismo
