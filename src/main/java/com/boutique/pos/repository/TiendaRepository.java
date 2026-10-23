@@ -1,7 +1,10 @@
 package com.boutique.pos.repository;
 
 import com.boutique.pos.model.Tienda;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -51,4 +54,26 @@ public interface TiendaRepository extends JpaRepository<Tienda, Long> {
            "AND t.supervisor.id = (SELECT t2.supervisor.id FROM Tienda t2 WHERE t2.id = :tiendaId) " +
            "ORDER BY t.name ASC")
     List<Tienda> findSiblingTiendas(@Param("tiendaId") Long tiendaId);
+
+    /**
+     * Bloqueo pesimista sobre la fila de la tienda — usado por {@code SaleService}/{@code
+     * ApartadoService} para incrementar {@code lastSaleFolio}/{@code lastApartadoFolio} de
+     * forma segura: dos altas simultáneas en la misma tienda quedan serializadas por
+     * Postgres en vez de ambas leer el mismo contador y una perder su incremento (mismo
+     * patrón que {@code ProductRepository#findByIdForUpdate} para el stock).
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT t FROM Tienda t WHERE t.id = :id")
+    Optional<Tienda> findByIdForUpdate(@Param("id") Long id);
+
+    /**
+     * Desvincula de sí misma una tienda ({@code supervisor}/{@code createdBy}/{@code
+     * updatedBy}/{@code deletedBy}, todas apuntando a {@link com.boutique.pos.model.User})
+     * — paso previo indispensable de {@code TiendaPurgeService} antes de poder borrar a sus
+     * propios usuarios, ya que cualquiera de ellos podría ser justo quien creó/editó/dio de
+     * baja esta tienda.
+     */
+    @Modifying
+    @Query("UPDATE Tienda t SET t.supervisor = null, t.createdBy = null, t.updatedBy = null, t.deletedBy = null WHERE t.id = :id")
+    void clearSelfRefs(@Param("id") Long id);
 }

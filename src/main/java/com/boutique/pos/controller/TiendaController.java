@@ -2,6 +2,7 @@ package com.boutique.pos.controller;
 
 import com.boutique.pos.dto.ApiResponse;
 import com.boutique.pos.dto.TiendaInfoRequest;
+import com.boutique.pos.dto.TiendaPurgeRequest;
 import com.boutique.pos.dto.TiendaRequest;
 import com.boutique.pos.dto.TiendaThemeRequest;
 import com.boutique.pos.model.Tienda;
@@ -10,6 +11,7 @@ import com.boutique.pos.model.User;
 import com.boutique.pos.service.ApartadoPromoPdfService;
 import com.boutique.pos.service.TiendaInfoService;
 import com.boutique.pos.service.TiendaLogoService;
+import com.boutique.pos.service.TiendaPurgeService;
 import com.boutique.pos.service.TiendaService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -44,6 +46,7 @@ public class TiendaController {
     private final TiendaInfoService tiendaInfoService;
     private final TiendaLogoService tiendaLogoService;
     private final ApartadoPromoPdfService apartadoPromoPdfService;
+    private final TiendaPurgeService tiendaPurgeService;
 
     /**
      * Lista las tiendas visibles para el actor: todas si es SUPER_ADMIN, o solo las que
@@ -115,6 +118,28 @@ public class TiendaController {
     public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id, @AuthenticationPrincipal User actor) {
         tiendaService.deactivate(id, actor);
         return ResponseEntity.ok(ApiResponse.ok(null, "Tienda desactivada"));
+    }
+
+    /**
+     * Borra una tienda de forma PERMANENTE, junto con absolutamente todo lo que cuelga de
+     * ella (usuarios, productos, ventas, apartados, cortes de caja, materia prima...) — a
+     * diferencia de {@link #deactivate}, esto NO es reversible, no hay respaldo ni
+     * "deshacer". Exclusivo de SUPER_ADMIN (ni siquiera SUPERVISOR, que sí puede desactivar
+     * las suyas): sobreescribe el {@code @PreAuthorize} de la clase a propósito.
+     *
+     * @param id    identificador de la tienda a borrar
+     * @param req   confirmación: debe traer el nombre EXACTO de la tienda
+     * @param actor usuario autenticado; debe ser SUPER_ADMIN
+     */
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @PostMapping("/{id}/purge")
+    public ResponseEntity<ApiResponse<Void>> purge(
+            @PathVariable Long id,
+            @Valid @RequestBody TiendaPurgeRequest req,
+            @AuthenticationPrincipal User actor
+    ) {
+        tiendaPurgeService.purge(id, req.getConfirmedName(), actor);
+        return ResponseEntity.ok(ApiResponse.ok(null, "Tienda borrada permanentemente"));
     }
 
     // El ADMIN de una tienda también puede cambiar SU propio color de marca —

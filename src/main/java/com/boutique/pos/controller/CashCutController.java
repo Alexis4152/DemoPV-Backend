@@ -113,6 +113,21 @@ public class CashCutController {
         return ResponseEntity.ok(ApiResponse.ok(open.orElse(null), null));
     }
 
+    /**
+     * Igual que {@link #getOpen}, pero pensado específicamente para el widget del
+     * Dashboard: para SUPER_ADMIN/SUPERVISOR responde con el corte abierto de la tienda
+     * sobre la que están actuando (no tienen corte propio), y para el resto de los roles
+     * es idéntico a {@code /open} (ver {@link CashCutService#findOpenForDashboard}).
+     *
+     * @param actor usuario autenticado que consulta el widget
+     */
+    @GetMapping("/open-for-dashboard")
+    @PreAuthorize("@sectionAccess.checkAny('CASH_CUTS', 'DASHBOARD')")
+    public ResponseEntity<ApiResponse<CashCut>> getOpenForDashboard(@AuthenticationPrincipal User actor) {
+        Optional<CashCut> open = cashCutService.findOpenForDashboard(actor);
+        return ResponseEntity.ok(ApiResponse.ok(open.orElse(null), null));
+    }
+
     // corte propio del día de hoy (abierto o ya cerrado) — para que quien lo cerró lo pueda seguir viendo
     /**
      * Obtiene el corte de caja del usuario autenticado correspondiente al día de

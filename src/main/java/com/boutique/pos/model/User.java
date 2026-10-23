@@ -86,6 +86,18 @@ public class User implements UserDetails {
      *  intentos fallidos — ver {@link #isAccountNonLocked()}. */
     private LocalDateTime lockedUntil;
 
+    // null = todavía no los acepta — el frontend debe forzar la pantalla de aceptación de
+    // términos/aviso de privacidad en su primer login (igual que mustChangePassword fuerza
+    // "cambia tu contraseña"), ver AuthService#login/#acceptLegalTerms. Los usuarios que ya
+    // existían antes de este campo se migran con un valor ya puesto (ver
+    // LegalAcceptanceBackfillMigration) para que no se les aparezca de la nada en su
+    // siguiente login — solo se le pide de verdad a quien se da de alta después de esto.
+    /** Momento en que el usuario aceptó los Términos y condiciones vigentes. */
+    private LocalDateTime termsAcceptedAt;
+
+    /** Momento en que el usuario confirmó haber leído el Aviso de privacidad vigente. */
+    private LocalDateTime privacyNoticeAcceptedAt;
+
     // LAZY (a diferencia del resto de relaciones de esta clase) porque User se referencia
     // a sí mismo aquí — en EAGER, Hibernate encadena el join User→createdBy→createdBy→...
     // sin límite y Postgres truena con "límite de profundidad de stack alcanzado".

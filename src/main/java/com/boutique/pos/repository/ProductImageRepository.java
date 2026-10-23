@@ -19,4 +19,7 @@ public interface ProductImageRepository extends JpaRepository<ProductImage, Long
      * público sin un query por producto (N+1) — se agrupan por productId en el service.
      */
     List<ProductImage> findByProductIdInOrderByIsPrimaryDescSortOrderAsc(List<Long> productIds);
+
+    /** Usado únicamente por {@code TiendaPurgeService} (borrado físico y total de una tienda): todas las fotos de sus productos. */
+    void deleteByProductTiendaId(Long tiendaId);
 }

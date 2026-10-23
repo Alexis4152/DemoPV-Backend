@@ -169,6 +169,7 @@ public class AuthService {
                 .actionGrants(List.copyOf(user.getRole().getActionGrants()))
                 .tienda(user.getTienda())
                 .mustChangePassword(user.getMustChangePassword())
+                .mustAcceptLegalTerms(user.getTermsAcceptedAt() == null || user.getPrivacyNoticeAcceptedAt() == null)
                 .build();
         return new LoginResult(body, refreshToken);
     }
@@ -360,6 +361,24 @@ public class AuthService {
         actor.setMustChangePassword(false);
         userRepository.save(actor);
         refreshTokenRepository.revokeAllForUser(actor);
+    }
+
+    /**
+     * Registra la aceptación de los Términos y condiciones y del Aviso de privacidad del
+     * usuario ya autenticado — es la salida de la pantalla obligatoria que ve en su primer
+     * login (ver {@code LoginResponse#mustAcceptLegalTerms}). A diferencia de
+     * {@link #changePassword}, no hay nada que "revertir" después: una vez aceptados no
+     * se vuelven a pedir, salvo que a futuro se decida reabrirlos por un cambio de versión
+     * (no implementado todavía).
+     *
+     * @param actor usuario autenticado que acepta
+     */
+    @Transactional
+    public void acceptLegalTerms(User actor) {
+        LocalDateTime now = LocalDateTime.now();
+        actor.setTermsAcceptedAt(now);
+        actor.setPrivacyNoticeAcceptedAt(now);
+        userRepository.save(actor);
     }
 
     // Un token revocado sigue teniendo su expiresAt original (8h para refresh, 30 min para

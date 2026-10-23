@@ -38,7 +38,12 @@ CREATE TABLE IF NOT EXISTS tiendas (
     -- que con users.role_id más abajo.
     created_by_user_id  BIGINT,
     updated_by_user_id  BIGINT,
-    deleted_by_user_id  BIGINT
+    deleted_by_user_id  BIGINT,
+    -- Contadores del folio (consecutivo propio de esta tienda, independiente del de
+    -- cualquier otra) de ventas y apartados — ver SaleService/ApartadoService, que los
+    -- incrementan bajo bloqueo pesimista sobre esta fila al registrar cada uno.
+    last_sale_folio      BIGINT NOT NULL DEFAULT 0,
+    last_apartado_folio  BIGINT NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -161,6 +166,10 @@ CREATE TABLE IF NOT EXISTS cash_cuts (
 
 CREATE TABLE IF NOT EXISTS sales (
     id                      BIGSERIAL PRIMARY KEY,
+    -- Folio visible al cliente/cajero (consecutivo POR TIENDA, no global — la tienda 1 y
+    -- la tienda 2 pueden tener cada una su propia venta folio 1). Nunca se usa para join
+    -- ni para FK; id sigue siendo la llave real. Ver Tienda.lastSaleFolio.
+    folio                   BIGINT NOT NULL,
     user_id                 BIGINT NOT NULL REFERENCES users(id),
     cash_cut_id             BIGINT REFERENCES cash_cuts(id),
     tienda_id               BIGINT REFERENCES tiendas(id),
@@ -181,7 +190,8 @@ CREATE TABLE IF NOT EXISTS sales (
     notes                   TEXT,
     created_at              TIMESTAMP NOT NULL DEFAULT NOW(),
     cancelled_at            TIMESTAMP,
-    cancelled_by_user_id    BIGINT REFERENCES users(id)
+    cancelled_by_user_id    BIGINT REFERENCES users(id),
+    CONSTRAINT uk_sales_tienda_folio UNIQUE (tienda_id, folio)
 );
 
 CREATE TABLE IF NOT EXISTS sale_items (
@@ -272,6 +282,9 @@ CREATE TABLE IF NOT EXISTS product_images (
 -- para el ciclo de estados completo (PENDING -> ACTIVE -> COMPLETED/CANCELLED/EXPIRED).
 CREATE TABLE IF NOT EXISTS apartados (
     id                      BIGSERIAL PRIMARY KEY,
+    -- Folio visible al cliente (consecutivo POR TIENDA) — mismo mecanismo que sales.folio,
+    -- ver Tienda.lastApartadoFolio.
+    folio                   BIGINT NOT NULL,
     tienda_id               BIGINT NOT NULL REFERENCES tiendas(id),
     customer_name           VARCHAR(150) NOT NULL,
     customer_phone          VARCHAR(30),
@@ -294,9 +307,11 @@ CREATE TABLE IF NOT EXISTS apartados (
     -- correo al solicitar el apartado, es lo que se le manda explicándole por qué no se
     -- pudo concretar. Ver EmailService#sendApartadoCancelledEmail.
     cancel_reason           TEXT,
-    -- Id de la venta generada al completarse (recoger y pagar) — sin FK: Sale vive en su
-    -- propia tabla y no necesitamos integridad referencial estricta aquí, solo el dato.
-    sale_id                 BIGINT
+    -- Id/folio de la venta generada al completarse (recoger y pagar) — sin FK: Sale vive en
+    -- su propia tabla y no necesitamos integridad referencial estricta aquí, solo el dato.
+    sale_id                 BIGINT,
+    sale_folio              BIGINT,
+    CONSTRAINT uk_apartados_tienda_folio UNIQUE (tienda_id, folio)
 );
 
 CREATE TABLE IF NOT EXISTS apartado_items (

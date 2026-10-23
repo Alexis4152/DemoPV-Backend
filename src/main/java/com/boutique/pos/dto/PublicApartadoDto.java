@@ -21,6 +21,9 @@ import java.util.List;
 @Data @Builder @NoArgsConstructor @AllArgsConstructor
 public class PublicApartadoDto {
     private Long id;
+    /** Folio consecutivo de ESTA tienda (no el id global) — lo que de verdad se le muestra
+     *  al cliente y lo que debe mandar de vuelta para consultar/cancelar su apartado. */
+    private Long folio;
     private String status;
     private LocalDateTime requestedAt;
     /** Cuándo se confirmó (pasó de PENDING a ACTIVE) — null mientras sigue pendiente. */

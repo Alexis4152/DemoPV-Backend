@@ -31,12 +31,18 @@ import java.util.List;
  * de mostrador.
  */
 @Entity
-@Table(name = "apartados")
+@Table(name = "apartados", uniqueConstraints = @UniqueConstraint(name = "uk_apartados_tienda_folio", columnNames = {"tienda_id", "folio"}))
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
 public class Apartado {
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    // Folio visible al cliente (vitrina pública, correos): consecutivo POR TIENDA, no
+    // global — ver Tienda.lastApartadoFolio. A diferencia de `id`, dos tiendas distintas
+    // pueden tener cada una su propio apartado folio 1.
+    @Column(nullable = false)
+    private Long folio;
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "tienda_id", nullable = false)
@@ -115,6 +121,10 @@ public class Apartado {
 
     /** Id de la {@link Sale} generada al completarse (recoger y pagar). Null hasta entonces. */
     private Long saleId;
+
+    /** Folio (no el id) de esa misma {@link Sale} — lo que de verdad se le muestra al
+     *  personal como "Venta #", en vez del id interno. Null hasta entonces. */
+    private Long saleFolio;
 
     /**
      * Líneas (productos y cantidades) que componen el apartado. {@code orphanRemoval}

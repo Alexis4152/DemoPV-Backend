@@ -7,6 +7,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -97,6 +98,11 @@ public interface CashCutRepository extends JpaRepository<CashCut, Long> {
     // la caja solo puede tener un corte abierto a la vez
     Optional<CashCut> findFirstByCashRegisterIdAndStatus(Long cashRegisterId, CashCutStatus status);
 
+    // para el widget "Corte de caja" del Dashboard cuando lo consulta un SUPER_ADMIN/SUPERVISOR
+    // actuando sobre una tienda: ellos no abren cortes propios, así que lo relevante es si HAY
+    // alguno abierto en esa tienda (de cualquier cajero), no uno ligado a su propio usuario.
+    Optional<CashCut> findFirstByTiendaIdAndStatusOrderByOpenedAtDesc(Long tiendaId, CashCutStatus status);
+
     /** Bloqueo pesimista para que dos salidas simultáneas no saquen más efectivo del que hay. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT c FROM CashCut c WHERE c.id = :id")
@@ -116,4 +122,13 @@ public interface CashCutRepository extends JpaRepository<CashCut, Long> {
            "WHERE (:tiendaId IS NULL OR c.tienda.id = :tiendaId) " +
            "ORDER BY c.user.name ASC")
     List<Object[]> findDistinctCashiers(@Param("tiendaId") Long tiendaId);
+
+    // ── Usadas únicamente por TiendaPurgeService (borrado FÍSICO y total de una tienda) ──
+    /** Rompe la cadena de auto-referencia {@code previousCut} antes de poder borrar los cortes de la tienda. */
+    @Modifying
+    @Query("UPDATE CashCut c SET c.previousCut = null WHERE c.tienda.id = :tiendaId")
+    void clearPreviousCutByTiendaId(@Param("tiendaId") Long tiendaId);
+
+    /** Borra físicamente todos los cortes de caja de una tienda. */
+    void deleteByTiendaId(Long tiendaId);
 }

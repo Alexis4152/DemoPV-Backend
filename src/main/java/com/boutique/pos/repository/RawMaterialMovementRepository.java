@@ -11,4 +11,7 @@ public interface RawMaterialMovementRepository extends JpaRepository<RawMaterial
     /** Historial de una materia prima, del más reciente al más antiguo. */
     @EntityGraph(attributePaths = {"user", "product"})
     Page<RawMaterialMovement> findByRawMaterial_IdOrderByCreatedAtDescIdDesc(Long rawMaterialId, Pageable pageable);
+
+    /** Usado únicamente por {@code TiendaPurgeService} (borrado físico y total de una tienda): todos los movimientos de sus materias primas. */
+    void deleteByRawMaterialTiendaId(Long tiendaId);
 }

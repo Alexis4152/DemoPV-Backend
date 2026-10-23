@@ -21,4 +21,7 @@ public interface CashMovementRepository extends JpaRepository<CashMovement, Long
 
     /** Movimientos con la caja cerrada que vio un corte al recibir la caja. */
     List<CashMovement> findByReceivedByCutIdOrderByCreatedAtAsc(Long cutId);
+
+    /** Usado únicamente por {@code TiendaPurgeService} (borrado físico y total de una tienda). */
+    void deleteByTiendaId(Long tiendaId);
 }

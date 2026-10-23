@@ -4,6 +4,9 @@ import com.boutique.pos.model.Role;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import java.util.List;
 import java.util.Optional;
 
@@ -55,4 +58,13 @@ public interface RoleRepository extends JpaRepository<Role, Long> {
     Page<Role> findAllByIsActiveTrueOrderByNameAsc(Pageable pageable);
     /** Página de roles activos (no eliminados) de una tienda, ordenados alfabéticamente. */
     Page<Role> findAllByTiendaIdAndIsActiveTrueOrderByNameAsc(Long tiendaId, Pageable pageable);
+
+    // ── Usadas únicamente por TiendaPurgeService (borrado FÍSICO y total de una tienda) ──
+    /** Desvincula los roles de una tienda de sus usuarios de auditoría, paso previo a poder borrar a esos usuarios. */
+    @Modifying
+    @Query("UPDATE Role r SET r.createdBy = null, r.updatedBy = null, r.deletedBy = null WHERE r.tienda.id = :tiendaId")
+    void clearUserRefsByTiendaId(@Param("tiendaId") Long tiendaId);
+
+    /** Borra físicamente todos los roles de una tienda. */
+    void deleteByTiendaId(Long tiendaId);
 }

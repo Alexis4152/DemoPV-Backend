@@ -10,9 +10,19 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 /** Repositorio de {@link Apartado}. */
 public interface ApartadoRepository extends JpaRepository<Apartado, Long> {
+
+    /**
+     * Resuelve un apartado por su folio (consecutivo por tienda) dentro de una tienda en
+     * particular — usado por la consulta/cancelación pública ({@code
+     * ApartadoService#resolveAndVerifyPublicApartado}), que ya conoce la tienda por el slug
+     * de la URL y nunca debe confiar en el folio por sí solo (dos tiendas pueden compartir
+     * el mismo número).
+     */
+    Optional<Apartado> findByTiendaIdAndFolio(Long tiendaId, Long folio);
 
     /**
      * Búsqueda paginada de apartados con filtros combinables, acotada a la tienda del
@@ -92,4 +102,10 @@ public interface ApartadoRepository extends JpaRepository<Apartado, Long> {
            nativeQuery = true)
     List<Object[]> sumPendingQuantityByProductBefore(@Param("apartadoId") Long apartadoId,
                                                        @Param("productIds") List<Long> productIds);
+
+    /** Usado únicamente por {@code TiendaPurgeService} (borrado físico y total de una tienda); sus {@code ApartadoItem} caen con ella (ON DELETE CASCADE). */
+    void deleteByTiendaId(Long tiendaId);
+
+    /** Igual que {@code SaleRepository#findByCustomerEmailIgnoreCaseOrCustomerPhone}, para el reporte de datos de Acceso ARCO. */
+    List<Apartado> findByCustomerEmailIgnoreCaseOrCustomerPhone(String customerEmail, String customerPhone);
 }

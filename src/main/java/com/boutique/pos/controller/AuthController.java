@@ -1,5 +1,6 @@
 package com.boutique.pos.controller;
 
+import com.boutique.pos.dto.AcceptLegalTermsRequest;
 import com.boutique.pos.dto.ApiResponse;
 import com.boutique.pos.dto.ChangePasswordRequest;
 import com.boutique.pos.dto.ForgotPasswordRequest;
@@ -171,5 +172,20 @@ public class AuthController {
                                                               @AuthenticationPrincipal User actor) {
         authService.changePassword(actor, req.getCurrentPassword(), req.getNewPassword());
         return ResponseEntity.ok(ApiResponse.ok(null, "Contraseña actualizada"));
+    }
+
+    /**
+     * Registra la aceptación de los Términos y condiciones y del Aviso de privacidad del
+     * usuario autenticado — lo que usa la pantalla obligatoria de su primer login (ver
+     * {@code LoginResponse#mustAcceptLegalTerms}).
+     *
+     * @param req ambas casillas, ya validadas como obligatoriamente verdaderas
+     * @param actor usuario autenticado, inyectado a partir del JWT
+     */
+    @PostMapping("/accept-legal-terms")
+    public ResponseEntity<ApiResponse<Void>> acceptLegalTerms(@Valid @RequestBody AcceptLegalTermsRequest req,
+                                                                 @AuthenticationPrincipal User actor) {
+        authService.acceptLegalTerms(actor);
+        return ResponseEntity.ok(ApiResponse.ok(null, "Aceptación registrada"));
     }
 }

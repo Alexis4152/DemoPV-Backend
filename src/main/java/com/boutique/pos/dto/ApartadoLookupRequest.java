@@ -17,7 +17,7 @@ import lombok.NoArgsConstructor;
 public class ApartadoLookupRequest {
 
     @NotNull(message = "El folio es obligatorio")
-    private Long id;
+    private Long folio;
 
     @NotBlank(message = "El teléfono es obligatorio")
     private String phone;

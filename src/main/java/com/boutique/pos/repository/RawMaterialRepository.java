@@ -43,4 +43,7 @@ public interface RawMaterialRepository extends JpaRepository<RawMaterial, Long> 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT m FROM RawMaterial m WHERE m.id = :id")
     Optional<RawMaterial> findByIdForUpdate(@Param("id") Long id);
+
+    /** Usado únicamente por {@code TiendaPurgeService} (borrado físico y total de una tienda). */
+    void deleteByTiendaId(Long tiendaId);
 }

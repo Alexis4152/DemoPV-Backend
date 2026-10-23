@@ -34,4 +34,9 @@ public class LoginResponse {
     // frontend debe mandarlo directo a "Cambiar contraseña" y no dejarlo navegar hasta
     // que la cambie (ver POST /api/auth/change-password).
     private Boolean mustChangePassword;
+    // true si todavía no acepta los Términos y condiciones y/o el Aviso de privacidad
+    // vigentes — el frontend debe mandarlo directo a esa pantalla obligatoria antes de
+    // dejarlo navegar (ver POST /api/auth/accept-legal-terms). Mismo tratamiento que
+    // mustChangePassword, pero puede quedar true aunque mustChangePassword ya esté en false.
+    private Boolean mustAcceptLegalTerms;
 }

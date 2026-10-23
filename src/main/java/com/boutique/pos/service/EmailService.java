@@ -136,9 +136,9 @@ public class EmailService {
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
             applySenderAndReplyTo(helper, cfg, sale.getTienda());
             helper.setTo(toEmail);
-            helper.setSubject("Tu ticket de compra #" + sale.getId());
+            helper.setSubject("Tu ticket de compra #" + sale.getFolio());
             helper.setText("Gracias por tu compra. Adjuntamos tu ticket en PDF.");
-            helper.addAttachment("ticket-" + sale.getId() + ".pdf", new org.springframework.core.io.ByteArrayResource(pdf));
+            helper.addAttachment("ticket-" + sale.getFolio() + ".pdf", new org.springframework.core.io.ByteArrayResource(pdf));
 
             sender.send(message);
             log.info("Ticket de la venta {} enviado a {}", sale.getId(), toEmail);
@@ -333,7 +333,7 @@ public class EmailService {
             MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
             applySenderAndReplyTo(helper, cfg, apartado.getTienda());
             helper.setTo(toEmail);
-            helper.setSubject("Nuevo apartado #" + apartado.getId() + " — " + apartado.getTienda().getName());
+            helper.setSubject("Nuevo apartado #" + apartado.getFolio() + " — " + apartado.getTienda().getName());
             helper.setText(body.toString());
 
             sender.send(message);
@@ -365,7 +365,7 @@ public class EmailService {
         try {
             StringBuilder body = new StringBuilder();
             body.append("Hola ").append(apartado.getCustomerName()).append(",\n\n");
-            body.append("Tu apartado #").append(apartado.getId()).append(" en ")
+            body.append("Tu apartado #").append(apartado.getFolio()).append(" en ")
                     .append(apartado.getTienda().getName()).append(" fue cancelado y no se pudo concretar.\n\n");
             body.append("Productos:\n").append(productLines(apartado));
             if (reason != null && !reason.isBlank()) {
@@ -378,7 +378,7 @@ public class EmailService {
             MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
             applySenderAndReplyTo(helper, cfg, apartado.getTienda());
             helper.setTo(toEmail);
-            helper.setSubject("Tu apartado #" + apartado.getId() + " fue cancelado — " + apartado.getTienda().getName());
+            helper.setSubject("Tu apartado #" + apartado.getFolio() + " fue cancelado — " + apartado.getTienda().getName());
             helper.setText(body.toString());
 
             sender.send(message);
@@ -418,7 +418,7 @@ public class EmailService {
         }
         try {
             StringBuilder body = new StringBuilder();
-            body.append("El apartado #").append(apartado.getId()).append(" de ")
+            body.append("El apartado #").append(apartado.getFolio()).append(" de ")
                     .append(apartado.getCustomerName()).append(" fue confirmado");
             if (apartado.getConfirmedBy() != null) {
                 body.append(" por ").append(apartado.getConfirmedBy().getName());
@@ -434,7 +434,7 @@ public class EmailService {
             MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
             applySenderAndReplyTo(helper, cfg, apartado.getTienda());
             helper.setTo(toEmail);
-            helper.setSubject("Apartado #" + apartado.getId() + " confirmado — " + apartado.getTienda().getName());
+            helper.setSubject("Apartado #" + apartado.getFolio() + " confirmado — " + apartado.getTienda().getName());
             helper.setText(body.toString());
 
             sender.send(message);
@@ -464,7 +464,7 @@ public class EmailService {
         try {
             StringBuilder body = new StringBuilder();
             body.append("Hola ").append(apartado.getCustomerName()).append(",\n\n");
-            body.append("¡Buenas noticias! Tu apartado #").append(apartado.getId()).append(" en ")
+            body.append("¡Buenas noticias! Tu apartado #").append(apartado.getFolio()).append(" en ")
                     .append(apartado.getTienda().getName()).append(" fue confirmado.\n\n");
             body.append("Productos:\n").append(productLines(apartado));
             if (apartado.getExpiresAt() != null) {
@@ -477,7 +477,7 @@ public class EmailService {
             MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
             applySenderAndReplyTo(helper, cfg, apartado.getTienda());
             helper.setTo(toEmail);
-            helper.setSubject("Tu apartado #" + apartado.getId() + " fue confirmado — " + apartado.getTienda().getName());
+            helper.setSubject("Tu apartado #" + apartado.getFolio() + " fue confirmado — " + apartado.getTienda().getName());
             helper.setText(body.toString());
 
             sender.send(message);
@@ -507,7 +507,7 @@ public class EmailService {
         }
         try {
             StringBuilder body = new StringBuilder();
-            body.append("El apartado #").append(apartado.getId()).append(" de ")
+            body.append("El apartado #").append(apartado.getFolio()).append(" de ")
                     .append(apartado.getCustomerName()).append(" fue cancelado");
             if (apartado.getCancelledBy() != null) {
                 body.append(" por ").append(apartado.getCancelledBy().getName());
@@ -522,7 +522,7 @@ public class EmailService {
             MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
             applySenderAndReplyTo(helper, cfg, apartado.getTienda());
             helper.setTo(toEmail);
-            helper.setSubject("Apartado #" + apartado.getId() + " cancelado — " + apartado.getTienda().getName());
+            helper.setSubject("Apartado #" + apartado.getFolio() + " cancelado — " + apartado.getTienda().getName());
             helper.setText(body.toString());
 
             sender.send(message);
@@ -551,13 +551,13 @@ public class EmailService {
         }
         try {
             StringBuilder body = new StringBuilder();
-            body.append("El apartado #").append(apartado.getId()).append(" de ")
+            body.append("El apartado #").append(apartado.getFolio()).append(" de ")
                     .append(apartado.getCustomerName()).append(" se completó");
             if (apartado.getCompletedBy() != null) {
                 body.append(" (lo cobró ").append(apartado.getCompletedBy().getName()).append(")");
             }
-            if (apartado.getSaleId() != null) {
-                body.append(" — se generó la venta #").append(apartado.getSaleId());
+            if (apartado.getSaleFolio() != null) {
+                body.append(" — se generó la venta #").append(apartado.getSaleFolio());
             }
             body.append(".\n\nProductos:\n").append(productLines(apartado));
 
@@ -566,7 +566,7 @@ public class EmailService {
             MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
             applySenderAndReplyTo(helper, cfg, apartado.getTienda());
             helper.setTo(toEmail);
-            helper.setSubject("Apartado #" + apartado.getId() + " completado — " + apartado.getTienda().getName());
+            helper.setSubject("Apartado #" + apartado.getFolio() + " completado — " + apartado.getTienda().getName());
             helper.setText(body.toString());
 
             sender.send(message);
@@ -595,7 +595,7 @@ public class EmailService {
         }
         try {
             StringBuilder body = new StringBuilder();
-            body.append("El apartado #").append(apartado.getId()).append(" de ")
+            body.append("El apartado #").append(apartado.getFolio()).append(" de ")
                     .append(apartado.getCustomerName()).append(" venció — el cliente no lo recogió a tiempo. ")
                     .append("El stock ya se reintegró automáticamente al inventario.\n\n");
             body.append("Productos:\n").append(productLines(apartado));
@@ -605,7 +605,7 @@ public class EmailService {
             MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
             applySenderAndReplyTo(helper, cfg, apartado.getTienda());
             helper.setTo(toEmail);
-            helper.setSubject("Apartado #" + apartado.getId() + " venció — " + apartado.getTienda().getName());
+            helper.setSubject("Apartado #" + apartado.getFolio() + " venció — " + apartado.getTienda().getName());
             helper.setText(body.toString());
 
             sender.send(message);
@@ -634,7 +634,7 @@ public class EmailService {
         try {
             StringBuilder body = new StringBuilder();
             body.append("Hola ").append(apartado.getCustomerName()).append(",\n\n");
-            body.append("Tu apartado #").append(apartado.getId()).append(" en ")
+            body.append("Tu apartado #").append(apartado.getFolio()).append(" en ")
                     .append(apartado.getTienda().getName()).append(" venció porque no se recogió a tiempo, ")
                     .append("así que el producto ya se liberó de vuelta al inventario de la tienda.\n\n");
             body.append("Productos:\n").append(productLines(apartado));
@@ -645,7 +645,7 @@ public class EmailService {
             MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
             applySenderAndReplyTo(helper, cfg, apartado.getTienda());
             helper.setTo(toEmail);
-            helper.setSubject("Tu apartado #" + apartado.getId() + " venció — " + apartado.getTienda().getName());
+            helper.setSubject("Tu apartado #" + apartado.getFolio() + " venció — " + apartado.getTienda().getName());
             helper.setText(body.toString());
 
             sender.send(message);
@@ -699,6 +699,194 @@ public class EmailService {
             log.info("Aviso de solicitud ARCO {} enviado a {}", request.getId(), toEmail);
         } catch (MessagingException | RuntimeException e) {
             log.error("No se pudo enviar el aviso de la solicitud ARCO {} a {}: {}", request.getId(), toEmail, e.getMessage());
+        }
+    }
+
+    /**
+     * Pide al titular confirmar su correo antes de que corra el plazo legal de su solicitud
+     * ARCO (canal WEB únicamente) — ver {@code ArcoRequestService#createPublic}. Mientras no
+     * confirme, la solicitud queda {@code PENDING_EMAIL} y no se le avisa a ningún
+     * SUPER_ADMIN todavía: así nadie puede levantar una solicitud a nombre de un correo que
+     * no controla, aun si ya sabe que esa cuenta existe en el sistema.
+     *
+     * @param request solicitud recién creada (estado {@code PENDING_EMAIL})
+     * @param trackingUrl link (del frontend) que confirma el correo al visitarse y lleva al
+     *                    seguimiento de la solicitud
+     * @param toEmail correo a confirmar
+     */
+    @Async
+    public void sendArcoConfirmEmail(ArcoRequest request, String trackingUrl, String toEmail) {
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite la confirmación de la solicitud ARCO {}", request.getId());
+            return;
+        }
+        try {
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            applySystemSender(helper, cfg);
+            helper.setTo(toEmail);
+            helper.setSubject("Confirma tu solicitud de derechos ARCO");
+            StringBuilder body = new StringBuilder();
+            body.append("Hola ").append(request.getRequesterName()).append(",\n\n");
+            body.append("Recibimos tu solicitud de ").append(request.getType().label())
+                    .append(" sobre tus datos personales. Para que empiece a correr el plazo legal de respuesta, ")
+                    .append("confirma que este es tu correo entrando al siguiente link:\n\n");
+            body.append(trackingUrl).append("\n\n");
+            body.append("Si tú no la pediste, puedes ignorar este correo.");
+            helper.setText(body.toString());
+
+            sender.send(message);
+            log.info("Confirmación de la solicitud ARCO {} enviada a {}", request.getId(), toEmail);
+        } catch (MessagingException | RuntimeException e) {
+            log.error("No se pudo enviar la confirmación de la solicitud ARCO {} a {}: {}", request.getId(), toEmail, e.getMessage());
+        }
+    }
+
+    /**
+     * Avisa al titular (con link de seguimiento, si tiene) que se le pide más información
+     * para poder resolver su solicitud ARCO.
+     *
+     * @param request solicitud en estado {@code INFO_REQUESTED}, con {@link
+     *                ArcoRequest#getInfoRequest()}/{@link ArcoRequest#getInfoDue()} ya establecidos
+     * @param trackingUrl link de seguimiento para responder, o {@code null} si no aplica
+     *                     (se le pide responder desde "Mis solicitudes" en su lugar)
+     */
+    @Async
+    public void sendArcoInfoRequestedEmail(ArcoRequest request, String trackingUrl, String toEmail) {
+        if (toEmail == null || toEmail.isBlank()) return;
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite la solicitud de información de la ARCO {}", request.getId());
+            return;
+        }
+        try {
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            applySystemSender(helper, cfg);
+            helper.setTo(toEmail);
+            helper.setSubject("Necesitamos más información — tu solicitud ARCO #" + request.getId());
+            StringBuilder body = new StringBuilder();
+            body.append("Hola ").append(request.getRequesterName()).append(",\n\n");
+            body.append("Para resolver tu solicitud de ").append(request.getType().label()).append(" necesitamos lo siguiente:\n\n");
+            body.append(request.getInfoRequest()).append("\n\n");
+            if (request.getInfoDue() != null) {
+                body.append("Por favor respóndenos antes del ").append(request.getInfoDue())
+                        .append(" — si no tenemos noticias tuyas para entonces, la solicitud se cerrará por falta de información.\n\n");
+            }
+            if (trackingUrl != null) {
+                body.append("Responde aquí:\n").append(trackingUrl);
+            } else {
+                body.append("Responde entrando a tu cuenta, en \"Mis solicitudes ARCO\".");
+            }
+            helper.setText(body.toString());
+
+            sender.send(message);
+            log.info("Solicitud de información de la ARCO {} enviada a {}", request.getId(), toEmail);
+        } catch (MessagingException | RuntimeException e) {
+            log.error("No se pudo enviar la solicitud de información de la ARCO {} a {}: {}", request.getId(), toEmail, e.getMessage());
+        }
+    }
+
+    /**
+     * Avisa al titular que su solicitud ARCO ya fue respondida (resultado legal decidido),
+     * con la constancia en PDF adjunta.
+     */
+    @Async
+    public void sendArcoRespondedEmail(ArcoRequest request, byte[] constanciaPdf) {
+        String toEmail = request.getRequesterEmail();
+        if (toEmail == null || toEmail.isBlank()) return;
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite la respuesta de la ARCO {}", request.getId());
+            return;
+        }
+        try {
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            applySystemSender(helper, cfg);
+            helper.setTo(toEmail);
+            helper.setSubject("Tu solicitud ARCO #" + request.getId() + " fue respondida");
+            StringBuilder body = new StringBuilder();
+            body.append("Hola ").append(request.getRequesterName()).append(",\n\n");
+            body.append("Ya respondimos tu solicitud de ").append(request.getType().label()).append(":\n\n");
+            body.append(request.getResolutionNotes()).append("\n\n");
+            if (request.getStatus() == com.boutique.pos.model.ArcoRequestStatus.APPROVED) {
+                body.append("La vamos a ejecutar en los próximos días.\n\n");
+            }
+            body.append("Adjuntamos la constancia de esta respuesta.");
+            helper.setText(body.toString());
+            helper.addAttachment("constancia-arco-" + request.getId() + ".pdf", new org.springframework.core.io.ByteArrayResource(constanciaPdf));
+
+            sender.send(message);
+            log.info("Respuesta de la ARCO {} enviada a {}", request.getId(), toEmail);
+        } catch (MessagingException | RuntimeException e) {
+            log.error("No se pudo enviar la respuesta de la ARCO {} a {}: {}", request.getId(), toEmail, e.getMessage());
+        }
+    }
+
+    /**
+     * Avisa al titular que su solicitud ARCO ya fue ejecutada y cerrada, con la constancia
+     * final en PDF adjunta.
+     */
+    @Async
+    public void sendArcoCompletedEmail(ArcoRequest request, byte[] constanciaPdf) {
+        String toEmail = request.getRequesterEmail();
+        if (toEmail == null || toEmail.isBlank()) return;
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite la conclusión de la ARCO {}", request.getId());
+            return;
+        }
+        try {
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            applySystemSender(helper, cfg);
+            helper.setTo(toEmail);
+            helper.setSubject("Tu solicitud ARCO #" + request.getId() + " fue completada");
+            StringBuilder body = new StringBuilder();
+            body.append("Hola ").append(request.getRequesterName()).append(",\n\n");
+            body.append("Tu solicitud de ").append(request.getType().label()).append(" ya fue ejecutada y quedó cerrada.\n\n");
+            body.append("Adjuntamos la constancia final.");
+            helper.setText(body.toString());
+            helper.addAttachment("constancia-arco-" + request.getId() + ".pdf", new org.springframework.core.io.ByteArrayResource(constanciaPdf));
+
+            sender.send(message);
+            log.info("Conclusión de la ARCO {} enviada a {}", request.getId(), toEmail);
+        } catch (MessagingException | RuntimeException e) {
+            log.error("No se pudo enviar la conclusión de la ARCO {} a {}: {}", request.getId(), toEmail, e.getMessage());
+        }
+    }
+
+    /** Avisa a un SUPER_ADMIN que el titular de una solicitud ARCO ya respondió la información que se le pidió. */
+    @Async
+    public void sendArcoInfoAnsweredEmail(ArcoRequest request, String adminLink, String toEmail) {
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite el aviso de respuesta de información de la ARCO {}", request.getId());
+            return;
+        }
+        try {
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            applySystemSender(helper, cfg);
+            helper.setTo(toEmail);
+            helper.setSubject("Respondieron información de la ARCO #" + request.getId());
+            StringBuilder body = new StringBuilder();
+            body.append(request.getRequesterName()).append(" ya respondió lo que le pediste:\n\n");
+            body.append(request.getInfoResponse()).append("\n\n");
+            body.append("Atiéndela aquí:\n").append(adminLink);
+            helper.setText(body.toString());
+
+            sender.send(message);
+            log.info("Aviso de respuesta de información de la ARCO {} enviado a {}", request.getId(), toEmail);
+        } catch (MessagingException | RuntimeException e) {
+            log.error("No se pudo enviar el aviso de respuesta de información de la ARCO {} a {}: {}", request.getId(), toEmail, e.getMessage());
         }
     }
 }

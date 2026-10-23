@@ -104,7 +104,7 @@ public class PublicController {
     public ResponseEntity<ApiResponse<PublicApartadoDto>> lookupApartado(
             @PathVariable String slug,
             @Valid @RequestBody ApartadoLookupRequest req) {
-        PublicApartadoDto dto = apartadoService.publicApartadoLookup(slug, req.getId(), req.getPhone());
+        PublicApartadoDto dto = apartadoService.publicApartadoLookup(slug, req.getFolio(), req.getPhone());
         return ResponseEntity.ok(ApiResponse.ok(dto, null));
     }
 
@@ -134,7 +134,7 @@ public class PublicController {
     public ResponseEntity<ApiResponse<PublicApartadoDto>> selfCancelApartado(
             @PathVariable String slug,
             @Valid @RequestBody ApartadoSelfCancelRequest req) {
-        PublicApartadoDto dto = apartadoService.publicApartadoCancel(slug, req.getId(), req.getPhone(), req.getReason());
+        PublicApartadoDto dto = apartadoService.publicApartadoCancel(slug, req.getFolio(), req.getPhone(), req.getReason());
         return ResponseEntity.ok(ApiResponse.ok(dto, "Tu apartado fue cancelado."));
     }
 }

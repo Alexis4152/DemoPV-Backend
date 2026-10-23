@@ -51,4 +51,7 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
     @Modifying
     @Query("DELETE FROM RefreshToken t WHERE t.expiresAt < :now")
     int deleteExpired(@Param("now") LocalDateTime now);
+
+    /** Usado únicamente por {@code TiendaPurgeService} (borrado físico y total de una tienda): borra los refresh tokens de todos sus usuarios. */
+    void deleteByUserTiendaId(Long tiendaId);
 }

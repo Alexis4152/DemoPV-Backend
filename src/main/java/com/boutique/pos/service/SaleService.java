@@ -45,6 +45,27 @@ public class SaleService {
     private final InventoryMovementRepository movementRepository;
     private final EmailService emailService;
     private final TenantScope tenantScope;
+    private final TiendaRepository tiendaRepository;
+
+    /**
+     * Calcula el próximo folio de venta de una tienda (consecutivo propio, no global) bajo
+     * bloqueo pesimista sobre su fila — así dos ventas simultáneas en la misma tienda
+     * siempre quedan serializadas y nunca comparten folio, igual que
+     * {@code ProductRepository#findByIdForUpdate} serializa el descuento de stock.
+     *
+     * @param tienda tienda de la venta (nunca null al momento de llamar: ver
+     *               {@link #create} y {@link #completeFromApartado})
+     * @return el siguiente folio, ya reservado (el contador de la tienda queda actualizado
+     *         en la misma transacción)
+     */
+    private Long nextSaleFolio(Tienda tienda) {
+        Tienda locked = tiendaRepository.findByIdForUpdate(tienda.getId())
+                .orElseThrow(() -> new IllegalStateException("Tienda no encontrada"));
+        long next = locked.getLastSaleFolio() + 1;
+        locked.setLastSaleFolio(next);
+        tiendaRepository.save(locked);
+        return next;
+    }
 
     // BETWEEN siempre necesita las dos fechas: cuando el filtro viene vacío, Postgres no
     // logra inferir el tipo de un parámetro timestamp nulo (ni con CAST), así que en vez
@@ -155,6 +176,7 @@ public class SaleService {
         sale.setStatus(SaleStatus.COMPLETED);
         sale.setNotes(req.getNotes());
         sale.setTienda(tienda);
+        sale.setFolio(nextSaleFolio(tienda));
 
         List<SaleItem> items = new ArrayList<>();
         // grossSubtotal: suma de unitPrice*qty de cada línea, SIN restar ningún descuento —
@@ -355,8 +377,9 @@ public class SaleService {
         sale.setCustomerEmail(effectiveEmail);
         sale.setPaymentMethod(paymentMethod);
         sale.setStatus(SaleStatus.COMPLETED);
-        sale.setNotes("Generada desde el apartado #" + apartado.getId());
+        sale.setNotes("Generada desde el apartado #" + apartado.getFolio());
         sale.setTienda(apartado.getTienda());
+        sale.setFolio(nextSaleFolio(apartado.getTienda()));
 
         List<SaleItem> items = new ArrayList<>();
         BigDecimal grossSubtotal = BigDecimal.ZERO;

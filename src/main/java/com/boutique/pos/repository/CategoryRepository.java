@@ -66,4 +66,7 @@ public interface CategoryRepository extends JpaRepository<Category, Long> {
                            @Param("name") String name,
                            @Param("isActive") Boolean isActive,
                            Pageable pageable);
+
+    /** Usado únicamente por {@code TiendaPurgeService} (borrado físico y total de una tienda). */
+    void deleteByTiendaId(Long tiendaId);
 }

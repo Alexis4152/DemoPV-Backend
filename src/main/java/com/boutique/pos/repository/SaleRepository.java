@@ -141,4 +141,15 @@ public interface SaleRepository extends JpaRepository<Sale, Long> {
                    "GROUP BY date_trunc('month', s.created_at) ORDER BY date_trunc('month', s.created_at)",
            nativeQuery = true)
     List<Object[]> salesByMonth(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to, @Param("tiendaId") Long tiendaId);
+
+    /** Usado únicamente por {@code TiendaPurgeService} (borrado físico y total de una tienda); sus {@code SaleItem} caen con ella (ON DELETE CASCADE). */
+    void deleteByTiendaId(Long tiendaId);
+
+    /**
+     * Ventas cuyo cliente coincide con el correo dado (en cualquier tienda) — usado por
+     * {@code ArcoRequestService} para armar el reporte de datos de una solicitud de Acceso.
+     * {@link Sale} no guarda teléfono del cliente (a diferencia de {@link
+     * com.boutique.pos.model.Apartado}), solo nombre y correo.
+     */
+    List<Sale> findByCustomerEmailIgnoreCase(String customerEmail);
 }

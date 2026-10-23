@@ -83,6 +83,26 @@ public class CashCutService {
         return cashCutRepository.findFirstByUserIdAndStatus(actor.getId(), CashCutStatus.OPEN);
     }
 
+    /**
+     * Corte de caja relevante para el widget "Corte de caja" del Dashboard. Para roles
+     * normales es el mismo que {@link #findOpen}: a un cajero le importa si ÉL tiene un
+     * turno abierto. Para SUPER_ADMIN/SUPERVISOR, que nunca abren un corte propio, en
+     * cambio importa si la TIENDA sobre la que están actuando tiene algún corte abierto
+     * (de cualquier cajero) — usar {@link #findOpen} aquí los dejaría viendo siempre
+     * "Cerrado" sin importar qué tienda elijan.
+     *
+     * @param actor usuario autenticado que consulta el widget
+     * @return el corte abierto relevante para mostrar en el Dashboard, o vacío
+     */
+    public Optional<CashCut> findOpenForDashboard(User actor) {
+        if (tenantScope.isPlatformActor(actor)) {
+            Long tiendaId = tenantScope.scopeId(actor);
+            if (tiendaId == null) return Optional.empty();
+            return cashCutRepository.findFirstByTiendaIdAndStatusOrderByOpenedAtDesc(tiendaId, CashCutStatus.OPEN);
+        }
+        return findOpen(actor);
+    }
+
     // BETWEEN siempre necesita las dos fechas: Postgres no logra inferir el tipo de un
     // parámetro timestamp nulo (mismo caso que en SaleService.findAll), así que en vez de
     // null se manda un rango que cubre todo el historial cuando no se filtra por fecha.

@@ -4,6 +4,7 @@ import com.boutique.pos.model.CashRegister;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -25,4 +26,13 @@ public interface CashRegisterRepository extends JpaRepository<CashRegister, Long
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT r FROM CashRegister r WHERE r.id = :id")
     Optional<CashRegister> findByIdForUpdate(@Param("id") Long id);
+
+    // ── Usadas únicamente por TiendaPurgeService (borrado FÍSICO y total de una tienda) ──
+    /** Rompe el ciclo CashRegister↔CashCut: quita la referencia a su último corte antes de poder borrar los cortes. */
+    @Modifying
+    @Query("UPDATE CashRegister r SET r.lastCut = null WHERE r.tienda.id = :tiendaId")
+    void clearLastCutByTiendaId(@Param("tiendaId") Long tiendaId);
+
+    /** Borra físicamente todas las cajas de una tienda. */
+    void deleteByTiendaId(Long tiendaId);
 }

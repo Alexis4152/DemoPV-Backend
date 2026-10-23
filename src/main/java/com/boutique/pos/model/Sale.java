@@ -20,12 +20,18 @@ import java.util.List;
  * fila para el historial y los reportes.
  */
 @Entity
-@Table(name = "sales")
+@Table(name = "sales", uniqueConstraints = @UniqueConstraint(name = "uk_sales_tienda_folio", columnNames = {"tienda_id", "folio"}))
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
 public class Sale {
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    // Folio visible al cliente/cajero (ticket, correo, reportes): consecutivo POR TIENDA,
+    // no global — ver Tienda.lastSaleFolio. A diferencia de `id` (la llave real, nunca
+    // mostrada), dos tiendas distintas pueden tener cada una su propia venta folio 1.
+    @Column(nullable = false)
+    private Long folio;
 
     /** Cajero/vendedor que realizó la venta. */
     @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})

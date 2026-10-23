@@ -37,6 +37,18 @@ public interface UserRepository extends JpaRepository<User, Long> {
     /** Cuenta cuántos usuarios tienen asignado el rol dado (usado para validar antes de eliminar/desactivar un rol). */
     long countByRole(Role role);
 
+    // ── Usadas únicamente por TiendaPurgeService (borrado FÍSICO y total de una tienda) ──
+    /** Todos los ids de usuario de una tienda (para borrar/desvincular lo que cuelga de ellos en otras tablas). */
+    List<Long> findIdsByTiendaId(Long tiendaId);
+
+    /** Desvincula entre sí a los usuarios de una tienda ({@code createdBy}/{@code updatedBy}/{@code deletedBy}), que pueden apuntarse unos a otros. */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE User u SET u.createdBy = null, u.updatedBy = null, u.deletedBy = null WHERE u.tienda.id = :tiendaId")
+    void clearSelfRefsByTiendaId(@Param("tiendaId") Long tiendaId);
+
+    /** Borra físicamente todos los usuarios de una tienda. */
+    void deleteByTiendaId(Long tiendaId);
+
     // from/to siempre vienen con un valor real (nunca null) — ver UserService.findAll,
     // porque Postgres no logra inferir el tipo de un parámetro timestamp nulo.
     /**

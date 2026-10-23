@@ -31,4 +31,7 @@ public interface ReimbursementRepository extends JpaRepository<Reimbursement, Lo
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT r FROM Reimbursement r WHERE r.id = :id")
     Optional<Reimbursement> findByIdForUpdate(@Param("id") Long id);
+
+    /** Usado únicamente por {@code TiendaPurgeService} (borrado físico y total de una tienda). */
+    void deleteByTiendaId(Long tiendaId);
 }

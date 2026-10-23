@@ -34,4 +34,7 @@ public interface ShortageRepository extends JpaRepository<Shortage, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT s FROM Shortage s WHERE s.id = :id")
     Optional<Shortage> findByIdForUpdate(@Param("id") Long id);
+
+    /** Usado únicamente por {@code TiendaPurgeService} (borrado físico y total de una tienda). */
+    void deleteByTiendaId(Long tiendaId);
 }

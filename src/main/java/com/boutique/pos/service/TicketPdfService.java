@@ -106,7 +106,7 @@ public class TicketPdfService {
             String fecha = sale.getCreatedAt() != null ? sale.getCreatedAt().format(FECHA_FMT) : "—";
             String hora = sale.getCreatedAt() != null ? sale.getCreatedAt().format(HORA_FMT) : "—";
             document.add(paragraph("FECHA: " + fecha + "     HORA: " + hora, FONT_BODY, Element.ALIGN_LEFT, 0, 3));
-            document.add(paragraph("FOLIO: " + sale.getId(), FONT_BODY, Element.ALIGN_LEFT, 0, 3));
+            document.add(paragraph("FOLIO: " + sale.getFolio(), FONT_BODY, Element.ALIGN_LEFT, 0, 3));
             if (sale.getCustomerName() != null && !sale.getCustomerName().isBlank()) {
                 document.add(paragraph("Cliente: " + sale.getCustomerName(), FONT_BODY, Element.ALIGN_LEFT, 0, 3));
             }

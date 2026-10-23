@@ -194,7 +194,7 @@ public class ReportCatalogService {
         BigDecimal totalSum = BigDecimal.ZERO;
         for (Sale s : page.getContent()) {
             rows.add(row(
-                    "id", s.getId(),
+                    "id", s.getFolio(),
                     "fecha", iso(s.getCreatedAt()),
                     "cliente", blankToDash(s.getCustomerName()),
                     "vendedor", s.getUser() != null ? s.getUser().getName() : "",
@@ -283,7 +283,7 @@ public class ReportCatalogService {
         BigDecimal totalSum = BigDecimal.ZERO;
         for (Apartado a : page.getContent()) {
             rows.add(row(
-                    "id", a.getId(),
+                    "id", a.getFolio(),
                     "fecha", iso(a.getRequestedAt()),
                     "cliente", blankToDash(a.getCustomerName()),
                     "telefono", blankToDash(a.getCustomerPhone()),

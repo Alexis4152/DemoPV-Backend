@@ -32,4 +32,7 @@ public interface PasswordResetTokenRepository extends JpaRepository<PasswordRese
     @Modifying
     @Query("DELETE FROM PasswordResetToken t WHERE t.expiresAt < :now")
     int deleteExpired(@Param("now") LocalDateTime now);
+
+    /** Usado únicamente por {@code TiendaPurgeService} (borrado físico y total de una tienda): borra los tokens de recuperación de todos sus usuarios. */
+    void deleteByUserTiendaId(Long tiendaId);
 }

@@ -98,6 +98,7 @@ public class ApartadoService {
 
         Apartado apartado = new Apartado();
         apartado.setTienda(tienda);
+        apartado.setFolio(nextApartadoFolio(tienda));
         apartado.setCustomerName(req.getCustomerName());
         apartado.setCustomerPhone(req.getCustomerPhone());
         apartado.setCustomerEmail(req.getCustomerEmail());
@@ -152,6 +153,21 @@ public class ApartadoService {
     }
 
     /**
+     * Calcula el próximo folio de apartado de una tienda (consecutivo propio, no global)
+     * bajo bloqueo pesimista sobre su fila — mismo mecanismo que {@code
+     * SaleService#nextSaleFolio}, con su propio contador independiente
+     * ({@link Tienda#getLastApartadoFolio()}).
+     */
+    private Long nextApartadoFolio(Tienda tienda) {
+        Tienda locked = tiendaRepository.findByIdForUpdate(tienda.getId())
+                .orElseThrow(() -> new IllegalStateException("Tienda no encontrada"));
+        long next = locked.getLastApartadoFolio() + 1;
+        locked.setLastApartadoFolio(next);
+        tiendaRepository.save(locked);
+        return next;
+    }
+
+    /**
      * Mapea un {@link Apartado} a lo que sí es seguro devolverle al cliente público (ver
      * {@link PublicApartadoDto}) — nunca la entidad completa, que arrastra la {@link
      * Tienda} anidada (límites de descuento, slug, usuarios) y cada {@link Product} con su
@@ -160,6 +176,7 @@ public class ApartadoService {
     public PublicApartadoDto toPublicDto(Apartado apartado) {
         return PublicApartadoDto.builder()
                 .id(apartado.getId())
+                .folio(apartado.getFolio())
                 .status(apartado.getStatus().name())
                 .requestedAt(apartado.getRequestedAt())
                 .confirmedAt(apartado.getConfirmedAt())
@@ -198,14 +215,14 @@ public class ApartadoService {
      * la primera vez (con/sin lada, espacios, guiones) a como lo escribe ahora.
      *
      * @param slug  slug de la tienda
-     * @param id    folio del apartado (su id)
+     * @param folio folio del apartado (consecutivo propio de esta tienda, no su id)
      * @param phone teléfono tecleado para verificar
      * @return el apartado, mapeado igual que al crearlo (con su estado actual)
      * @throws IllegalArgumentException si no hay un apartado con ese folio en esa tienda, o
      *         si el teléfono no coincide con el que se dejó al solicitarlo
      */
-    public PublicApartadoDto publicApartadoLookup(String slug, Long id, String phone) {
-        return toPublicDto(resolveAndVerifyPublicApartado(slug, id, phone));
+    public PublicApartadoDto publicApartadoLookup(String slug, Long folio, String phone) {
+        return toPublicDto(resolveAndVerifyPublicApartado(slug, folio, phone));
     }
 
     /**
@@ -213,12 +230,13 @@ public class ApartadoService {
      * (mismo mensaje genérico si el folio no existe/no es de esa tienda o si el teléfono no
      * coincide) — factorizado aparte porque lo comparte con {@link
      * #publicApartadoCancel}, que necesita el MISMO nivel de verificación antes de dejar
-     * mutar algo, no solo consultarlo.
+     * mutar algo, no solo consultarlo. Resuelve por {@code (tienda, folio)} — el folio es
+     * consecutivo POR TIENDA, así que por sí solo no identifica un apartado único en todo
+     * el sistema, de ahí que siempre se acote a la tienda ya resuelta por el slug.
      */
-    private Apartado resolveAndVerifyPublicApartado(String slug, Long id, String phone) {
+    private Apartado resolveAndVerifyPublicApartado(String slug, Long folio, String phone) {
         Tienda tienda = findPublicTienda(slug);
-        Apartado apartado = apartadoRepository.findById(id)
-                .filter(a -> a.getTienda().getId().equals(tienda.getId()))
+        Apartado apartado = apartadoRepository.findByTiendaIdAndFolio(tienda.getId(), folio)
                 .orElseThrow(() -> new IllegalArgumentException(LOOKUP_NOT_FOUND_MSG));
         if (!phonesMatch(apartado.getCustomerPhone(), phone)) {
             throw new IllegalArgumentException(LOOKUP_NOT_FOUND_MSG);
@@ -243,7 +261,7 @@ public class ApartadoService {
      * mutación nueva de "cambiar las líneas de un apartado existente".
      *
      * @param slug   slug de la tienda
-     * @param id     folio del apartado a cancelar
+     * @param folio  folio del apartado a cancelar (consecutivo propio de esta tienda)
      * @param phone  teléfono a verificar contra el que se dejó al solicitarlo
      * @param reason motivo opcional que el cliente quiera dejar
      * @return el apartado ya {@code CANCELLED}
@@ -252,8 +270,8 @@ public class ApartadoService {
      * @throws IllegalStateException si ya estaba completado, cancelado o vencido
      */
     @Transactional
-    public PublicApartadoDto publicApartadoCancel(String slug, Long id, String phone, String reason) {
-        Apartado apartado = resolveAndVerifyPublicApartado(slug, id, phone);
+    public PublicApartadoDto publicApartadoCancel(String slug, Long folio, String phone, String reason) {
+        Apartado apartado = resolveAndVerifyPublicApartado(slug, folio, phone);
         return toPublicDto(doCancel(apartado, reason, null));
     }
 
@@ -678,6 +696,7 @@ public class ApartadoService {
         apartado.setStatus(ApartadoStatus.COMPLETED);
         apartado.setCompletedBy(actor);
         apartado.setSaleId(sale.getId());
+        apartado.setSaleFolio(sale.getFolio());
         Apartado saved = apartadoRepository.save(apartado);
 
         // Al cliente ya le llega su ticket aparte (SaleService#completeFromApartado ->

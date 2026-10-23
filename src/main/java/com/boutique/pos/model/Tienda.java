@@ -166,4 +166,17 @@ public class Tienda {
 
     @UpdateTimestamp
     private LocalDateTime updatedAt;
+
+    // Contador del folio (consecutivo propio de ESTA tienda, independiente del de
+    // cualquier otra) de ventas y apartados — SaleService/ApartadoService lo leen e
+    // incrementan bajo bloqueo pesimista sobre esta fila (ver TiendaRepository#
+    // findByIdForUpdate) al registrar cada uno, para que dos altas simultáneas en la misma
+    // tienda nunca saquen el mismo folio.
+    @Column(nullable = false, columnDefinition = "bigint default 0")
+    @Builder.Default
+    private Long lastSaleFolio = 0L;
+
+    @Column(nullable = false, columnDefinition = "bigint default 0")
+    @Builder.Default
+    private Long lastApartadoFolio = 0L;
 }

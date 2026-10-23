@@ -37,17 +37,21 @@ public class RateLimitInterceptor implements HandlerInterceptor {
 
     private record Rule(int capacity, Duration window) {}
 
-    private static final Map<String, Rule> RULES = Map.of(
-            "POST:/api/auth/login", new Rule(10, Duration.ofMinutes(1)),
-            "POST:/api/auth/forgot-password", new Rule(3, Duration.ofMinutes(15)),
+    private static final Map<String, Rule> RULES = Map.ofEntries(
+            Map.entry("POST:/api/auth/login", new Rule(10, Duration.ofMinutes(1))),
+            Map.entry("POST:/api/auth/forgot-password", new Rule(3, Duration.ofMinutes(15))),
             // Manda un correo de aviso al admin de la tienda por cada apartado solicitado:
             // límite bajo para que nadie lo use para inundarle el correo, o para saturar el
             // endpoint con solicitudes falsas (segundo hallazgo de la auditoría).
-            "POST:/api/public/tiendas/{slug}/apartados", new Rule(5, Duration.ofMinutes(1)),
+            Map.entry("POST:/api/public/tiendas/{slug}/apartados", new Rule(5, Duration.ofMinutes(1))),
             // Manda un correo a CADA SUPER_ADMIN activo por solicitud — mismo límite bajo
             // que forgot-password, por el mismo motivo (nadie debe poder usarlo para
             // inundarles el correo ni para saturar la tabla con solicitudes falsas).
-            "POST:/api/public/arco-requests", new Rule(3, Duration.ofMinutes(15))
+            Map.entry("POST:/api/public/arco-requests", new Rule(3, Duration.ofMinutes(15))),
+            // Portal de seguimiento: lectura simple, límite más holgado — pero sigue
+            // acotado para que alguien no pruebe tokens de seguimiento al azar.
+            Map.entry("GET:/api/public/arco-requests/track/{token}", new Rule(60, Duration.ofMinutes(15))),
+            Map.entry("POST:/api/public/arco-requests/track/{token}/answer-info", new Rule(15, Duration.ofMinutes(15)))
     );
 
     private final RateLimiterService rateLimiterService;

@@ -15,4 +15,7 @@ import java.util.Optional;
 public interface TiendaInfoRepository extends JpaRepository<TiendaInfo, Long> {
     /** Obtiene los datos fiscales/de contacto de una tienda, si ya fueron capturados. */
     Optional<TiendaInfo> findByTiendaId(Long tiendaId);
+
+    /** Usado únicamente por {@code TiendaPurgeService} (borrado físico y total de una tienda). */
+    void deleteByTiendaId(Long tiendaId);
 }

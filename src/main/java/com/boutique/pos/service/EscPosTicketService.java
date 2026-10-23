@@ -79,7 +79,7 @@ public class EscPosTicketService {
         }
         ctl(buf, 0x1B, 0x61, 0x00); // alinear a la izquierda
         text(buf, line());
-        text(buf, "Folio: " + sale.getId() + "\n");
+        text(buf, "Folio: " + sale.getFolio() + "\n");
         if (sale.getCreatedAt() != null) {
             text(buf, DATE_FMT.format(sale.getCreatedAt()) + "\n");
         }

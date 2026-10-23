@@ -52,4 +52,7 @@ public interface InventoryMovementRepository extends JpaRepository<InventoryMove
                                     @Param("to") LocalDateTime to,
                                     @Param("type") MovementType type,
                                     Pageable pageable);
+
+    /** Usado únicamente por {@code TiendaPurgeService} (borrado físico y total de una tienda): todos los movimientos de sus productos. */
+    void deleteByProductTiendaId(Long tiendaId);
 }
