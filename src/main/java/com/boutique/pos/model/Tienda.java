@@ -130,6 +130,12 @@ public class Tienda {
     @Builder.Default
     private Boolean reportToSupervisor = true;
 
+    // Último consecutivo usado para los códigos de producto que genera el sistema en esta
+    // tienda (ver ProductBarcodeService). Cada tienda lleva el suyo y empieza en 1.
+    @Column(nullable = false, columnDefinition = "integer default 0")
+    @Builder.Default
+    private Integer barcodeSequence = 0;
+
     // Correo de contacto de ESTA tienda, editable por su ADMIN (o SUPERVISOR/SUPER_ADMIN)
     // en "Datos de la tienda" — es lo único de la configuración de correo que un cliente
     // puede tocar. Nunca se usa como remitente real (Gmail no deja mandar con un "De:"

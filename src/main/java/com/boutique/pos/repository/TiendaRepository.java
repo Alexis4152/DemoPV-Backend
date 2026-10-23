@@ -1,7 +1,9 @@
 package com.boutique.pos.repository;
 
 import com.boutique.pos.model.Tienda;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -51,4 +53,11 @@ public interface TiendaRepository extends JpaRepository<Tienda, Long> {
            "AND t.supervisor.id = (SELECT t2.supervisor.id FROM Tienda t2 WHERE t2.id = :tiendaId) " +
            "ORDER BY t.name ASC")
     List<Tienda> findSiblingTiendas(@Param("tiendaId") Long tiendaId);
+
+    // Bloquea la fila de la tienda (SELECT ... FOR UPDATE) para tomar el siguiente
+    // consecutivo de código de producto sin que dos altas simultáneas obtengan el mismo
+    // número — ver ProductBarcodeService#nextCode.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT t FROM Tienda t WHERE t.id = :id")
+    Optional<Tienda> findByIdForUpdate(@Param("id") Long id);
 }

@@ -39,6 +39,14 @@ public class Product {
     @Column(length = 100)
     private String barcode;
 
+    // true si el código lo asignó el sistema (consecutivo de la tienda, ver
+    // ProductBarcodeService) en vez de capturarse a mano: ese código ya no se puede editar,
+    // porque puede estar impreso en etiquetas. Un código capturado a mano (de fábrica)
+    // sigue siendo editable.
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    @Builder.Default
+    private Boolean barcodeGenerated = false;
+
     @Column(nullable = false, precision = 12, scale = 2)
     @Builder.Default
     private BigDecimal price = BigDecimal.ZERO;
