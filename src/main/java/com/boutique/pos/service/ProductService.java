@@ -414,6 +414,35 @@ public class ProductService {
     }
 
     /**
+     * Deja el stock de un producto en una cantidad contada físicamente ("cantidad real"),
+     * registrando la diferencia como movimiento de inventario. Mismas reglas que {@link
+     * #adjustStock}: solo admin/supervisor/super admin pueden bajar stock. La diferencia se
+     * calcula con la fila ya bloqueada, así que una venta simultánea no la descuadra.
+     *
+     * @param id     producto (debe ser de la tienda del actor)
+     * @param target cantidad real contada (≥ 0)
+     * @param reason motivo del movimiento
+     * @param actor  usuario que hace el cambio
+     * @return la diferencia aplicada (0 si ya coincidía; negativa si se bajó)
+     * @throws IllegalStateException si la diferencia es negativa y el actor no es admin
+     */
+    @Transactional
+    public int setStockTo(Long id, int target, String reason, User actor) {
+        Product p = findByIdForUpdate(id, actor);
+        int previous = p.getStock() != null ? p.getStock() : 0;
+        int diff = target - previous;
+        if (diff == 0) return 0;
+        if (diff < 0 && !tenantScope.isAdminLevel(actor)) {
+            throw new IllegalStateException("Solo un administrador o supervisor puede bajar existencias ("
+                    + p.getName() + ": " + previous + " → " + target + ")");
+        }
+        p.setStock(target);
+        productRepository.save(p);
+        recordMovement(p, actor, diff > 0 ? MovementType.IN : MovementType.OUT, Math.abs(diff), previous, reason);
+        return diff;
+    }
+
+    /**
      * Suma piezas a un producto que llegan de otro módulo (hoy, materia prima pasada a
      * inventario) y registra la entrada con su referencia. El producto debe venir ya
      * bloqueado ({@link #findByIdForUpdate}) dentro de la transacción del llamador.

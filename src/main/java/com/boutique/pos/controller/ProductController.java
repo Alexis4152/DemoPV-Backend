@@ -4,6 +4,8 @@ import com.boutique.pos.dto.ApiResponse;
 import com.boutique.pos.dto.BarcodeLabelRequest;
 import com.boutique.pos.service.BarcodeLabelPdfService;
 import com.boutique.pos.service.ProductBarcodeService;
+import com.boutique.pos.service.StockImportService;
+import com.boutique.pos.dto.StockImportResult;
 import com.boutique.pos.dto.BulkImportResult;
 import com.boutique.pos.dto.InventoryAdjustRequest;
 import com.boutique.pos.dto.PageResponse;
@@ -57,6 +59,7 @@ public class ProductController {
     private final InventoryCountSheetService inventoryCountSheetService;
     private final ProductBarcodeService productBarcodeService;
     private final BarcodeLabelPdfService barcodeLabelPdfService;
+    private final StockImportService stockImportService;
 
     // Tope de etiquetas por PDF, para no armar un archivo gigante por error (ej. 500
     // copias de todo el catálogo).
@@ -455,6 +458,22 @@ public class ProductController {
         String message = result.getErrorCount() == 0
                 ? result.getCreated() + " producto(s) creado(s) correctamente"
                 : result.getCreated() + " producto(s) creado(s), " + result.getErrorCount() + " con error";
+        return ResponseEntity.ok(ApiResponse.ok(result, message));
+    }
+
+    /**
+     * "Actualizar existencias": sube la hoja de inventario en Excel con la columna "Cantidad
+     * real" llenada y deja el stock de cada producto en esa cantidad (ver {@link
+     * StockImportService}). Mismo permiso que ajustar stock (INVENTORY:EDIT); bajar stock
+     * además requiere ser admin/supervisor.
+     */
+    @PreAuthorize("@sectionAccess.checkAction('INVENTORY', 'EDIT')")
+    @PostMapping(value = "/stock-import", consumes = "multipart/form-data")
+    public ResponseEntity<ApiResponse<StockImportResult>> stockImport(@RequestParam("file") MultipartFile file,
+                                                                      @AuthenticationPrincipal User actor) {
+        StockImportResult result = stockImportService.importFile(file, actor);
+        String message = result.getUpdated() + " producto(s) actualizado(s), " + result.getUnchanged() + " sin cambio"
+                + (result.getErrorCount() > 0 ? ", " + result.getErrorCount() + " con error" : "");
         return ResponseEntity.ok(ApiResponse.ok(result, message));
     }
 }
