@@ -11,6 +11,7 @@ import com.boutique.pos.dto.ProductRequest;
 import com.boutique.pos.exception.FieldConflictException;
 import com.boutique.pos.model.Product;
 import com.boutique.pos.model.ProductImage;
+import com.boutique.pos.model.Tienda;
 import com.boutique.pos.model.User;
 import com.boutique.pos.security.SectionAccessService;
 import com.boutique.pos.service.InventoryCountSheetService;
@@ -404,6 +405,22 @@ public class ProductController {
         String msg = generated == 0 ? "Todos los productos ya tienen código"
                 : "Se generaron " + generated + " código" + (generated == 1 ? "" : "s");
         return ResponseEntity.ok(ApiResponse.ok(generated, msg));
+    }
+
+    /**
+     * Hoja tamaño carta con nombre y código de barras de todos los productos activos con
+     * código, en orden alfabético — para imprimirla y escanear desde ella en caja.
+     */
+    @GetMapping("/barcode-sheet.pdf")
+    @PreAuthorize("@sectionAccess.check('INVENTORY')")
+    public ResponseEntity<byte[]> barcodeSheet(@AuthenticationPrincipal User actor) {
+        List<Product> products = productService.findForLabels(null, actor);
+        Tienda tienda = products.get(0).getTienda();
+        String title = "Códigos de productos" + (tienda != null ? " — " + tienda.getName() : "") + " — " + LocalDate.now();
+        return ResponseEntity.ok()
+                .header("Content-Type", "application/pdf")
+                .header("Content-Disposition", "attachment; filename=\"codigos-" + LocalDate.now() + ".pdf\"")
+                .body(barcodeLabelPdfService.buildSheet(products, title));
     }
 
     /**
