@@ -17,6 +17,9 @@ import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
 import java.util.List;
+import com.boutique.pos.util.SortParams;
+import org.springframework.data.domain.Sort;
+import java.util.Map;
 
 /**
  * Faltantes ({@code /api/shortages}): dinero que una persona debe cubrir porque faltó en
@@ -27,16 +30,23 @@ import java.util.List;
 @RequiredArgsConstructor
 public class ShortageController {
 
+    // Columnas ordenables de la tabla (clave que manda el frontend -> propiedad JPQL);
+    // cualquier otra clave usa el orden por defecto. Ver SortParams.
+    private static final Map<String, String> SORT_SHORTAGES = Map.of("person", "sp.name", "origin", "origin", "amount", "amount", "paid", "paidAmount");
+    private static final Sort DEFAULT_SORT_SHORTAGES = Sort.by(Sort.Direction.DESC, "createdAt");
+
     private final ShortageService shortageService;
 
     /** {@code paid=false} (default): pendientes y con abonos; {@code paid=true}: pagados. */
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
     public ResponseEntity<ApiResponse<PageResponse<Shortage>>> list(@RequestParam(defaultValue = "false") boolean paid,
+                                                                    @RequestParam(required = false) String sort,
+                                                                    @RequestParam(required = false) String dir,
                                                                     @RequestParam(defaultValue = "0") int page,
                                                                     @RequestParam(defaultValue = "20") int size,
                                                                     @AuthenticationPrincipal User actor) {
-        return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(shortageService.search(paid, PageRequest.of(page, size), actor)), null));
+        return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(shortageService.search(paid, SortParams.page(page, size, sort, dir, SORT_SHORTAGES, DEFAULT_SORT_SHORTAGES), actor)), null));
     }
 
     @GetMapping("/pending-total")

@@ -769,6 +769,7 @@ public class ApartadoService {
                 mv.setPreviousStock(previous);
                 mv.setNewStock(previous - qtyInt);
                 mv.setReason("Apartado #" + apartado.getId() + " confirmado");
+                mv.setSource(MovementSource.APARTADO);
                 movementRepository.save(mv);
             }
         }
@@ -977,6 +978,7 @@ public class ApartadoService {
             mv.setPreviousStock(previous);
             mv.setNewStock(previous + qty);
             mv.setReason("Apartado #" + apartado.getId() + " " + motivo);
+            mv.setSource(MovementSource.APARTADO_RETURN);
             movementRepository.save(mv);
         }
     }

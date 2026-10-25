@@ -17,6 +17,9 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import com.boutique.pos.util.SortParams;
+import org.springframework.data.domain.Sort;
+import java.util.Map;
 
 /**
  * Controlador de usuarios, expuesto bajo {@code /api/users}.
@@ -45,6 +48,11 @@ import java.time.LocalDateTime;
 @PreAuthorize("@sectionAccess.check('USERS')")
 public class UserController {
 
+    // Columnas ordenables de la tabla (clave que manda el frontend -> propiedad JPQL);
+    // cualquier otra clave usa el orden por defecto. Ver SortParams.
+    private static final Map<String, String> SORT_USERS = Map.of("name", "name", "email", "email", "role", "ur.name", "createdAt", "createdAt", "status", "isActive");
+    private static final Sort DEFAULT_SORT_USERS = Sort.by(Sort.Direction.ASC, "name");
+
     private final UserService userService;
 
     /**
@@ -69,10 +77,12 @@ public class UserController {
             @RequestParam(required = false) String email,
             @RequestParam(required = false) Long roleId,
             @RequestParam(required = false) Boolean isActive,
+            @RequestParam(required = false) String sort,
+            @RequestParam(required = false) String dir,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @AuthenticationPrincipal User actor) {
-        Pageable pageable = PageRequest.of(page, size);
+        Pageable pageable = SortParams.page(page, size, sort, dir, SORT_USERS, DEFAULT_SORT_USERS);
         Page<User> result = userService.findAll(from, to, name, email, roleId, isActive, actor, pageable);
         return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
     }

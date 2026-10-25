@@ -14,7 +14,6 @@ import com.boutique.pos.service.ApartadoService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
@@ -23,6 +22,9 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import com.boutique.pos.util.SortParams;
+import org.springframework.data.domain.Sort;
+import java.util.Map;
 
 /**
  * Controlador de apartados, expuesto bajo {@code /api/apartados} — la parte AUTENTICADA
@@ -39,6 +41,11 @@ import java.time.LocalDate;
 @RequestMapping("/api/apartados")
 @RequiredArgsConstructor
 public class ApartadoController {
+
+    // Columnas ordenables de la tabla (clave que manda el frontend -> propiedad JPQL);
+    // cualquier otra clave usa el orden por defecto. Ver SortParams.
+    private static final Map<String, String> SORT_APARTADOS = Map.of("customer", "customerName", "total", "total", "status", "status", "requested", "requestedAt", "expires", "expiresAt");
+    private static final Sort DEFAULT_SORT_APARTADOS = Sort.by(Sort.Direction.DESC, "requestedAt");
 
     private final ApartadoService apartadoService;
 
@@ -63,10 +70,12 @@ public class ApartadoController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
             @RequestParam(required = false) String q,
+            @RequestParam(required = false) String sort,
+            @RequestParam(required = false) String dir,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @AuthenticationPrincipal User actor) {
-        Pageable pageable = PageRequest.of(page, size);
+        Pageable pageable = SortParams.page(page, size, sort, dir, SORT_APARTADOS, DEFAULT_SORT_APARTADOS);
         Page<Apartado> result = apartadoService.search(status, origin, folio, from, to, q, pageable, actor);
         return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
     }

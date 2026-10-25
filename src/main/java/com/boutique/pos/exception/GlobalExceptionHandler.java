@@ -83,6 +83,17 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(ApiResponse.error(ex.getMessage()));
     }
 
+    // Ventana de mantenimiento activa (ver MaintenanceInterceptor/MaintenanceWindowService):
+    // 503 con data.maintenance para que el frontend muestre la pantalla de mantenimiento.
+    @ExceptionHandler(MaintenanceModeException.class)
+    public ResponseEntity<ApiResponse<Map<String, Object>>> handleMaintenance(MaintenanceModeException ex) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("maintenance", true);
+        data.put("endAt", ex.getEndAt());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(
+                ApiResponse.<Map<String, Object>>builder().success(false).message(ex.getMessage()).data(data).build());
+    }
+
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<ApiResponse<Void>> handleAccessDenied(AccessDeniedException ex) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.error("Acceso denegado"));

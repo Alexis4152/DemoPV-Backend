@@ -5,6 +5,7 @@ import com.boutique.pos.dto.BulkImportRowError;
 import com.boutique.pos.dto.ProductRequest;
 import com.boutique.pos.exception.FieldConflictException;
 import com.boutique.pos.model.Category;
+import com.boutique.pos.model.InventoryAuditAction;
 import com.boutique.pos.model.Tienda;
 import com.boutique.pos.model.User;
 import com.boutique.pos.security.TenantScope;
@@ -57,6 +58,7 @@ public class ProductBulkImportService {
     private final CategoryService categoryService;
     private final TenantScope tenantScope;
     private final Validator validator;
+    private final InventoryAuditService auditService;
 
     /**
      * Genera la plantilla (.xlsx) con las columnas esperadas y una fila de ejemplo, para
@@ -158,7 +160,14 @@ public class ProductBulkImportService {
         if (errors.size() > MAX_INLINE_ERRORS) {
             result.errorReportBase64(Base64.getEncoder().encodeToString(buildErrorReport(errorRows)));
         }
+        auditService.log(actor, InventoryAuditAction.BULK_IMPORT,
+                fileLabel(file) + ": " + created + " producto(s) creado(s), " + errors.size() + " con error, de " + totalRows + " fila(s)");
         return result.build();
+    }
+
+    static String fileLabel(MultipartFile file) {
+        String name = file.getOriginalFilename();
+        return name == null || name.isBlank() ? "Archivo" : "Archivo \"" + name + "\"";
     }
 
     /** true si la fila está completamente vacía (huecos entre filas con datos, comunes al editar un Excel a mano). */

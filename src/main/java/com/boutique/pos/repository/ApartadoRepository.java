@@ -56,8 +56,7 @@ public interface ApartadoRepository extends JpaRepository<Apartado, Long> {
            "     LOWER(a.customerName) LIKE LOWER(CONCAT('%',CAST(:q AS string),'%')) " +
            "     OR LOWER(a.customerPhone) LIKE LOWER(CONCAT('%',CAST(:q AS string),'%')) " +
            "     OR EXISTS (SELECT 1 FROM ApartadoItem i WHERE i.apartado = a AND LOWER(i.productName) LIKE LOWER(CONCAT('%',CAST(:q AS string),'%')))" +
-           ") " +
-           "ORDER BY a.requestedAt DESC")
+           ")")
     Page<Apartado> search(@Param("tiendaId") Long tiendaId,
                            @Param("status") ApartadoStatus status,
                            @Param("origin") ApartadoOrigin origin,

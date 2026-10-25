@@ -58,8 +58,7 @@ public interface CategoryRepository extends JpaRepository<Category, Long> {
            "(:tiendaId IS NULL OR c.tienda.id = :tiendaId) " +
            "AND c.createdAt BETWEEN :from AND :to " +
            "AND (:name IS NULL OR LOWER(c.name) LIKE LOWER(CONCAT('%', CAST(:name AS string), '%'))) " +
-           "AND (:isActive IS NULL OR c.isActive = :isActive) " +
-           "ORDER BY c.name ASC")
+           "AND (:isActive IS NULL OR c.isActive = :isActive)")
     Page<Category> search(@Param("tiendaId") Long tiendaId,
                            @Param("from") LocalDateTime from,
                            @Param("to") LocalDateTime to,

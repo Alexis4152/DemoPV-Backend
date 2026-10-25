@@ -18,12 +18,13 @@ public interface RawMaterialRepository extends JpaRepository<RawMaterial, Long> 
      * Materias primas activas con los mismos filtros que Inventario: texto en nombre o
      * código, categoría y stock bajo. {@code tiendaId} nulo = SUPER_ADMIN viendo todas.
      */
-    @Query("SELECT m FROM RawMaterial m WHERE m.isActive = true " +
+    // Sin ORDER BY: el orden llega en el Pageable. LEFT JOIN a la categoría (opcional)
+    // para ordenar por su nombre sin perder las materias primas sin categoría.
+    @Query("SELECT m FROM RawMaterial m LEFT JOIN m.category mc WHERE m.isActive = true " +
            "AND (:q IS NULL OR LOWER(m.name) LIKE LOWER(CONCAT('%',CAST(:q AS string),'%')) OR LOWER(m.barcode) LIKE LOWER(CONCAT('%',CAST(:q AS string),'%'))) " +
            "AND (:categoryId IS NULL OR m.category.id = :categoryId) " +
            "AND (:lowStock IS NULL OR (:lowStock = true AND m.stock <= m.minStock)) " +
-           "AND (:tiendaId IS NULL OR m.tienda.id = :tiendaId) " +
-           "ORDER BY m.name")
+           "AND (:tiendaId IS NULL OR m.tienda.id = :tiendaId)")
     Page<RawMaterial> search(@Param("q") String q,
                              @Param("categoryId") Long categoryId,
                              @Param("lowStock") Boolean lowStock,

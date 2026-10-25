@@ -23,6 +23,10 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import com.boutique.pos.util.SortParams;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.domain.Pageable;
+import java.util.Map;
 
 /**
  * Cajas de la tienda ({@code /api/cash-registers}): su estado, alta/edición, movimientos
@@ -34,6 +38,12 @@ import java.util.List;
 @RequestMapping("/api/cash-registers")
 @RequiredArgsConstructor
 public class CashRegisterController {
+
+    // Columnas ordenables de "Últimas entregas de caja" (clave del frontend -> propiedad JPQL).
+    // ("Recibió" en monto no se ordena: se calcula, debía recibir + diferencia original del conteo.)
+    private static final Map<String, String> SORT_HANDOVERS = Map.of("register", "cr.name", "from", "pu.name",
+            "to", "openedAt", "expected", "expectedOpeningAmount", "status", "handoverStatus");
+    private static final Sort DEFAULT_SORT_HANDOVERS = Sort.by(Sort.Direction.DESC, "openedAt");
 
     private final CashRegisterService cashRegisterService;
     private final CashMovementService cashMovementService;
@@ -100,10 +110,13 @@ public class CashRegisterController {
 
     @GetMapping("/handovers")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
-    public ResponseEntity<ApiResponse<PageResponse<HandoverDto>>> handovers(@RequestParam(defaultValue = "0") int page,
+    public ResponseEntity<ApiResponse<PageResponse<HandoverDto>>> handovers(@RequestParam(required = false) String sort,
+                                                                            @RequestParam(required = false) String dir,
+                                                                            @RequestParam(defaultValue = "0") int page,
                                                                             @RequestParam(defaultValue = "10") int size,
                                                                             @AuthenticationPrincipal User actor) {
-        return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(cashRegisterService.handovers(PageRequest.of(page, size), actor)), null));
+        Pageable pageable = SortParams.page(page, size, sort, dir, SORT_HANDOVERS, DEFAULT_SORT_HANDOVERS);
+        return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(cashRegisterService.handovers(pageable, actor)), null));
     }
 
     @GetMapping("/handovers/unresolved-count")

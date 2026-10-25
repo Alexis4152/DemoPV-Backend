@@ -32,13 +32,13 @@ public interface SaleRepository extends JpaRepository<Sale, Long> {
      * llegan con un valor real desde el service (nunca {@code null}), por la limitación de
      * Postgres para inferir el tipo de un parámetro timestamp nulo (ver comentario arriba).
      */
-    @Query("SELECT s FROM Sale s WHERE " +
+    // Sin ORDER BY: el orden llega en el Pageable (ver SortParams / SaleController#list).
+    @Query("SELECT s FROM Sale s LEFT JOIN s.user su WHERE " +
            "(:tiendaId IS NULL OR s.tienda.id = :tiendaId) " +
            "AND s.createdAt BETWEEN :from AND :to " +
            "AND (:customerName IS NULL OR LOWER(s.customerName) LIKE LOWER(CONCAT('%', CAST(:customerName AS string), '%'))) " +
            "AND (:paymentMethod IS NULL OR s.paymentMethod = :paymentMethod) " +
-           "AND (:status IS NULL OR s.status = :status) " +
-           "ORDER BY s.createdAt DESC")
+           "AND (:status IS NULL OR s.status = :status)")
     Page<Sale> search(@Param("tiendaId") Long tiendaId,
                        @Param("from") LocalDateTime from,
                        @Param("to") LocalDateTime to,

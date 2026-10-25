@@ -55,9 +55,10 @@ public interface RoleRepository extends JpaRepository<Role, Long> {
     // administración de Roles (a diferencia de las de arriba, que alimentan selectores que
     // necesitan el catálogo completo, ej. el filtro/formulario de Usuarios).
     /** Página de roles activos (no eliminados) del sistema, ordenados alfabéticamente. */
-    Page<Role> findAllByIsActiveTrueOrderByNameAsc(Pageable pageable);
+    // El orden llega en el Pageable (ver RoleController / SortParams).
+    Page<Role> findAllByIsActiveTrue(Pageable pageable);
     /** Página de roles activos (no eliminados) de una tienda, ordenados alfabéticamente. */
-    Page<Role> findAllByTiendaIdAndIsActiveTrueOrderByNameAsc(Long tiendaId, Pageable pageable);
+    Page<Role> findAllByTiendaIdAndIsActiveTrue(Long tiendaId, Pageable pageable);
 
     // ── Usadas únicamente por TiendaPurgeService (borrado FÍSICO y total de una tienda) ──
     /** Desvincula los roles de una tienda de sus usuarios de auditoría, paso previo a poder borrar a esos usuarios. */

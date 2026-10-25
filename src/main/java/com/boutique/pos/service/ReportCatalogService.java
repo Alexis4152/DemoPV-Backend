@@ -26,6 +26,7 @@ import com.boutique.pos.security.TenantScope;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -178,7 +179,7 @@ public class ReportCatalogService {
         SaleStatus status = enumOrNull(f.status(), SaleStatus.class);
         PaymentMethod method = enumOrNull(f.method(), PaymentMethod.class);
         Page<Sale> page = saleRepository.search(c.tiendaId(), c.start(), c.end(), null, method, status,
-                PageRequest.of(0, c.limit()));
+                PageRequest.of(0, c.limit(), Sort.by(Sort.Direction.DESC, "createdAt")));
 
         List<Column> columns = List.of(
                 new Column("id", "Folio", "number"),
@@ -260,14 +261,14 @@ public class ReportCatalogService {
     private Report apartados(Ctx c, Filters f) {
         ApartadoStatus status = enumOrNull(f.status(), ApartadoStatus.class);
         Page<Apartado> page = apartadoRepository.search(c.tiendaId(), status, null, null, c.start(), c.end(), null,
-                PageRequest.of(0, c.limit()));
+                PageRequest.of(0, c.limit(), Sort.by(Sort.Direction.DESC, "requestedAt")));
         return apartadosReport(c, page);
     }
 
     private Report apartadosPendientes(Ctx c) {
         // "snapshot": todos los PENDING ahora mismo, sin filtrar por fecha de solicitud.
         Page<Apartado> page = apartadoRepository.search(c.tiendaId(), ApartadoStatus.PENDING, null, null, MIN_DATE, MAX_DATE,
-                null, PageRequest.of(0, c.limit()));
+                null, PageRequest.of(0, c.limit(), Sort.by(Sort.Direction.DESC, "requestedAt")));
         return apartadosReport(c, page);
     }
 
@@ -480,7 +481,7 @@ public class ReportCatalogService {
         CashCutStatus status = enumOrNull(f.status(), CashCutStatus.class);
         // null, null: sin filtro de cajero ni de estado del arqueo (CashCutRepository#search).
         Page<CashCut> page = cashCutRepository.search(c.tiendaId(), c.start(), c.end(), status, null, null,
-                PageRequest.of(0, c.limit()));
+                PageRequest.of(0, c.limit(), Sort.by(Sort.Direction.DESC, "openedAt")));
         List<Column> columns = List.of(
                 new Column("id", "Folio", "number"),
                 new Column("cajero", "Cajero", "text"),

@@ -3,7 +3,11 @@ package com.boutique.pos.service;
 import com.boutique.pos.dto.InventoryAdjustRequest;
 import com.boutique.pos.dto.ProductRequest;
 import com.boutique.pos.exception.FieldConflictException;
+import com.boutique.pos.model.AppSection;
+import com.boutique.pos.model.InventoryAuditAction;
+import com.boutique.pos.model.MovementSource;
 import com.boutique.pos.model.MovementType;
+import com.boutique.pos.model.StockOutReason;
 import com.boutique.pos.model.Category;
 import com.boutique.pos.model.InventoryMovement;
 import com.boutique.pos.model.Product;
@@ -17,13 +21,17 @@ import com.boutique.pos.repository.TiendaRepository;
 import com.boutique.pos.security.TenantScope;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Objects;
 import java.util.Map;
 
 /**
@@ -47,6 +55,13 @@ public class ProductService {
     private final TiendaRepository tiendaRepository;
     private final TenantScope tenantScope;
     private final ProductBarcodeService productBarcodeService;
+    private final InventoryAuditService auditService;
+
+    /**
+     * Acción de Roles y Permisos "Ajustar stock": agregar y quitar piezas (y cargar
+     * existencias por Excel). Separada de EDIT, que solo edita los datos del producto.
+     */
+    public static final String ADJUST_ACTION = "ADJUST_STOCK";
 
     /**
      * Búsqueda paginada de productos activos, con filtros combinables. Cada producto trae
@@ -257,7 +272,13 @@ public class ProductService {
      */
     public Page<Product> searchPage(String q, Long categoryId, Boolean lowStock, String soldFilter, Pageable pageable, User actor) {
         String normalizedSold = "NEVER_SOLD".equals(soldFilter) || "TOP_SELLERS".equals(soldFilter) ? soldFilter : null;
-        return productRepository.searchActiveWithSales(q, categoryId, lowStock, normalizedSold, tenantScope.scopeId(actor), pageable);
+        if (normalizedSold != null) {
+            // Filtro por ventas (query nativa con su propio orden): ignora el orden del Pageable.
+            Pageable unsorted = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize());
+            return productRepository.searchActiveWithSales(q, categoryId, lowStock, normalizedSold, tenantScope.scopeId(actor), unsorted);
+        }
+        // Tabla de Inventario: el orden viene del encabezado que eligió el usuario (ver SortParams).
+        return productRepository.searchActive(q, categoryId, lowStock, tenantScope.scopeId(actor), pageable);
     }
 
     /**
@@ -312,8 +333,10 @@ public class ProductService {
         Product saved = productRepository.save(p);
 
         if (saved.getStock() > 0) {
-            recordMovement(saved, actor, MovementType.IN, saved.getStock(), 0, "Stock inicial");
+            recordMovement(saved, actor, MovementType.IN, saved.getStock(), 0, "Stock inicial", MovementSource.INITIAL_STOCK);
         }
+        auditService.log(actor, InventoryAuditAction.PRODUCT_CREATED, saved,
+                "Código " + saved.getBarcode() + " · precio " + money(saved.getPrice()) + " · stock inicial " + saved.getStock());
         return saved;
     }
 
@@ -337,6 +360,7 @@ public class ProductService {
         Product p = findById(id, actor);
         Category cat = categoryService.findById(req.getCategoryId(), actor);
         Long tiendaId = p.getTienda() != null ? p.getTienda().getId() : null;
+        Map<String, Object> before = auditSnapshot(p);
 
         // Un código generado puede estar ya impreso en etiquetas: no se cambia. Si el
         // request lo trae vacío (o igual), simplemente se conserva.
@@ -363,7 +387,49 @@ public class ProductService {
         validateApartadoDiscountPercent(apartadoDiscount, req.getPrice(), p.getTienda());
         p.setApartadoDiscountPercent(apartadoDiscount);
         p.setUpdatedBy(actor);
-        return productRepository.save(p);
+        Product saved = productRepository.save(p);
+
+        String changes = describeChanges(before, auditSnapshot(saved));
+        if (!changes.isEmpty()) auditService.log(actor, InventoryAuditAction.PRODUCT_UPDATED, saved, changes);
+        return saved;
+    }
+
+    /** Campos del producto que se reportan en la bitácora al editarlo, en orden de lectura. */
+    private Map<String, Object> auditSnapshot(Product p) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("Nombre", p.getName());
+        m.put("Código", p.getBarcode());
+        m.put("Precio", money(p.getPrice()));
+        m.put("Costo", money(p.getCost()));
+        m.put("Stock mínimo", p.getMinStock());
+        m.put("Unidad", p.getUnit());
+        m.put("Categoría", p.getCategory() != null ? p.getCategory().getName() : null);
+        m.put("En tienda en línea", Boolean.TRUE.equals(p.getIsReservable()) ? "Sí" : "No");
+        m.put("Descuento apartado %", p.getApartadoDiscountPercent() != null
+                ? p.getApartadoDiscountPercent().stripTrailingZeros().toPlainString() : null);
+        // La descripción puede ser larga: solo se reporta que cambió, no el texto.
+        m.put("Descripción", p.getDescription() == null ? "" : String.valueOf(p.getDescription().hashCode()));
+        return m;
+    }
+
+    /** "Precio: $100.00 → $120.00 · Unidad: pieza → caja"; vacío si nada cambió. */
+    private static String describeChanges(Map<String, Object> before, Map<String, Object> after) {
+        List<String> parts = new ArrayList<>();
+        for (Map.Entry<String, Object> e : before.entrySet()) {
+            Object a = after.get(e.getKey());
+            if (Objects.equals(e.getValue(), a)) continue;
+            if (e.getKey().equals("Descripción")) parts.add("Descripción modificada");
+            else parts.add(e.getKey() + ": " + show(e.getValue()) + " → " + show(a));
+        }
+        return String.join(" · ", parts);
+    }
+
+    private static String show(Object v) {
+        return v == null || "".equals(v) ? "(vacío)" : String.valueOf(v);
+    }
+
+    private static String money(BigDecimal v) {
+        return v == null ? null : "$" + v.setScale(2, RoundingMode.HALF_UP).toPlainString();
     }
 
     /**
@@ -371,23 +437,29 @@ public class ProductService {
      * movimiento de inventario correspondiente.
      *
      * <p>Una cantidad positiva es una entrada ({@code IN}); una cantidad negativa es una
-     * salida ({@code OUT}). Solo un usuario con rol ADMIN puede registrar salidas
-     * (quitar piezas) — cualquier otro rol solo puede sumar stock. El resultado nunca
-     * puede dejar el stock en negativo.</p>
+     * salida ({@code OUT}). Ambas requieren el permiso "Ajustar stock" (ver {@link
+     * #canAdjustStock}); quitar piezas además exige un motivo ({@link StockOutReason}), que
+     * define el origen del movimiento (merma, devolución...). El resultado nunca puede dejar
+     * el stock en negativo.</p>
      *
      * @param id id del producto a ajustar
-     * @param req cantidad a ajustar (positiva=entrada, negativa=salida) y motivo del ajuste
+     * @param req cantidad a ajustar (positiva=entrada, negativa=salida), motivo de salida y comentario
      * @param actor usuario que hace el ajuste; debe tener acceso a la tienda del
      *              producto; queda registrado en el movimiento de inventario
      * @return el producto con el stock ya actualizado
-     * @throws IllegalStateException si un no-ADMIN intenta quitar piezas
-     * @throws FieldConflictException (campo {@code quantity}) si el ajuste dejaría el
-     *         stock en negativo, o si el stock resultante desbordaría un {@code int}
+     * @throws IllegalStateException si el actor no tiene el permiso "Ajustar stock"
+     * @throws FieldConflictException si falta el motivo de salida (campo {@code outReason}),
+     *         o (campo {@code quantity}) si el ajuste dejaría el stock en negativo o
+     *         desbordaría un {@code int}
      */
     @Transactional
     public Product adjustStock(Long id, InventoryAdjustRequest req, User actor) {
-        if (req.getQuantity() < 0 && !tenantScope.isAdminLevel(actor)) {
-            throw new IllegalStateException("Solo un administrador puede quitar piezas del inventario");
+        boolean out = req.getQuantity() < 0;
+        if (!canAdjustStock(actor)) {
+            throw new IllegalStateException("No tienes permiso para ajustar el stock del inventario");
+        }
+        if (out && req.getOutReason() == null) {
+            throw new FieldConflictException("outReason", "Elige el motivo de la salida");
         }
         // findByIdForUpdate (no findById): toma el lock ANTES de leer el stock, para que un
         // ajuste manual concurrente con una venta/confirmación de apartado sobre el mismo
@@ -410,15 +482,35 @@ public class ProductService {
         p.setStock(newStock);
         productRepository.save(p);
 
-        MovementType type = req.getQuantity() >= 0 ? MovementType.IN : MovementType.OUT;
-        recordMovement(p, actor, type, Math.abs(req.getQuantity()), previous, req.getReason());
+        String comment = req.getReason() != null && !req.getReason().isBlank() ? req.getReason().trim() : null;
+        if (out) {
+            StockOutReason why = req.getOutReason();
+            String reason = why.getLabel() + (comment != null ? ": " + comment : "");
+            recordMovement(p, actor, MovementType.OUT, -req.getQuantity(), previous, reason, why.getSource());
+        } else {
+            recordMovement(p, actor, MovementType.IN, req.getQuantity(), previous, comment, MovementSource.MANUAL_IN);
+        }
         return p;
+    }
+
+    /**
+     * Si el actor puede ajustar el stock (agregar o quitar piezas, o cargar existencias por
+     * Excel): admin/supervisor/super admin siempre; cualquier otro rol solo si tiene el
+     * permiso "Ajustar stock" ({@code INVENTORY:ADJUST_STOCK}) en Roles y Permisos. Mismo
+     * criterio que {@code @sectionAccess.checkAction('INVENTORY', 'ADJUST_STOCK')} de los
+     * endpoints; se repite aquí para que el servicio no dependa de que el llamador lo haya hecho.
+     */
+    public boolean canAdjustStock(User actor) {
+        if (tenantScope.isAdminLevel(actor)) return true;
+        return actor.getRole() != null
+                && actor.getRole().getSections().contains(AppSection.INVENTORY)
+                && actor.getRole().getActionGrants().contains("INVENTORY:" + ADJUST_ACTION);
     }
 
     /**
      * Deja el stock de un producto en una cantidad contada físicamente ("cantidad real"),
      * registrando la diferencia como movimiento de inventario. Mismas reglas que {@link
-     * #adjustStock}: solo admin/supervisor/super admin pueden bajar stock. La diferencia se
+     * #adjustStock}: requiere {@link #canAdjustStock}. La diferencia se
      * calcula con la fila ya bloqueada, así que una venta simultánea no la descuadra.
      *
      * @param id     producto (debe ser de la tienda del actor)
@@ -426,7 +518,7 @@ public class ProductService {
      * @param reason motivo del movimiento
      * @param actor  usuario que hace el cambio
      * @return la diferencia aplicada (0 si ya coincidía; negativa si se bajó)
-     * @throws IllegalStateException si la diferencia es negativa y el actor no es admin
+     * @throws IllegalStateException si el actor no tiene el permiso "Ajustar stock"
      */
     @Transactional
     public int setStockTo(Long id, int target, String reason, User actor) {
@@ -434,13 +526,13 @@ public class ProductService {
         int previous = p.getStock() != null ? p.getStock() : 0;
         int diff = target - previous;
         if (diff == 0) return 0;
-        if (diff < 0 && !tenantScope.isAdminLevel(actor)) {
-            throw new IllegalStateException("Solo un administrador o supervisor puede bajar existencias ("
-                    + p.getName() + ": " + previous + " → " + target + ")");
+        if (!canAdjustStock(actor)) {
+            throw new IllegalStateException("No tienes permiso para ajustar el stock del inventario");
         }
         p.setStock(target);
         productRepository.save(p);
-        recordMovement(p, actor, diff > 0 ? MovementType.IN : MovementType.OUT, Math.abs(diff), previous, reason);
+        recordMovement(p, actor, diff > 0 ? MovementType.IN : MovementType.OUT, Math.abs(diff), previous, reason,
+                MovementSource.STOCK_IMPORT);
         return diff;
     }
 
@@ -459,7 +551,7 @@ public class ProductService {
         }
         p.setStock((int) newStockLong);
         productRepository.save(p);
-        InventoryMovement mv = recordMovement(p, actor, MovementType.IN, quantity, previous, reason);
+        InventoryMovement mv = recordMovement(p, actor, MovementType.IN, quantity, previous, reason, MovementSource.RAW_MATERIAL);
         mv.setReference(reference);
         movementRepository.save(mv);
     }
@@ -471,12 +563,14 @@ public class ProductService {
      * @param id id del producto a desactivar
      * @param actor usuario que lo desactiva; debe tener acceso a la tienda del producto
      */
+    @Transactional
     public void deactivate(Long id, User actor) {
         Product p = findById(id, actor);
         p.setIsActive(false);
         p.setDeletedBy(actor);
         p.setDeletedAt(java.time.LocalDateTime.now());
         productRepository.save(p);
+        auditService.log(actor, InventoryAuditAction.PRODUCT_DEACTIVATED, p, "Stock al desactivar: " + p.getStock());
     }
 
     /**
@@ -625,7 +719,7 @@ public class ProductService {
      * @param reason motivo del movimiento, para mostrar en el historial
      */
     private InventoryMovement recordMovement(Product product, User actor, MovementType type,
-                                 int quantity, int previous, String reason) {
+                                 int quantity, int previous, String reason, MovementSource source) {
         InventoryMovement mv = new InventoryMovement();
         mv.setProduct(product);
         mv.setUser(actor);
@@ -634,6 +728,7 @@ public class ProductService {
         mv.setPreviousStock(previous);
         mv.setNewStock(previous + (type == MovementType.IN ? quantity : -quantity));
         mv.setReason(reason);
+        mv.setSource(source);
         return movementRepository.save(mv);
     }
 }

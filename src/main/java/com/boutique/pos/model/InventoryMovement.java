@@ -14,7 +14,8 @@ import java.time.LocalDateTime;
  * stock antes y después del movimiento para poder auditar el historial completo de un producto.
  */
 @Entity
-@Table(name = "inventory_movements")
+// Índice por fecha: la pestaña "Movimientos" de Inventario siempre filtra por rango.
+@Table(name = "inventory_movements", indexes = @Index(name = "idx_inv_movements_created", columnList = "created_at"))
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
 public class InventoryMovement {
 
@@ -53,6 +54,12 @@ public class InventoryMovement {
     /** Referencia externa opcional (ej. folio de venta o de compra) asociada al movimiento. */
     @Column(length = 100)
     private String reference;
+
+    // Origen del movimiento (venta, merma, carga de existencias...). Nullable solo por los
+    // registros anteriores a este campo; MovementSourceBackfill los clasifica al arrancar.
+    @Enumerated(EnumType.STRING)
+    @Column(length = 30)
+    private MovementSource source;
 
     @CreationTimestamp
     private LocalDateTime createdAt;

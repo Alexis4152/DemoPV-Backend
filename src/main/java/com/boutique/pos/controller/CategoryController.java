@@ -19,6 +19,9 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import com.boutique.pos.util.SortParams;
+import org.springframework.data.domain.Sort;
+import java.util.Map;
 
 /**
  * Controlador de categorías de producto, expuesto bajo {@code /api/categories}.
@@ -32,6 +35,11 @@ import java.util.List;
 @RequestMapping("/api/categories")
 @RequiredArgsConstructor
 public class CategoryController {
+
+    // Columnas ordenables de la tabla (clave que manda el frontend -> propiedad JPQL);
+    // cualquier otra clave usa el orden por defecto. Ver SortParams.
+    private static final Map<String, String> SORT_CATEGORIES = Map.of("name", "name", "createdAt", "createdAt", "status", "isActive");
+    private static final Sort DEFAULT_SORT_CATEGORIES = Sort.by(Sort.Direction.ASC, "name");
 
     private final CategoryService categoryService;
 
@@ -69,11 +77,13 @@ public class CategoryController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
             @RequestParam(required = false) String name,
             @RequestParam(required = false) Boolean isActive,
+            @RequestParam(required = false) String sort,
+            @RequestParam(required = false) String dir,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @AuthenticationPrincipal User actor
     ) {
-        Pageable pageable = PageRequest.of(page, size);
+        Pageable pageable = SortParams.page(page, size, sort, dir, SORT_CATEGORIES, DEFAULT_SORT_CATEGORIES);
         Page<Category> result = categoryService.search(from, to, name, isActive, actor, pageable);
         return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
     }

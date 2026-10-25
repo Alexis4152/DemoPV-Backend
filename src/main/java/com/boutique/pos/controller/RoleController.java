@@ -17,6 +17,9 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import com.boutique.pos.util.SortParams;
+import org.springframework.data.domain.Sort;
+import java.util.Map;
 
 /**
  * Controlador de roles, expuesto bajo {@code /api/roles}.
@@ -33,6 +36,11 @@ import java.util.List;
 @RequiredArgsConstructor
 @PreAuthorize("@sectionAccess.check('ROLES')")
 public class RoleController {
+
+    // Columnas ordenables de la tabla (clave que manda el frontend -> propiedad JPQL);
+    // cualquier otra clave usa el orden por defecto. Ver SortParams.
+    private static final Map<String, String> SORT_ROLES = Map.of("name", "name");
+    private static final Sort DEFAULT_SORT_ROLES = Sort.by(Sort.Direction.ASC, "name");
 
     private final RoleService roleService;
 
@@ -57,10 +65,12 @@ public class RoleController {
      */
     @GetMapping("/page")
     public ResponseEntity<ApiResponse<PageResponse<Role>>> page(
+            @RequestParam(required = false) String sort,
+            @RequestParam(required = false) String dir,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @AuthenticationPrincipal User actor) {
-        Pageable pageable = PageRequest.of(page, size);
+        Pageable pageable = SortParams.page(page, size, sort, dir, SORT_ROLES, DEFAULT_SORT_ROLES);
         Page<Role> result = roleService.findAll(actor, pageable);
         return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
     }

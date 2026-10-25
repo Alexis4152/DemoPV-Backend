@@ -7,6 +7,7 @@ import com.boutique.pos.model.User;
 import com.boutique.pos.repository.ApartadoRepository;
 import com.boutique.pos.repository.ArcoRequestRepository;
 import com.boutique.pos.repository.CashCutRepository;
+import com.boutique.pos.repository.InventoryAuditLogRepository;
 import com.boutique.pos.repository.CashCutScheduleRepository;
 import com.boutique.pos.repository.CashMovementRepository;
 import com.boutique.pos.repository.CashRegisterRepository;
@@ -71,6 +72,7 @@ public class TiendaPurgeService {
     private final MailConfigRepository mailConfigRepository;
     private final ProductImageRepository productImageRepository;
     private final InventoryMovementRepository inventoryMovementRepository;
+    private final InventoryAuditLogRepository inventoryAuditLogRepository;
     private final RawMaterialMovementRepository rawMaterialMovementRepository;
     private final RawMaterialRepository rawMaterialRepository;
     private final ShortagePaymentRepository shortagePaymentRepository;
@@ -131,6 +133,7 @@ public class TiendaPurgeService {
         // 4) Catálogo e inventario.
         productImageRepository.deleteByProductTiendaId(id);
         inventoryMovementRepository.deleteByProductTiendaId(id);
+        inventoryAuditLogRepository.deleteByTiendaId(id);
 
         // 5) Materia prima.
         rawMaterialMovementRepository.deleteByRawMaterialTiendaId(id);

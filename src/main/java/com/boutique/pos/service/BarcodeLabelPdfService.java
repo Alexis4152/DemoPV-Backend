@@ -18,8 +18,11 @@ import org.springframework.stereotype.Service;
 
 import java.awt.Color;
 import java.io.ByteArrayOutputStream;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * PDF de etiquetas de código de barras: una etiqueta por página, y cada página mide
@@ -82,6 +85,9 @@ public class BarcodeLabelPdfService {
     }
 
     private static final int SHEET_COLUMNS = 3;
+    // Caracteres de descripción que caben en ~2 renglones de un recuadro de la hoja.
+    private static final int SHEET_DESCRIPTION_MAX = 80;
+    private static final String UNCATEGORIZED = "Sin categoría";
     // Ancho máximo del módulo (barra más delgada) en la hoja: ~0.42 mm, cómodo para la
     // pistola desde papel impreso en cualquier impresora normal.
     private static final float SHEET_MAX_MODULE = 1.2f;
@@ -102,54 +108,105 @@ public class BarcodeLabelPdfService {
             document.open();
             PdfContentByte cb = writer.getDirectContent();
             BaseFont font = BaseFont.createFont(BaseFont.HELVETICA, BaseFont.WINANSI, BaseFont.NOT_EMBEDDED);
-
-            Paragraph header = new Paragraph(title, new Font(Font.HELVETICA, 12, Font.BOLD));
-            header.setSpacingAfter(8);
-            document.add(header);
-
-            PdfPTable table = new PdfPTable(SHEET_COLUMNS);
-            table.setWidthPercentage(100);
-            table.setHeaderRows(0);
             float cellWidth = (document.right() - document.left()) / SHEET_COLUMNS;
-            Font nameFont = new Font(Font.HELVETICA, 8);
 
-            for (Product p : products) {
-                PdfPCell cell = new PdfPCell();
-                cell.setBorderColor(new Color(220, 220, 220));
-                cell.setPadding(6);
-                // Mínima, no fija: con altura fija lo que no cabe (el código, debajo de un
-                // nombre largo de 2 líneas) se omite sin avisar.
-                cell.setMinimumHeight(72);
-                cell.setHorizontalAlignment(Element.ALIGN_CENTER);
-
-                Paragraph name = new Paragraph(p.getName(), nameFont);
-                name.setAlignment(Element.ALIGN_CENTER);
-                name.setSpacingAfter(4);
-                cell.addElement(name);
-
-                Image img = sheetBarcode(cb, font, p.getBarcode(), cellWidth - 16);
-                img.setAlignment(Image.ALIGN_CENTER);
-                // Sin esto la celda estira la imagen a todo su ancho: barras enormes que se
-                // enciman con el nombre.
-                img.setWidthPercentage(0);
-                cell.addElement(img);
-                table.addCell(cell);
+            // Una sección por categoría, cada una desde una hoja nueva; dentro, los productos
+            // conservan el orden en que llegan (alfabético).
+            boolean first = true;
+            for (Map.Entry<String, List<Product>> section : groupByCategory(products).entrySet()) {
+                if (!first) document.newPage();
+                first = false;
+                document.add(categoryTable(cb, font, cellWidth, title, section.getKey(), section.getValue()));
             }
-            // Completa la última fila para que la rejilla no quede cortada.
-            int remainder = products.size() % SHEET_COLUMNS;
-            if (remainder != 0) {
-                for (int i = remainder; i < SHEET_COLUMNS; i++) {
-                    PdfPCell empty = new PdfPCell();
-                    empty.setBorder(Rectangle.NO_BORDER);
-                    table.addCell(empty);
-                }
-            }
-            document.add(table);
             document.close();
         } catch (Exception e) {
             throw new RuntimeException("No se pudo generar la hoja de códigos", e);
         }
         return out.toByteArray();
+    }
+
+    /** Productos agrupados por nombre de categoría (alfabético); los sin categoría al final. */
+    private static Map<String, List<Product>> groupByCategory(List<Product> products) {
+        Map<String, List<Product>> groups = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        List<Product> uncategorized = new ArrayList<>();
+        for (Product p : products) {
+            String category = p.getCategory() != null ? p.getCategory().getName() : null;
+            if (category == null || category.isBlank()) uncategorized.add(p);
+            else groups.computeIfAbsent(category, k -> new ArrayList<>()).add(p);
+        }
+        Map<String, List<Product>> ordered = new LinkedHashMap<>(groups);
+        if (!uncategorized.isEmpty()) ordered.put(UNCATEGORIZED, uncategorized);
+        return ordered;
+    }
+
+    /**
+     * Rejilla de una categoría. El encabezado (título de la hoja + nombre de la categoría)
+     * es la fila de encabezado de la tabla, así que se repite si la categoría ocupa varias hojas.
+     */
+    private PdfPTable categoryTable(PdfContentByte cb, BaseFont font, float cellWidth, String title,
+                                    String category, List<Product> products) throws Exception {
+        PdfPTable table = new PdfPTable(SHEET_COLUMNS);
+        table.setWidthPercentage(100);
+
+        PdfPCell header = new PdfPCell();
+        header.setColspan(SHEET_COLUMNS);
+        header.setBorder(Rectangle.NO_BORDER);
+        header.setPaddingBottom(8);
+        Paragraph sheetTitle = new Paragraph(title, new Font(Font.HELVETICA, 9, Font.NORMAL, new Color(110, 110, 110)));
+        header.addElement(sheetTitle);
+        Paragraph categoryTitle = new Paragraph(category + "  (" + products.size() + ")", new Font(Font.HELVETICA, 14, Font.BOLD));
+        header.addElement(categoryTitle);
+        table.addCell(header);
+        table.setHeaderRows(1);
+
+        Font nameFont = new Font(Font.HELVETICA, 8, Font.BOLD);
+        Font descFont = new Font(Font.HELVETICA, 7, Font.NORMAL, new Color(110, 110, 110));
+        for (Product p : products) {
+            PdfPCell cell = new PdfPCell();
+            cell.setBorderColor(new Color(220, 220, 220));
+            cell.setPadding(6);
+            // Mínima, no fija: con altura fija lo que no cabe (el código, debajo de un
+            // nombre o descripción de 2 líneas) se omite sin avisar.
+            cell.setMinimumHeight(80);
+            cell.setHorizontalAlignment(Element.ALIGN_CENTER);
+
+            Paragraph name = new Paragraph(p.getName(), nameFont);
+            name.setAlignment(Element.ALIGN_CENTER);
+            cell.addElement(name);
+
+            String description = shortDescription(p.getDescription());
+            if (description != null) {
+                Paragraph desc = new Paragraph(description, descFont);
+                desc.setAlignment(Element.ALIGN_CENTER);
+                cell.addElement(desc);
+            }
+
+            Image img = sheetBarcode(cb, font, p.getBarcode(), cellWidth - 16);
+            img.setAlignment(Image.ALIGN_CENTER);
+            // Sin esto la celda estira la imagen a todo su ancho: barras enormes que se
+            // enciman con el nombre.
+            img.setWidthPercentage(0);
+            img.setSpacingBefore(4);
+            cell.addElement(img);
+            table.addCell(cell);
+        }
+        // Completa la última fila para que la rejilla no quede cortada.
+        int remainder = products.size() % SHEET_COLUMNS;
+        if (remainder != 0) {
+            for (int i = remainder; i < SHEET_COLUMNS; i++) {
+                PdfPCell empty = new PdfPCell();
+                empty.setBorder(Rectangle.NO_BORDER);
+                table.addCell(empty);
+            }
+        }
+        return table;
+    }
+
+    /** Descripción en una sola línea y recortada, para que no empuje el código fuera del recuadro. */
+    private static String shortDescription(String description) {
+        if (description == null || description.isBlank()) return null;
+        String d = description.trim().replaceAll("\\s+", " ");
+        return d.length() > SHEET_DESCRIPTION_MAX ? d.substring(0, SHEET_DESCRIPTION_MAX - 1).trim() + "…" : d;
     }
 
     /** Código de barras para la hoja: ancho de módulo fijo (con tope) y altura moderada. */
