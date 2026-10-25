@@ -91,6 +91,27 @@ public class Sale {
     @Builder.Default
     private SaleStatus status = SaleStatus.COMPLETED;
 
+    // REGULAR para toda venta de mostrador de siempre; DEPOSIT/BALANCE solo para las que
+    // nacen de un apartado con anticipo (ver ApartadoService#createWithDeposit/#complete)
+    // — ambas quedan ligadas al mismo apartado vía apartadoId/apartadoFolio.
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 10, columnDefinition = "varchar(10) default 'REGULAR'")
+    @Builder.Default
+    private SaleKind kind = SaleKind.REGULAR;
+
+    /** Id del {@link Apartado} del que nació esta venta (solo si {@code kind != REGULAR}). */
+    private Long apartadoId;
+
+    /** Folio (no el id) de ese mismo apartado — lo que de verdad se le muestra al personal. */
+    private Long apartadoFolio;
+
+    // Transiente: SOLO se llena en ventas kind=DEPOSIT, con el saldo que todavía falta
+    // cobrar del apartado (apartado.total - apartado.depositAmount) — ver
+    // SaleService#withPendingBalance, usado por la pantalla de Historial de ventas para
+    // mostrar "Anticipo — saldo $X" sin que el frontend tenga que ir a buscar el apartado
+    // aparte. No es columna de "sales" (igual que Product#primaryImage).
+    private transient BigDecimal pendingBalance;
+
     @Column(columnDefinition = "TEXT")
     private String notes;
 

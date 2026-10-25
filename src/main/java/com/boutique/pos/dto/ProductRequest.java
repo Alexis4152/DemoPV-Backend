@@ -63,6 +63,11 @@ public class ProductRequest {
     // null se trata igual que false (no exhibirlo) — ver ProductService.
     private Boolean isReservable;
 
+    // "Por pedido": no se fabrica/trae hasta que alguien lo pide — con esto en true, se
+    // puede vender/apartar sin importar stock/mínimo, y nunca se descuenta su inventario.
+    // Opcional: null se trata igual que false — ver ProductService y Product#getIsMadeToOrder.
+    private Boolean isMadeToOrder;
+
     // Descuento promocional PÚBLICO para apartados (precio tachado + con descuento en la
     // tienda pública) — distinto del límite privado que el cajero aplica al confirmar.
     // Opcional: null/0 = sin oferta. Validado contra el límite de la tienda al guardar.

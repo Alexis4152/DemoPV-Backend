@@ -232,8 +232,10 @@ public class ProductController {
                                                         @AuthenticationPrincipal User actor) {
         // Solo el alta desde el formulario exige stock inicial: la carga masiva y la
         // conversión de materia prima (que crea el producto en 0 y luego le suma piezas)
-        // llaman a ProductService#create directo y pueden crearlo en 0.
-        if (req.getStock() == null || req.getStock() < 1) {
+        // llaman a ProductService#create directo y pueden crearlo en 0. Un producto "por
+        // pedido" tampoco exige stock — nunca se fabrica/trae hasta que alguien lo pide,
+        // así que se queda en 0 para siempre (ver Product#getIsMadeToOrder).
+        if (!Boolean.TRUE.equals(req.getIsMadeToOrder()) && (req.getStock() == null || req.getStock() < 1)) {
             throw new FieldConflictException("stock", "Captura el stock inicial (mínimo 1)");
         }
         return ResponseEntity.ok(ApiResponse.ok(productService.create(req, actor), "Producto creado"));

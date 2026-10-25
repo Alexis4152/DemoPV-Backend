@@ -304,6 +304,7 @@ public class ProductService {
         p.setTienda(tienda);
         p.setIsActive(true);
         p.setIsReservable(Boolean.TRUE.equals(req.getIsReservable()));
+        p.setIsMadeToOrder(Boolean.TRUE.equals(req.getIsMadeToOrder()));
         BigDecimal apartadoDiscount = effectiveApartadoDiscount(p, req);
         validateApartadoDiscountPercent(apartadoDiscount, req.getPrice(), tienda);
         p.setApartadoDiscountPercent(apartadoDiscount);
@@ -357,6 +358,7 @@ public class ProductService {
         p.setUnit(req.getUnit() != null ? req.getUnit() : "pieza");
         p.setCategory(cat);
         if (req.getIsReservable() != null) p.setIsReservable(req.getIsReservable());
+        if (req.getIsMadeToOrder() != null) p.setIsMadeToOrder(req.getIsMadeToOrder());
         BigDecimal apartadoDiscount = effectiveApartadoDiscount(p, req);
         validateApartadoDiscountPercent(apartadoDiscount, req.getPrice(), p.getTienda());
         p.setApartadoDiscountPercent(apartadoDiscount);

@@ -68,6 +68,26 @@ public class Apartado {
     @Builder.Default
     private ApartadoStatus status = ApartadoStatus.PENDING;
 
+    // ONLINE para todo lo de siempre (solicitado desde la tienda pública); DEPOSIT para
+    // los que un cajero registra en persona al recibir un anticipo — ver
+    // ApartadoService#createWithDeposit. Default ONLINE para que los apartados ya
+    // existentes en la base (de antes de este campo) sigan contando como lo que siempre
+    // fueron.
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 10, columnDefinition = "varchar(10) default 'ONLINE'")
+    @Builder.Default
+    private ApartadoOrigin origin = ApartadoOrigin.ONLINE;
+
+    /** Cuánto dejó el cliente de anticipo (solo si {@code origin == DEPOSIT}); null en los demás. */
+    @Column(precision = 12, scale = 2)
+    private BigDecimal depositAmount;
+
+    /** Id de la {@link Sale} kind=DEPOSIT generada al recibir el anticipo. Null hasta entonces. */
+    private Long depositSaleId;
+
+    /** Folio de esa misma venta de anticipo. Null hasta entonces. */
+    private Long depositSaleFolio;
+
     @Column(nullable = false, precision = 12, scale = 2)
     @Builder.Default
     private BigDecimal subtotal = BigDecimal.ZERO;

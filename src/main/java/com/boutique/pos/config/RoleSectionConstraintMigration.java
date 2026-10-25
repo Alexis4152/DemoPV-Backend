@@ -19,9 +19,9 @@ import java.util.stream.Collectors;
  * roles, que pueden recibir todas las secciones.
  *
  * <p>Además, la primera vez que aparece una sección nueva de materia prima
- * ({@code RAW_MATERIALS}), se la da a los roles de gestión (ADMIN, SUPERVISOR,
- * SUPER_ADMIN), que tienen todas las demás. Solo cuando ningún rol la tiene todavía, para
- * no volver a ponerla si después alguien la quita.</p>
+ * ({@code RAW_MATERIALS}) u ofertas ({@code OFFERS}), se la da a los roles de gestión
+ * (ADMIN, SUPERVISOR, SUPER_ADMIN), que tienen todas las demás. Solo cuando ningún rol la
+ * tiene todavía, para no volver a ponerla si después alguien la quita.</p>
  */
 @Component
 @Order(0)
@@ -48,6 +48,15 @@ public class RoleSectionConstraintMigration implements CommandLineRunner {
                     "INSERT INTO role_sections (role_id, section) " +
                     "SELECT r.id, 'RAW_MATERIALS' FROM roles r WHERE r.name IN ('ADMIN', 'SUPERVISOR', 'SUPER_ADMIN')").executeUpdate();
             log.info("Sección RAW_MATERIALS agregada a {} rol(es) de gestión", added);
+        }
+
+        Number withOffers = (Number) entityManager.createNativeQuery(
+                "SELECT COUNT(*) FROM role_sections WHERE section = 'OFFERS'").getSingleResult();
+        if (withOffers.longValue() == 0) {
+            int added = entityManager.createNativeQuery(
+                    "INSERT INTO role_sections (role_id, section) " +
+                    "SELECT r.id, 'OFFERS' FROM roles r WHERE r.name IN ('ADMIN', 'SUPERVISOR', 'SUPER_ADMIN')").executeUpdate();
+            log.info("Sección OFFERS agregada a {} rol(es) de gestión", added);
         }
     }
 }

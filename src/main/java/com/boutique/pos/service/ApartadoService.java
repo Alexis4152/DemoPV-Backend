@@ -2,6 +2,7 @@ package com.boutique.pos.service;
 
 import com.boutique.pos.dto.ApartadoCompleteRequest;
 import com.boutique.pos.dto.ApartadoConfirmRequest;
+import com.boutique.pos.dto.ApartadoDepositRequest;
 import com.boutique.pos.dto.ApartadoItemRequest;
 import com.boutique.pos.dto.ApartadoRequest;
 import com.boutique.pos.dto.PublicApartadoDto;
@@ -115,7 +116,8 @@ public class ApartadoService {
                     || !Boolean.TRUE.equals(product.getIsReservable())) {
                 throw new IllegalArgumentException("\"" + product.getName() + "\" ya no está disponible para apartar");
             }
-            if (BigDecimal.valueOf(product.getStock()).compareTo(ir.getQuantity()) < 0) {
+            if (!Boolean.TRUE.equals(product.getIsMadeToOrder())
+                    && BigDecimal.valueOf(product.getStock()).compareTo(ir.getQuantity()) < 0) {
                 throw new IllegalStateException("No hay suficiente stock de \"" + product.getName() + "\" en este momento");
             }
 
@@ -148,6 +150,125 @@ public class ApartadoService {
         Apartado saved = apartadoRepository.save(apartado);
         for (User staff : staffToNotify(saved, null)) {
             emailService.sendApartadoRequestEmail(saved, staff.getEmail());
+        }
+        return saved;
+    }
+
+    /**
+     * Registra, en persona, un apartado con anticipo: un cliente encarga un producto (casi
+     * siempre "por pedido" — ver {@link Product#getIsMadeToOrder()}) y deja parte del pago
+     * de una vez. A diferencia de {@link #createPublic} (pública, {@code PENDING}, sin
+     * cobro), este lo crea directamente {@code ACTIVE} (el cajero ya lo está confirmando
+     * ahí mismo, no hay nada que revisar después) y SÍ cobra de verdad: genera una
+     * {@link Sale} {@code kind=DEPOSIT} por el anticipo (ver
+     * {@link SaleService#createDeposit}), que cuenta en el corte de caja del actor como
+     * cualquier venta.
+     * <p>
+     * Si el producto es "por pedido", no se valida ni se descuenta stock (igual que en
+     * {@link #confirm}); si no lo es, se trata como un apartado confirmado normal: si no
+     * hay suficiente stock ahora mismo, se rechaza.
+     *
+     * @param req datos del cliente, productos, cuánto dejó de anticipo y cómo lo pagó
+     * @param actor cajero/admin que lo registra; debe tener un corte de caja propio
+     *              abierto; queda registrado como {@code confirmedBy} del apartado y
+     *              {@code user} de la venta de anticipo
+     * @return el apartado ya {@code ACTIVE}, con {@link Apartado#getDepositAmount()} y
+     *         {@link Apartado#getDepositSaleId()} ya fijados
+     * @throws IllegalStateException si el actor no tiene un corte abierto, si el anticipo
+     *         es mayor o igual al total, o si algún producto no tiene stock suficiente
+     *         (salvo que sea "por pedido")
+     * @throws IllegalArgumentException si algún producto no existe o no pertenece a la
+     *         tienda del actor, o si el actor es SUPER_ADMIN sin tienda elegida para actuar
+     */
+    @Transactional
+    public Apartado createWithDeposit(ApartadoDepositRequest req, User actor) {
+        Tienda tienda = tenantScope.tiendaForWrite(actor);
+        if (tienda == null && tenantScope.isPlatformActor(actor)) {
+            throw new IllegalStateException("Elige una tienda para poder registrar un anticipo");
+        }
+
+        Apartado apartado = new Apartado();
+        apartado.setTienda(tienda);
+        apartado.setFolio(nextApartadoFolio(tienda));
+        apartado.setCustomerName(req.getCustomerName());
+        apartado.setCustomerPhone(req.getCustomerPhone());
+        apartado.setCustomerEmail(req.getCustomerEmail());
+        apartado.setNotes(req.getNotes());
+        apartado.setOrigin(ApartadoOrigin.DEPOSIT);
+
+        List<ApartadoItem> items = new ArrayList<>();
+        BigDecimal subtotal = BigDecimal.ZERO;
+        for (ApartadoItemRequest ir : req.getItems()) {
+            Product product = productRepository.findByIdForUpdate(ir.getProductId())
+                    .orElseThrow(() -> new IllegalArgumentException("Producto no encontrado: " + ir.getProductId()));
+            if (!product.getTienda().getId().equals(tienda.getId())) {
+                throw new IllegalArgumentException("\"" + product.getName() + "\" no pertenece a esta tienda");
+            }
+            boolean madeToOrder = Boolean.TRUE.equals(product.getIsMadeToOrder());
+            if (!madeToOrder && BigDecimal.valueOf(product.getStock()).compareTo(ir.getQuantity()) < 0) {
+                throw new IllegalStateException("No hay suficiente stock de \"" + product.getName()
+                        + "\" (disponible: " + product.getStock() + ")");
+            }
+
+            BigDecimal lineGross = product.getPrice().multiply(ir.getQuantity());
+            ApartadoItem item = new ApartadoItem();
+            item.setApartado(apartado);
+            item.setProduct(product);
+            item.setProductName(product.getName());
+            item.setQuantity(ir.getQuantity());
+            item.setUnitPrice(product.getPrice());
+            item.setDiscount(BigDecimal.ZERO);
+            item.setSubtotal(lineGross);
+            items.add(item);
+            subtotal = subtotal.add(lineGross);
+
+            if (!madeToOrder) {
+                int qtyInt = ir.getQuantity().intValue();
+                int previous = product.getStock();
+                product.setStock(previous - qtyInt);
+                productRepository.save(product);
+
+                InventoryMovement mv = new InventoryMovement();
+                mv.setProduct(product);
+                mv.setUser(actor);
+                mv.setType(MovementType.OUT);
+                mv.setQuantity(qtyInt);
+                mv.setPreviousStock(previous);
+                mv.setNewStock(previous - qtyInt);
+                mv.setReason("Apartado #" + apartado.getFolio() + " (anticipo)");
+                movementRepository.save(mv);
+            }
+        }
+
+        if (req.getDepositAmount().compareTo(subtotal) >= 0) {
+            throw new IllegalStateException("El anticipo debe ser menor al total del pedido ("
+                    + MONEY_FMT.format(subtotal) + ") — si ya cubre todo, regístralo como una venta normal");
+        }
+
+        int durationHours = req.getDurationHours() != null ? req.getDurationHours() : tienda.getDefaultApartadoHours();
+
+        apartado.setItems(items);
+        apartado.setSubtotal(subtotal);
+        apartado.setDiscount(BigDecimal.ZERO);
+        apartado.setTotal(subtotal);
+        apartado.setDepositAmount(req.getDepositAmount());
+        apartado.setDurationHours(durationHours);
+        apartado.setConfirmedAt(LocalDateTime.now());
+        apartado.setExpiresAt(apartado.getConfirmedAt().plusHours(durationHours));
+        apartado.setConfirmedBy(actor);
+        apartado.setStatus(ApartadoStatus.ACTIVE);
+        Apartado saved = apartadoRepository.save(apartado);
+
+        Sale depositSale = saleService.createDeposit(saved, req.getDepositAmount(), req.getPaymentMethod(), req.getAmountReceived(), actor);
+        saved.setDepositSaleId(depositSale.getId());
+        saved.setDepositSaleFolio(depositSale.getFolio());
+        saved = apartadoRepository.save(saved);
+
+        for (User staff : staffToNotify(saved, actor)) {
+            emailService.sendApartadoConfirmedStaffEmail(saved, staff.getEmail());
+        }
+        if (saved.getCustomerEmail() != null && !saved.getCustomerEmail().isBlank()) {
+            emailService.sendApartadoConfirmedCustomerEmail(saved, saved.getCustomerEmail());
         }
         return saved;
     }
@@ -493,6 +614,7 @@ public class ApartadoService {
      * estado, rango de fechas de solicitud y texto libre (cliente o producto).
      *
      * @param status filtro por estado, o null para no filtrar
+     * @param origin filtro por origen (en línea / con anticipo — ver {@link ApartadoOrigin}), o null para no filtrar
      * @param from fecha mínima de solicitud (inclusiva), o null para no acotar por abajo
      * @param to fecha máxima de solicitud (inclusiva), o null para no acotar por arriba
      * @param q texto de búsqueda opcional: coincide con el nombre/teléfono del cliente, o
@@ -501,10 +623,10 @@ public class ApartadoService {
      * @param pageable paginación solicitada
      * @param actor usuario que consulta; acota el resultado a su tienda
      */
-    public Page<Apartado> search(ApartadoStatus status, LocalDate from, LocalDate to, String q, Pageable pageable, User actor) {
+    public Page<Apartado> search(ApartadoStatus status, ApartadoOrigin origin, Long folio, LocalDate from, LocalDate to, String q, Pageable pageable, User actor) {
         LocalDateTime effectiveFrom = from != null ? from.atStartOfDay() : MIN_DATE;
         LocalDateTime effectiveTo = to != null ? to.plusDays(1).atStartOfDay() : MAX_DATE;
-        return apartadoRepository.search(tenantScope.scopeId(actor), status, effectiveFrom, effectiveTo, q, pageable);
+        return apartadoRepository.search(tenantScope.scopeId(actor), status, origin, folio, effectiveFrom, effectiveTo, q, pageable);
     }
 
     /** Cuántos apartados {@code PENDING} tiene la tienda del actor — alimenta el badge del sidebar. */
@@ -617,7 +739,10 @@ public class ApartadoService {
             // auditoría de código).
             Product product = productRepository.findByIdForUpdate(item.getProduct().getId())
                     .orElseThrow(() -> new IllegalStateException("\"" + item.getProductName() + "\" ya no existe en el catálogo"));
-            if (BigDecimal.valueOf(product.getStock()).compareTo(item.getQuantity()) < 0) {
+            // "Por pedido" (ver Product#getIsMadeToOrder): no hay inventario real que
+            // validar ni descontar.
+            boolean madeToOrder = Boolean.TRUE.equals(product.getIsMadeToOrder());
+            if (!madeToOrder && BigDecimal.valueOf(product.getStock()).compareTo(item.getQuantity()) < 0) {
                 throw new IllegalStateException("No hay suficiente stock de \"" + product.getName()
                         + "\" para confirmar este apartado (disponible: " + product.getStock() + ")");
             }
@@ -630,20 +755,22 @@ public class ApartadoService {
             subtotal = subtotal.add(lineGross);
             totalDiscount = totalDiscount.add(discount);
 
-            int qtyInt = item.getQuantity().intValue();
-            int previous = product.getStock();
-            product.setStock(previous - qtyInt);
-            productRepository.save(product);
+            if (!madeToOrder) {
+                int qtyInt = item.getQuantity().intValue();
+                int previous = product.getStock();
+                product.setStock(previous - qtyInt);
+                productRepository.save(product);
 
-            InventoryMovement mv = new InventoryMovement();
-            mv.setProduct(product);
-            mv.setUser(actor);
-            mv.setType(MovementType.OUT);
-            mv.setQuantity(qtyInt);
-            mv.setPreviousStock(previous);
-            mv.setNewStock(previous - qtyInt);
-            mv.setReason("Apartado #" + apartado.getId() + " confirmado");
-            movementRepository.save(mv);
+                InventoryMovement mv = new InventoryMovement();
+                mv.setProduct(product);
+                mv.setUser(actor);
+                mv.setType(MovementType.OUT);
+                mv.setQuantity(qtyInt);
+                mv.setPreviousStock(previous);
+                mv.setNewStock(previous - qtyInt);
+                mv.setReason("Apartado #" + apartado.getId() + " confirmado");
+                movementRepository.save(mv);
+            }
         }
 
         int durationHours = req != null && req.getDurationHours() != null
@@ -836,6 +963,7 @@ public class ApartadoService {
             // concurrentes sobre el mismo producto no deben pisarse.
             Product product = productRepository.findByIdForUpdate(item.getProduct().getId()).orElse(null);
             if (product == null) continue;
+            if (Boolean.TRUE.equals(product.getIsMadeToOrder())) continue; // nunca se descontó stock real, nada que devolver
             int qty = item.getQuantity().intValue();
             int previous = product.getStock();
             product.setStock(previous + qty);

@@ -14,6 +14,7 @@ import com.boutique.pos.repository.CashReportRecipientRepository;
 import com.boutique.pos.repository.CategoryRepository;
 import com.boutique.pos.repository.InventoryMovementRepository;
 import com.boutique.pos.repository.MailConfigRepository;
+import com.boutique.pos.repository.OfferRepository;
 import com.boutique.pos.repository.PasswordResetTokenRepository;
 import com.boutique.pos.repository.ProductImageRepository;
 import com.boutique.pos.repository.ProductRepository;
@@ -83,6 +84,7 @@ public class TiendaPurgeService {
     private final CashReportRecipientRepository cashReportRecipientRepository;
     private final ProductRepository productRepository;
     private final CategoryRepository categoryRepository;
+    private final OfferRepository offerRepository;
     private final TiendaInfoRepository tiendaInfoRepository;
     private final TenantScope tenantScope;
 
@@ -155,6 +157,12 @@ public class TiendaPurgeService {
         cashCutRepository.deleteByTiendaId(id);
         cashRegisterRepository.deleteByTiendaId(id);
         cashReportRecipientRepository.deleteByTiendaId(id);
+
+        // 10.5) Ofertas — la tabla puente offer_products referencia tanto offers como
+        // products, así que debe vaciarse antes de borrar cualquiera de las dos (igual
+        // razón que el resto de este orden: evitar violar la FK).
+        offerRepository.deleteOfferProductLinksByTiendaId(id);
+        offerRepository.deleteByTiendaId(id);
 
         // 11) Catálogo.
         productRepository.deleteByTiendaId(id);

@@ -29,7 +29,9 @@ import java.util.*;
  *   (se excluyen las canceladas), agrupadas por cajero, incluyendo el descuento total de
  *   cada venta.</li>
  *   <li><b>Productos</b>: el detalle línea por línea de cada producto vendido, con
- *   categoría, piezas, descuento aplicado a esa línea y subtotal.</li>
+ *   categoría, piezas, descuento aplicado a esa línea y subtotal — incluye una columna
+ *   TIPO que marca en ámbar las líneas "por concepto" (no inventariadas, ver POS.jsx
+ *   "📋 Por concepto"), para que no se confundan con ventas de catálogo real.</li>
  * </ul>
  */
 @Service
@@ -58,6 +60,7 @@ public class CashCutReportExcelService {
             CellStyle header = headerStyle(wb);
             CellStyle bold = boldStyle(wb);
             CellStyle money = moneyStyle(wb);
+            CellStyle concept = conceptStyle(wb);
 
             buildResumen(wb.createSheet("Resumen"), header, bold, money, tienda, cuts);
 
@@ -71,7 +74,7 @@ public class CashCutReportExcelService {
             }
 
             buildVentas(wb.createSheet("Ventas"), header, bold, money, salesByCajero);
-            buildProductos(wb.createSheet("Productos"), header, bold, money, tienda, salesByCajero);
+            buildProductos(wb.createSheet("Productos"), header, bold, money, concept, tienda, salesByCajero);
 
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             wb.write(out);
@@ -207,35 +210,46 @@ public class CashCutReportExcelService {
     /**
      * Construye la hoja "Productos": una fila por cada línea de producto vendida (no por
      * venta), con su categoría, cantidad y subtotal, más el gran total al final.
+     * <p>
+     * La columna TIPO distingue las líneas "por concepto" (ver {@code SaleItemRequest} /
+     * POS.jsx "📋 Por concepto") de las de catálogo normal: {@code item.getProduct() ==
+     * null} marca algo que el cajero vendió a mano (ej. "2 jitomates") y que nunca estuvo
+     * en el inventario — sin esta columna, quien revisa el Excel no tiene forma de saber
+     * que esas piezas no van a cuadrar contra existencias.
      *
      * @param sheet hoja de Excel a llenar
      * @param header estilo de encabezado
      * @param bold estilo de texto en negritas
      * @param money estilo de formato de moneda
+     * @param concept estilo distintivo (relleno ámbar) para las líneas "por concepto"
      * @param tienda tienda del reporte, repetida en cada fila
      * @param salesByCajero ventas completadas de todos los cortes, agrupadas por cajero
      */
-    private void buildProductos(Sheet sheet, CellStyle header, CellStyle bold, CellStyle money,
+    private void buildProductos(Sheet sheet, CellStyle header, CellStyle bold, CellStyle money, CellStyle concept,
                                  Tienda tienda, Map<User, List<Sale>> salesByCajero) {
         int r = 0;
-        header(sheet, r++, header, "ID_VENTA", "FECHA", "PRODUCTO", "CATEGORIA", "PIEZAS VENDIDAS", "VENDEDOR", "TIENDA", "DESCUENTO", "SUBTOTAL");
+        header(sheet, r++, header, "ID_VENTA", "FECHA", "PRODUCTO", "TIPO", "CATEGORIA", "PIEZAS VENDIDAS", "VENDEDOR", "TIENDA", "DESCUENTO", "SUBTOTAL");
 
         BigDecimal grandTotal = BigDecimal.ZERO;
         BigDecimal grandDiscount = BigDecimal.ZERO;
         for (Map.Entry<User, List<Sale>> entry : salesByCajero.entrySet()) {
             for (Sale s : entry.getValue()) {
                 for (SaleItem item : s.getItems()) {
+                    boolean isConcept = item.getProduct() == null;
                     Row row = sheet.createRow(r++);
                     row.createCell(0).setCellValue(s.getId());
                     row.createCell(1).setCellValue(s.getCreatedAt() != null ? s.getCreatedAt().format(FMT) : "—");
                     row.createCell(2).setCellValue(item.getProductName());
-                    row.createCell(3).setCellValue(item.getProduct() != null && item.getProduct().getCategory() != null
+                    Cell tipoCell = row.createCell(3);
+                    tipoCell.setCellValue(isConcept ? "POR CONCEPTO (no inventariado)" : "Catálogo");
+                    if (isConcept) tipoCell.setCellStyle(concept);
+                    row.createCell(4).setCellValue(!isConcept && item.getProduct().getCategory() != null
                             ? item.getProduct().getCategory().getName() : "—");
-                    row.createCell(4).setCellValue(item.getQuantity().doubleValue());
-                    row.createCell(5).setCellValue(entry.getKey().getName());
-                    row.createCell(6).setCellValue(tienda.getName());
-                    moneyCell(row, 7, money, item.getDiscount());
-                    moneyCell(row, 8, money, item.getSubtotal());
+                    row.createCell(5).setCellValue(item.getQuantity().doubleValue());
+                    row.createCell(6).setCellValue(entry.getKey().getName());
+                    row.createCell(7).setCellValue(tienda.getName());
+                    moneyCell(row, 8, money, item.getDiscount());
+                    moneyCell(row, 9, money, item.getSubtotal());
                     grandTotal = grandTotal.add(item.getSubtotal());
                     grandDiscount = grandDiscount.add(nz(item.getDiscount()));
                 }
@@ -244,10 +258,10 @@ public class CashCutReportExcelService {
         Row totalRow = sheet.createRow(r);
         totalRow.createCell(0).setCellValue("TOTAL");
         cellStyle(totalRow, 0, bold);
-        moneyCell(totalRow, 7, money, grandDiscount);
-        moneyCell(totalRow, 8, money, grandTotal);
+        moneyCell(totalRow, 8, money, grandDiscount);
+        moneyCell(totalRow, 9, money, grandTotal);
 
-        autosize(sheet, 9);
+        autosize(sheet, 10);
     }
 
     /**
@@ -322,6 +336,17 @@ public class CashCutReportExcelService {
     private CellStyle moneyStyle(Workbook wb) {
         CellStyle s = wb.createCellStyle();
         s.setDataFormat(wb.createDataFormat().getFormat("#,##0.00"));
+        return s;
+    }
+
+    /** Relleno ámbar + negritas para la columna TIPO de una línea "por concepto" (hoja Productos). */
+    private CellStyle conceptStyle(Workbook wb) {
+        Font f = wb.createFont();
+        f.setBold(true);
+        CellStyle s = wb.createCellStyle();
+        s.setFont(f);
+        s.setFillForegroundColor(IndexedColors.LIGHT_ORANGE.getIndex());
+        s.setFillPattern(FillPatternType.SOLID_FOREGROUND);
         return s;
     }
 }

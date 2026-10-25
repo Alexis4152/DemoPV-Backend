@@ -1,6 +1,7 @@
 package com.boutique.pos.repository;
 
 import com.boutique.pos.model.Apartado;
+import com.boutique.pos.model.ApartadoOrigin;
 import com.boutique.pos.model.ApartadoStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -39,10 +40,17 @@ public interface ApartadoRepository extends JpaRepository<Apartado, Long> {
      * usa un {@code EXISTS} (no un {@code JOIN}) a propósito: así no duplica filas de
      * {@code Apartado} cuando el apartado tiene varias líneas, y no complica la paginación
      * con {@code DISTINCT} + fetch join.</p>
+     *
+     * <p>{@code folio} filtra por coincidencia exacta (no parcial, a diferencia de
+     * {@code q}) — lo usa el enlace "apartado #N" de Sales.jsx para llevar directo a ESE
+     * apartado desde el historial de ventas de un anticipo/saldo, sin que un número corto
+     * (ej. folio 2) también traiga el 12 o el 20 por accidente.</p>
      */
     @Query("SELECT a FROM Apartado a WHERE " +
            "(:tiendaId IS NULL OR a.tienda.id = :tiendaId) " +
            "AND (:status IS NULL OR a.status = :status) " +
+           "AND (:origin IS NULL OR a.origin = :origin) " +
+           "AND (:folio IS NULL OR a.folio = :folio) " +
            "AND a.requestedAt BETWEEN :from AND :to " +
            "AND (:q IS NULL OR " +
            "     LOWER(a.customerName) LIKE LOWER(CONCAT('%',CAST(:q AS string),'%')) " +
@@ -52,6 +60,8 @@ public interface ApartadoRepository extends JpaRepository<Apartado, Long> {
            "ORDER BY a.requestedAt DESC")
     Page<Apartado> search(@Param("tiendaId") Long tiendaId,
                            @Param("status") ApartadoStatus status,
+                           @Param("origin") ApartadoOrigin origin,
+                           @Param("folio") Long folio,
                            @Param("from") LocalDateTime from,
                            @Param("to") LocalDateTime to,
                            @Param("q") String q,

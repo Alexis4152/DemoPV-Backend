@@ -18,6 +18,9 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * Registro y consulta de ventas (punto de venta), y cancelación de ventas ya registradas.
@@ -46,6 +49,8 @@ public class SaleService {
     private final EmailService emailService;
     private final TenantScope tenantScope;
     private final TiendaRepository tiendaRepository;
+    private final OfferService offerService;
+    private final ApartadoRepository apartadoRepository;
 
     /**
      * Calcula el próximo folio de venta de una tienda (consecutivo propio, no global) bajo
@@ -65,6 +70,78 @@ public class SaleService {
         locked.setLastSaleFolio(next);
         tiendaRepository.save(locked);
         return next;
+    }
+
+    /**
+     * Reparte una línea de venta con oferta vigente en hasta dos {@link SaleItem} (agrega
+     * ambos a {@code items}) y regresa el importe BRUTO de la línea (antes del descuento
+     * manual del cajero, para {@code grossSubtotal}).
+     * <p>
+     * La cantidad capturada ({@code qtyInt}) son SIEMPRE piezas físicas — nunca "número de
+     * promociones" — así que primero se calcula cuántas promociones completas caben ahí
+     * ({@code promosPosibles}), topadas por {@link Offer#getMaxPromosPerSale()} si tiene
+     * límite. Lo que no forma parte de una promoción completa (porque sobra, o porque
+     * excede el límite) se cobra a precio normal, exactamente igual que si no hubiera
+     * oferta — nunca queda sin cobrarse.
+     * <ul>
+     *   <li>Línea 1 (siempre): piezas pagadas (las de las promociones + las normales) a
+     *       precio normal, con el descuento manual del cajero aplicado ahí si vino alguno
+     *       — el cajero decide en el frontend si lo aplica encima de la oferta o no, este
+     *       método no pregunta nada, solo aplica lo que llegó en el request.</li>
+     *   <li>Línea 2 (solo si hay piezas "gratis"): a $0.00, con el nombre del producto más
+     *       la razón de la oferta entre paréntesis (ej. "Playera básica (2x1)") para que el
+     *       ticket deje claro cuántas se llevó de regalo — ver EscPosTicketService, que
+     *       imprime {@code productName} + "qty x unitPrice" de cada línea tal cual.</li>
+     * </ul>
+     *
+     * @param sale venta en construcción (dueña de ambas líneas)
+     * @param items lista acumuladora de líneas de la venta; se le agregan 1 o 2 nuevas
+     * @param product producto de esta línea
+     * @param qtyInt piezas físicas que se lleva el cliente (no cambia si hay oferta o no)
+     * @param unitPrice precio normal del producto
+     * @param discount descuento manual del cajero para esta línea (puede ser cero)
+     * @param offer oferta vigente para este producto
+     * @param tienda tienda de la venta, para validar el tope de descuento manual
+     * @return importe bruto de la línea completa (piezas pagadas × precio normal; las
+     *         piezas gratis no suman nada, ya están a $0.00)
+     */
+    private BigDecimal applyOffer(Sale sale, List<SaleItem> items, Product product, int qtyInt,
+                                   BigDecimal unitPrice, BigDecimal discount, Offer offer, Tienda tienda) {
+        int buy = offer.getBuyQuantity();
+        int pay = offer.getPayQuantity();
+        int promosPosibles = qtyInt / buy;
+        int promosAplicados = offer.getMaxPromosPerSale() != null
+                ? Math.min(promosPosibles, offer.getMaxPromosPerSale())
+                : promosPosibles;
+        int piezasGratis = promosAplicados * (buy - pay);
+        int piezasPagadas = qtyInt - piezasGratis;
+
+        BigDecimal paidLineGross = unitPrice.multiply(BigDecimal.valueOf(piezasPagadas));
+        validateDiscountLimit(discount, paidLineGross, product.getName(), tienda);
+
+        SaleItem paidItem = new SaleItem();
+        paidItem.setSale(sale);
+        paidItem.setProduct(product);
+        paidItem.setProductName(product.getName());
+        paidItem.setQuantity(BigDecimal.valueOf(piezasPagadas));
+        paidItem.setUnitPrice(unitPrice);
+        paidItem.setDiscount(discount);
+        paidItem.setSubtotal(paidLineGross.subtract(discount));
+        items.add(paidItem);
+
+        if (piezasGratis > 0) {
+            SaleItem freeItem = new SaleItem();
+            freeItem.setSale(sale);
+            freeItem.setProduct(product);
+            freeItem.setProductName(product.getName() + " (" + buy + "x" + pay + ")");
+            freeItem.setQuantity(BigDecimal.valueOf(piezasGratis));
+            freeItem.setUnitPrice(BigDecimal.ZERO);
+            freeItem.setDiscount(BigDecimal.ZERO);
+            freeItem.setSubtotal(BigDecimal.ZERO);
+            items.add(freeItem);
+        }
+
+        return paidLineGross;
     }
 
     // BETWEEN siempre necesita las dos fechas: cuando el filtro viene vacío, Postgres no
@@ -92,7 +169,38 @@ public class SaleService {
         Long scope = tenantScope.scopeId(actor);
         LocalDateTime effectiveFrom = from != null ? from : MIN_DATE;
         LocalDateTime effectiveTo = to != null ? to : MAX_DATE;
-        return saleRepository.search(scope, effectiveFrom, effectiveTo, customerName, paymentMethod, status, pageable);
+        Page<Sale> page = saleRepository.search(scope, effectiveFrom, effectiveTo, customerName, paymentMethod, status, pageable);
+        populatePendingBalances(page.getContent());
+        return page;
+    }
+
+    /**
+     * Llena {@link Sale#getPendingBalance()} de cada venta {@code kind=DEPOSIT} de la
+     * lista, con el saldo que le falta al apartado del que nació ({@code apartado.total -
+     * apartado.depositAmount}) — en un solo query por lote (no uno por fila), igual que
+     * {@code ProductService#withPrimaryImages} para las fotos de producto.
+     */
+    private void populatePendingBalances(List<Sale> sales) {
+        List<Long> apartadoIds = sales.stream()
+                .filter(s -> s.getKind() == SaleKind.DEPOSIT && s.getApartadoId() != null)
+                .map(Sale::getApartadoId)
+                .distinct()
+                .toList();
+        if (apartadoIds.isEmpty()) return;
+        Map<Long, Apartado> byId = apartadoRepository.findAllById(apartadoIds).stream()
+                .collect(Collectors.toMap(Apartado::getId, a -> a));
+        for (Sale s : sales) {
+            if (s.getKind() != SaleKind.DEPOSIT || s.getApartadoId() == null) continue;
+            Apartado a = byId.get(s.getApartadoId());
+            // Solo mientras el apartado sigue ACTIVE (esperando a que el cliente venga por
+            // su pedido) — una vez COMPLETED el saldo ya se cobró (ver Sale kind=BALANCE),
+            // y CANCELLED/EXPIRED ya no se va a cobrar; en ambos casos mostrar un "saldo
+            // pendiente" sería engañoso.
+            if (a != null && a.getStatus() == ApartadoStatus.ACTIVE
+                    && a.getDepositAmount() != null && a.getTotal() != null) {
+                s.setPendingBalance(a.getTotal().subtract(a.getDepositAmount()));
+            }
+        }
     }
 
     /**
@@ -118,6 +226,7 @@ public class SaleService {
      */
     public Sale findById(Long id, User actor) {
         Sale s = findById(id);
+        populatePendingBalances(List.of(s));
         Long scope = tenantScope.scopeId(actor);
         if (scope != null && (s.getTienda() == null || !scope.equals(s.getTienda().getId()))) {
             throw new IllegalArgumentException("Venta no encontrada: " + id);
@@ -187,7 +296,40 @@ public class SaleService {
         BigDecimal grossSubtotal = BigDecimal.ZERO;
         BigDecimal itemDiscountTotal = BigDecimal.ZERO;
 
+        LocalDateTime now = LocalDateTime.now();
         for (SaleItemRequest ir : req.getItems()) {
+            // Línea "por concepto" (ver SaleItemRequest): nada de catálogo/inventario de por
+            // medio, así que se resuelve aparte y no entra al flujo normal de stock/oferta
+            // de abajo — se puede mezclar libremente con líneas de catálogo en la misma venta.
+            if (ir.getProductId() == null) {
+                String conceptName = ir.getConceptName() != null ? ir.getConceptName().trim() : "";
+                if (conceptName.isEmpty()) {
+                    throw new IllegalArgumentException("Captura el nombre del producto para la línea por concepto");
+                }
+                BigDecimal conceptUnitPrice = ir.getUnitPrice();
+                if (conceptUnitPrice == null || conceptUnitPrice.compareTo(BigDecimal.ZERO) < 0) {
+                    throw new IllegalArgumentException("Captura un precio válido para \"" + conceptName + "\"");
+                }
+                BigDecimal conceptQty = ir.getQuantity();
+                BigDecimal conceptDiscount = ir.getDiscount() != null ? ir.getDiscount() : BigDecimal.ZERO;
+                BigDecimal conceptLineGross = conceptUnitPrice.multiply(conceptQty);
+                validateDiscountLimit(conceptDiscount, conceptLineGross, conceptName, tienda);
+
+                SaleItem item = new SaleItem();
+                item.setSale(sale);
+                item.setProduct(null);
+                item.setProductName(conceptName);
+                item.setQuantity(conceptQty);
+                item.setUnitPrice(conceptUnitPrice);
+                item.setDiscount(conceptDiscount);
+                item.setSubtotal(conceptLineGross.subtract(conceptDiscount));
+                items.add(item);
+
+                itemDiscountTotal = itemDiscountTotal.add(conceptDiscount);
+                grossSubtotal = grossSubtotal.add(conceptLineGross);
+                continue;
+            }
+
             // findByIdForUpdate (no findById): toma el lock ANTES de leer el stock, para que
             // dos ventas concurrentes del mismo producto queden serializadas en vez de
             // ambas leer el mismo stock "disponible" y una perder su resta (condición de
@@ -198,41 +340,58 @@ public class SaleService {
 
             BigDecimal qty = ir.getQuantity();
             int qtyInt = qty.intValue();
-            if (product.getStock() < qtyInt) {
+            // "Por pedido" (ver Product#getIsMadeToOrder): no hay inventario real que
+            // validar ni descontar — el producto se fabrica/consigue hasta que se pide.
+            boolean madeToOrder = Boolean.TRUE.equals(product.getIsMadeToOrder());
+            if (!madeToOrder && product.getStock() < qtyInt) {
                 throw new IllegalStateException("Stock insuficiente para " + product.getName()
                         + " (disponible: " + product.getStock() + ")");
             }
 
             BigDecimal unitPrice = product.getPrice();
             BigDecimal discount = ir.getDiscount() != null ? ir.getDiscount() : BigDecimal.ZERO;
-            BigDecimal lineGross = unitPrice.multiply(qty);
-            validateDiscountLimit(discount, lineGross, product.getName(), tienda);
-            BigDecimal itemSubtotal = lineGross.subtract(discount);
 
-            SaleItem item = new SaleItem();
-            item.setSale(sale);
-            item.setProduct(product);
-            item.setProductName(product.getName());
-            item.setQuantity(qty);
-            item.setUnitPrice(unitPrice);
-            item.setDiscount(discount);
-            item.setSubtotal(itemSubtotal);
-            items.add(item);
+            // Oferta vigente para este producto ("compra X paga Y" — ver Offer#isCurrentlyActive):
+            // si aplica, la línea se reparte en dos SaleItem (piezas pagadas a precio normal +
+            // piezas "gratis" de la promoción a $0.00, ver applyOffer) en vez de una sola. El
+            // stock SIEMPRE baja por qtyInt completo más abajo, sin importar si hubo oferta —
+            // es lo que el cliente se lleva, no lo que paga (ver Offer, javadoc de la clase).
+            Optional<Offer> activeOffer = Boolean.TRUE.equals(ir.getSkipOffer())
+                    ? Optional.empty()
+                    : offerService.findActiveOfferForProduct(product, now);
+            BigDecimal lineGross;
+            if (activeOffer.isPresent()) {
+                lineGross = applyOffer(sale, items, product, qtyInt, unitPrice, discount, activeOffer.get(), tienda);
+            } else {
+                validateDiscountLimit(discount, unitPrice.multiply(qty), product.getName(), tienda);
+                lineGross = unitPrice.multiply(qty);
+                SaleItem item = new SaleItem();
+                item.setSale(sale);
+                item.setProduct(product);
+                item.setProductName(product.getName());
+                item.setQuantity(qty);
+                item.setUnitPrice(unitPrice);
+                item.setDiscount(discount);
+                item.setSubtotal(lineGross.subtract(discount));
+                items.add(item);
+            }
             itemDiscountTotal = itemDiscountTotal.add(discount);
 
-            int previous = product.getStock();
-            product.setStock(previous - qtyInt);
-            productRepository.save(product);
+            if (!madeToOrder) {
+                int previous = product.getStock();
+                product.setStock(previous - qtyInt);
+                productRepository.save(product);
 
-            InventoryMovement mv = new InventoryMovement();
-            mv.setProduct(product);
-            mv.setUser(actor);
-            mv.setType(MovementType.SALE);
-            mv.setQuantity(qtyInt);
-            mv.setPreviousStock(previous);
-            mv.setNewStock(previous - qtyInt);
-            mv.setReason("Venta");
-            movementRepository.save(mv);
+                InventoryMovement mv = new InventoryMovement();
+                mv.setProduct(product);
+                mv.setUser(actor);
+                mv.setType(MovementType.SALE);
+                mv.setQuantity(qtyInt);
+                mv.setPreviousStock(previous);
+                mv.setNewStock(previous - qtyInt);
+                mv.setReason("Venta");
+                movementRepository.save(mv);
+            }
 
             grossSubtotal = grossSubtotal.add(lineGross);
         }
@@ -309,6 +468,7 @@ public class SaleService {
             // findByIdForUpdate: mismo motivo que en create() — dos cancelaciones (o una
             // cancelación y una venta nueva) sobre el mismo producto no deben pisarse.
             Product p = productService.findByIdForUpdate(item.getProduct().getId());
+            if (Boolean.TRUE.equals(p.getIsMadeToOrder())) continue; // nunca se descontó stock real, nada que devolver
             int qty = item.getQuantity().intValue();
             int previous = p.getStock();
             p.setStock(previous + qty);
@@ -377,9 +537,19 @@ public class SaleService {
         sale.setCustomerEmail(effectiveEmail);
         sale.setPaymentMethod(paymentMethod);
         sale.setStatus(SaleStatus.COMPLETED);
-        sale.setNotes("Generada desde el apartado #" + apartado.getFolio());
+        boolean isDeposit = apartado.getOrigin() == ApartadoOrigin.DEPOSIT
+                && apartado.getDepositAmount() != null && apartado.getDepositAmount().signum() > 0;
+        sale.setNotes(isDeposit
+                ? "Saldo del apartado #" + apartado.getFolio() + " — ya se había pagado "
+                        + MONEY_FMT.format(apartado.getDepositAmount()) + " de anticipo"
+                : "Generada desde el apartado #" + apartado.getFolio());
         sale.setTienda(apartado.getTienda());
         sale.setFolio(nextSaleFolio(apartado.getTienda()));
+        sale.setKind(isDeposit ? SaleKind.BALANCE : SaleKind.REGULAR);
+        if (isDeposit) {
+            sale.setApartadoId(apartado.getId());
+            sale.setApartadoFolio(apartado.getFolio());
+        }
 
         List<SaleItem> items = new ArrayList<>();
         BigDecimal grossSubtotal = BigDecimal.ZERO;
@@ -400,6 +570,11 @@ public class SaleService {
             itemDiscountTotal = itemDiscountTotal.add(ai.getDiscount());
         }
 
+        // El anticipo ya pagado se suma al descuento de la línea (no es un descuento
+        // promocional, pero así "Subtotal - Descuento = Total" sigue cerrando en el
+        // ticket, con `notes` dejando clarísimo que es un anticipo ya cobrado, no una
+        // rebaja — ver el aviso de arriba).
+        if (isDeposit) itemDiscountTotal = itemDiscountTotal.add(apartado.getDepositAmount());
         BigDecimal total = grossSubtotal.subtract(itemDiscountTotal);
 
         BigDecimal changeGiven = null;
@@ -408,7 +583,7 @@ public class SaleService {
                 throw new IllegalStateException("Debes indicar con cuánto pagó el cliente para cobrar en efectivo");
             }
             if (amountReceived.compareTo(total) < 0) {
-                throw new IllegalStateException("El monto recibido es menor al total del apartado");
+                throw new IllegalStateException("El monto recibido es menor al saldo pendiente del apartado");
             }
             changeGiven = amountReceived.subtract(total);
         } else {
@@ -430,6 +605,83 @@ public class SaleService {
         }
 
         return saved;
+    }
+
+    /**
+     * Registra el anticipo que un cliente deja al encargar un producto, como una
+     * {@link Sale} {@code kind=DEPOSIT} más — llamado únicamente por {@code
+     * ApartadoService#createWithDeposit}, nunca directamente desde un controller.
+     * <p>
+     * No tiene líneas de producto reales (el anticipo no es "una pieza vendida"): se
+     * representa con un único {@link SaleItem} informativo (sin {@code product}, solo
+     * {@code productName}) por el monto completo del anticipo, para que el ticket y el
+     * historial dejen clarísimo de qué se trata. Cuenta en el corte de caja de quien lo
+     * recibe, igual que cualquier otra venta — es dinero real que entró en ese momento.
+     *
+     * @param apartado apartado {@code DEPOSIT} recién creado (todavía sin guardar su
+     *                 {@code depositSaleId}; eso lo hace el llamador con el resultado)
+     * @param depositAmount cuánto dejó de anticipo
+     * @param paymentMethod forma de pago del anticipo
+     * @param amountReceived con cuánto pagó el cliente; obligatorio si es efectivo
+     * @param actor cajero/admin que lo recibe; debe tener un corte de caja propio abierto;
+     *              queda registrado como {@code user} de la venta
+     * @return la venta de anticipo ya registrada y persistida
+     * @throws IllegalStateException si el actor no tiene un corte abierto, o si es en
+     *         efectivo y el monto recibido falta o es menor al anticipo
+     */
+    @Transactional
+    public Sale createDeposit(Apartado apartado, BigDecimal depositAmount, PaymentMethod paymentMethod,
+                               BigDecimal amountReceived, User actor) {
+        CashCut openCut = cashCutRepository.findFirstByUserIdAndStatus(actor.getId(), CashCutStatus.OPEN)
+                .orElseThrow(() -> new IllegalStateException("Debes abrir un corte de caja antes de recibir un anticipo"));
+
+        BigDecimal changeGiven = null;
+        if (paymentMethod == PaymentMethod.CASH) {
+            if (amountReceived == null) {
+                throw new IllegalStateException("Debes indicar con cuánto pagó el cliente para cobrar en efectivo");
+            }
+            if (amountReceived.compareTo(depositAmount) < 0) {
+                throw new IllegalStateException("El monto recibido es menor al anticipo");
+            }
+            changeGiven = amountReceived.subtract(depositAmount);
+        } else {
+            amountReceived = null;
+        }
+
+        String itemNames = apartado.getItems().stream().map(i -> i.getProductName())
+                .reduce((a, b) -> a + ", " + b).orElse("producto por pedido");
+
+        Sale sale = new Sale();
+        sale.setUser(actor);
+        sale.setCashCut(openCut);
+        sale.setCustomerName(apartado.getCustomerName());
+        sale.setCustomerEmail(apartado.getCustomerEmail());
+        sale.setPaymentMethod(paymentMethod);
+        sale.setStatus(SaleStatus.COMPLETED);
+        sale.setNotes("Anticipo del apartado #" + apartado.getFolio());
+        sale.setTienda(apartado.getTienda());
+        sale.setFolio(nextSaleFolio(apartado.getTienda()));
+        sale.setKind(SaleKind.DEPOSIT);
+        sale.setApartadoId(apartado.getId());
+        sale.setApartadoFolio(apartado.getFolio());
+
+        SaleItem item = new SaleItem();
+        item.setSale(sale);
+        item.setProductName("Anticipo — " + itemNames);
+        item.setQuantity(BigDecimal.ONE);
+        item.setUnitPrice(depositAmount);
+        item.setDiscount(BigDecimal.ZERO);
+        item.setSubtotal(depositAmount);
+
+        sale.setSubtotal(depositAmount);
+        sale.setDiscount(BigDecimal.ZERO);
+        sale.setTax(BigDecimal.ZERO);
+        sale.setTotal(depositAmount);
+        sale.setAmountReceived(amountReceived);
+        sale.setChangeGiven(changeGiven);
+        sale.setItems(List.of(item));
+
+        return saleRepository.save(sale);
     }
 
     /**

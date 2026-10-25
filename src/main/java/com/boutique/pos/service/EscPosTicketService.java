@@ -129,6 +129,23 @@ public class EscPosTicketService {
         return toHex(buf.toByteArray());
     }
 
+    /**
+     * Arma SOLO el pulso de apertura del cajón, sin el resto del ticket — para una venta
+     * en efectivo cuyo ticket se mandó Digital (o no se imprimió): el cajero de todas
+     * formas necesita abrir la caja para dar el cambio, y el pulso normalmente solo viaja
+     * pegado al final del ticket físico completo (ver {@link #build}), que en ese caso
+     * nunca se manda a imprimir. Mismo comando ESC p, nada más.
+     *
+     * @param sale venta ya registrada; el llamador (ver {@code SaleController}) ya validó
+     *             que sea en efectivo antes de pedir esto
+     */
+    public String buildDrawerKick() {
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        ctl(buf, 0x1B, 0x40); // ESC @ : inicializa la impresora, por si traía algo pendiente
+        ctl(buf, 0x1B, 0x70, 0x00, 0x19, 0xFA); // mismo pulso que al final de build()
+        return toHex(buf.toByteArray());
+    }
+
     /** Agrega uno o mas bytes de control (valores 0-255) al ticket, tal cual, sin interpretarlos como texto. */
     private void ctl(ByteArrayOutputStream buf, int... codes) {
         for (int c : codes) buf.write(c);

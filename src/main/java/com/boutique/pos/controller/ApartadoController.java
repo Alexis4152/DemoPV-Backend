@@ -3,9 +3,11 @@ package com.boutique.pos.controller;
 import com.boutique.pos.dto.ApartadoCancelRequest;
 import com.boutique.pos.dto.ApartadoCompleteRequest;
 import com.boutique.pos.dto.ApartadoConfirmRequest;
+import com.boutique.pos.dto.ApartadoDepositRequest;
 import com.boutique.pos.dto.ApiResponse;
 import com.boutique.pos.dto.PageResponse;
 import com.boutique.pos.model.Apartado;
+import com.boutique.pos.model.ApartadoOrigin;
 import com.boutique.pos.model.ApartadoStatus;
 import com.boutique.pos.model.User;
 import com.boutique.pos.service.ApartadoService;
@@ -49,11 +51,15 @@ public class ApartadoController {
      * @param to     fecha máxima de solicitud (inclusiva), opcional
      * @param q      texto de búsqueda opcional — nombre/teléfono del cliente, o nombre de
      *               algún producto en sus líneas (ver {@link ApartadoService#search})
+     * @param folio  filtro opcional por folio exacto — lo usa el enlace "apartado #N" del
+     *               historial de ventas (Sales.jsx) para llevar directo a ese apartado
      */
     @GetMapping
     @PreAuthorize("@sectionAccess.check('APARTADOS')")
     public ResponseEntity<ApiResponse<PageResponse<Apartado>>> list(
             @RequestParam(required = false) ApartadoStatus status,
+            @RequestParam(required = false) ApartadoOrigin origin,
+            @RequestParam(required = false) Long folio,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
             @RequestParam(required = false) String q,
@@ -61,8 +67,22 @@ public class ApartadoController {
             @RequestParam(defaultValue = "20") int size,
             @AuthenticationPrincipal User actor) {
         Pageable pageable = PageRequest.of(page, size);
-        Page<Apartado> result = apartadoService.search(status, from, to, q, pageable, actor);
+        Page<Apartado> result = apartadoService.search(status, origin, folio, from, to, q, pageable, actor);
         return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
+    }
+
+    /**
+     * Registra, en persona, un apartado con anticipo — ver {@link ApartadoService#createWithDeposit}.
+     * Requiere el permiso fino {@code APARTADOS:CREATE} (roles de gestión siempre lo tienen
+     * implícito) y que el actor tenga un corte de caja propio abierto, igual que al
+     * registrar cualquier venta.
+     */
+    @PostMapping("/deposit")
+    @PreAuthorize("@sectionAccess.checkAction('APARTADOS', 'CREATE')")
+    public ResponseEntity<ApiResponse<Apartado>> createDeposit(
+            @Valid @RequestBody ApartadoDepositRequest req,
+            @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(apartadoService.createWithDeposit(req, actor), "Anticipo registrado"));
     }
 
     /**

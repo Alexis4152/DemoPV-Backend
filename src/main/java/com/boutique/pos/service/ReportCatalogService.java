@@ -259,14 +259,14 @@ public class ReportCatalogService {
 
     private Report apartados(Ctx c, Filters f) {
         ApartadoStatus status = enumOrNull(f.status(), ApartadoStatus.class);
-        Page<Apartado> page = apartadoRepository.search(c.tiendaId(), status, c.start(), c.end(), null,
+        Page<Apartado> page = apartadoRepository.search(c.tiendaId(), status, null, null, c.start(), c.end(), null,
                 PageRequest.of(0, c.limit()));
         return apartadosReport(c, page);
     }
 
     private Report apartadosPendientes(Ctx c) {
         // "snapshot": todos los PENDING ahora mismo, sin filtrar por fecha de solicitud.
-        Page<Apartado> page = apartadoRepository.search(c.tiendaId(), ApartadoStatus.PENDING, MIN_DATE, MAX_DATE,
+        Page<Apartado> page = apartadoRepository.search(c.tiendaId(), ApartadoStatus.PENDING, null, null, MIN_DATE, MAX_DATE,
                 null, PageRequest.of(0, c.limit()));
         return apartadosReport(c, page);
     }

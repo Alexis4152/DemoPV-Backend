@@ -30,5 +30,8 @@ public enum AppSection {
     APARTADOS,
     /** Materia prima: inventario por piezas que no está a la venta; se puede pasar una
      *  parte al inventario vendible. */
-    RAW_MATERIALS
+    RAW_MATERIALS,
+    /** Ofertas: promociones tipo "compra X paga Y" (2x1, 3x2, ...) configurables por
+     *  producto, aplicadas automáticamente al vender — ver {@link Offer}. */
+    OFFERS
 }

@@ -126,6 +126,9 @@ CREATE TABLE IF NOT EXISTS products (
     is_active           BOOLEAN NOT NULL DEFAULT TRUE,
     -- Si el ADMIN lo marcó para exhibirse en la tienda pública de apartados.
     is_reservable       BOOLEAN NOT NULL DEFAULT FALSE,
+    -- "Por pedido": no se fabrica/trae hasta que alguien lo pide — se puede vender/apartar
+    -- sin importar stock/mínimo, y nunca se descuenta su inventario (ver SaleService/ApartadoService).
+    is_made_to_order    BOOLEAN NOT NULL DEFAULT FALSE,
     -- Descuento promocional PÚBLICO de apartado (se le muestra al cliente, precio tachado
     -- + con descuento) — distinto del límite privado que el cajero aplica al confirmar.
     apartado_discount_percent NUMERIC(5,2),
@@ -139,6 +142,37 @@ CREATE TABLE IF NOT EXISTS products (
     -- el mismo producto de fábrica con el mismo código real. Postgres permite múltiples
     -- NULL en una UNIQUE, así que no afecta a los productos sin código de barras.
     UNIQUE (tienda_id, barcode)
+);
+
+-- Promociones "compra X paga Y" (2x1, 3x2, ...) — ver Offer.java. La cantidad que captura
+-- el cajero en el POS son piezas físicas; SaleService calcula cuántas promociones
+-- completas caben ahí y reparte la línea en pagada (precio normal) + gratis ($0.00).
+CREATE TABLE IF NOT EXISTS offers (
+    id                    BIGSERIAL PRIMARY KEY,
+    name                  VARCHAR(150) NOT NULL,
+    buy_quantity          INTEGER NOT NULL,
+    pay_quantity          INTEGER NOT NULL,
+    -- Tope opcional de promociones aplicadas por línea de venta; NULL = sin límite.
+    max_promos_per_sale   INTEGER,
+    starts_at             TIMESTAMP,
+    ends_at               TIMESTAMP,
+    is_active             BOOLEAN NOT NULL DEFAULT TRUE,
+    tienda_id             BIGINT REFERENCES tiendas(id),
+    created_at            TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMP NOT NULL DEFAULT NOW(),
+    deleted_at            TIMESTAMP,
+    created_by_user_id    BIGINT REFERENCES users(id),
+    updated_by_user_id    BIGINT REFERENCES users(id),
+    deleted_by_user_id    BIGINT REFERENCES users(id)
+);
+
+-- Tabla puente: a qué productos aplica cada oferta (una oferta puede ligarse a varios
+-- productos; un producto puede, en teoría, tener más de una oferta — ver
+-- OfferService#findActiveOfferForProduct para cómo se resuelve ese caso).
+CREATE TABLE IF NOT EXISTS offer_products (
+    offer_id   BIGINT NOT NULL REFERENCES offers(id) ON DELETE CASCADE,
+    product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    PRIMARY KEY (offer_id, product_id)
 );
 
 CREATE TABLE IF NOT EXISTS cash_cuts (
@@ -187,6 +221,12 @@ CREATE TABLE IF NOT EXISTS sales (
                                 CHECK (payment_method IN ('CASH','CARD','TRANSFER')),
     status                  VARCHAR(15) NOT NULL DEFAULT 'COMPLETED'
                                 CHECK (status IN ('COMPLETED','CANCELLED')),
+    -- REGULAR para toda venta de mostrador de siempre; DEPOSIT/BALANCE solo para las que
+    -- nacen de un apartado con anticipo — ver SaleService#createDeposit/#completeFromApartado.
+    kind                    VARCHAR(10) NOT NULL DEFAULT 'REGULAR'
+                                CHECK (kind IN ('REGULAR','DEPOSIT','BALANCE')),
+    apartado_id             BIGINT,
+    apartado_folio          BIGINT,
     notes                   TEXT,
     created_at              TIMESTAMP NOT NULL DEFAULT NOW(),
     cancelled_at            TIMESTAMP,
@@ -306,6 +346,13 @@ CREATE TABLE IF NOT EXISTS apartados (
     notes                   TEXT,
     status                  VARCHAR(15) NOT NULL DEFAULT 'PENDING'
                                 CHECK (status IN ('PENDING','ACTIVE','COMPLETED','CANCELLED','EXPIRED')),
+    -- ONLINE para todo lo de siempre (solicitado desde la tienda pública); DEPOSIT para
+    -- los que un cajero registra en persona al recibir un anticipo.
+    origin                  VARCHAR(10) NOT NULL DEFAULT 'ONLINE'
+                                CHECK (origin IN ('ONLINE','DEPOSIT')),
+    deposit_amount          NUMERIC(12,2),
+    deposit_sale_id         BIGINT,
+    deposit_sale_folio      BIGINT,
     subtotal                NUMERIC(12,2) NOT NULL DEFAULT 0,
     discount                NUMERIC(12,2) NOT NULL DEFAULT 0,
     total                   NUMERIC(12,2) NOT NULL DEFAULT 0,

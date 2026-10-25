@@ -60,6 +60,29 @@ public class SaleController {
     }
 
     /**
+     * Arma SOLO el comando de apertura del cajón de una venta en efectivo (ver {@link
+     * EscPosTicketService#buildDrawerKick}), sin el ticket completo — para cuando el
+     * cajero eligió ticket Digital (o no imprimió ninguno): el pulso que abre la caja
+     * normalmente solo viaja pegado al ticket físico completo, así que si ese nunca se
+     * manda a imprimir, el cajón tampoco se abriría solo. Ver POS.jsx: se pide justo
+     * después de registrar la venta si fue en efectivo y el ticket no era físico.
+     *
+     * @param id    id de la venta ya registrada
+     * @param actor usuario autenticado; la venta debe pertenecer a su tienda
+     * @throws IllegalStateException si la venta no fue en efectivo (nada que abrir)
+     */
+    @GetMapping("/{id}/drawer-kick")
+    @PreAuthorize("@sectionAccess.checkAny('SALES', 'POS')")
+    public ResponseEntity<ApiResponse<String>> drawerKick(@PathVariable Long id,
+                                                            @AuthenticationPrincipal User actor) {
+        Sale sale = saleService.findById(id, actor);
+        if (sale.getPaymentMethod() != PaymentMethod.CASH) {
+            throw new IllegalStateException("Esta venta no fue en efectivo, no hay cajón que abrir");
+        }
+        return ResponseEntity.ok(ApiResponse.ok(escPosTicketService.buildDrawerKick(), null));
+    }
+
+    /**
      * Lista paginada de ventas, con filtros opcionales por rango de fechas,
      * nombre de cliente, método de pago y estado. Requiere acceso a la sección
      * {@code SALES}.

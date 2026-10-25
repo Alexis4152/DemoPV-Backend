@@ -64,6 +64,16 @@ public class Product {
     @Builder.Default
     private Integer minStock = 0;
 
+    // "Por pedido": el producto no se fabrica/trae hasta que alguien lo pide (ej. ropa a
+    // la medida) — con esto en true, SaleService/ApartadoService dejan venderlo/apartarlo
+    // sin importar cuánto diga `stock` (puede quedarse en 0 para siempre) y NUNCA tocan
+    // ese stock al vender ni al cancelar: no hay inventario real que descontar o
+    // devolver. Pensado sobre todo para el flujo de anticipos (ver Apartado#getOrigin()),
+    // pero aplica igual a una venta normal de mostrador de este tipo de producto.
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    @Builder.Default
+    private Boolean isMadeToOrder = false;
+
     /** Unidad de medida en la que se vende el producto (ej. "pza", "kg", "lt"). */
     @Column(nullable = false, length = 20)
     @Builder.Default
