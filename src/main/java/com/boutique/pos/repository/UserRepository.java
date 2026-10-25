@@ -67,14 +67,14 @@ public interface UserRepository extends JpaRepository<User, Long> {
      * rol de plataforma no tiene {@code tienda_id} propio, así que de otra forma nunca
      * calzaría con el filtro de arriba). {@code null} no suma a nadie.</p>
      */
-    @Query("SELECT u FROM User u WHERE " +
+    // Sin ORDER BY: el orden llega en el Pageable. LEFT JOIN al rol para ordenar por su nombre.
+    @Query("SELECT u FROM User u LEFT JOIN u.role ur WHERE " +
            "(:tiendaId IS NULL OR u.tienda.id = :tiendaId OR u.id = :extraUserId) " +
            "AND u.createdAt BETWEEN :from AND :to " +
            "AND (:name IS NULL OR LOWER(u.name) LIKE LOWER(CONCAT('%', CAST(:name AS string), '%'))) " +
            "AND (:email IS NULL OR LOWER(u.email) LIKE LOWER(CONCAT('%', CAST(:email AS string), '%'))) " +
            "AND (:roleId IS NULL OR u.role.id = :roleId) " +
-           "AND (:isActive IS NULL OR u.isActive = :isActive) " +
-           "ORDER BY u.name ASC")
+           "AND (:isActive IS NULL OR u.isActive = :isActive)")
     Page<User> search(@Param("tiendaId") Long tiendaId,
                        @Param("from") LocalDateTime from,
                        @Param("to") LocalDateTime to,

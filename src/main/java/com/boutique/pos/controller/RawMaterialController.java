@@ -20,6 +20,9 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import com.boutique.pos.util.SortParams;
+import org.springframework.data.domain.Sort;
+import java.util.Map;
 
 /**
  * Materia prima (sección {@code RAW_MATERIALS}): inventario por piezas que no está a la
@@ -30,6 +33,11 @@ import java.util.List;
 @RequiredArgsConstructor
 public class RawMaterialController {
 
+    // Columnas ordenables de la tabla (clave que manda el frontend -> propiedad JPQL);
+    // cualquier otra clave usa el orden por defecto. Ver SortParams.
+    private static final Map<String, String> SORT_RAW_MATERIALS = Map.of("name", "name", "category", "mc.name", "barcode", "barcode", "cost", "cost", "stock", "stock", "minStock", "minStock");
+    private static final Sort DEFAULT_SORT_RAW_MATERIALS = Sort.by(Sort.Direction.ASC, "name");
+
     private final RawMaterialService rawMaterialService;
     private final SectionAccessService sectionAccess;
 
@@ -38,11 +46,13 @@ public class RawMaterialController {
     public ResponseEntity<ApiResponse<PageResponse<RawMaterial>>> page(@RequestParam(required = false) String q,
                                                                         @RequestParam(required = false) Long categoryId,
                                                                         @RequestParam(required = false) Boolean lowStock,
+                                                                        @RequestParam(required = false) String sort,
+                                                                        @RequestParam(required = false) String dir,
                                                                         @RequestParam(defaultValue = "0") int page,
                                                                         @RequestParam(defaultValue = "20") int size,
                                                                         @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(
-                rawMaterialService.search(q, categoryId, lowStock, PageRequest.of(page, Math.min(size, 100)), actor)), null));
+                rawMaterialService.search(q, categoryId, lowStock, SortParams.page(page, Math.min(size, 100), sort, dir, SORT_RAW_MATERIALS, DEFAULT_SORT_RAW_MATERIALS), actor)), null));
     }
 
     @GetMapping("/low-stock")

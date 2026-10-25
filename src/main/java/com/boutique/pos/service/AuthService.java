@@ -51,6 +51,7 @@ public class AuthService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final EmailService emailService;
+    private final MaintenanceWindowService maintenanceWindowService;
     private final SecureRandom secureRandom = new SecureRandom();
 
     // Vigencia del link de recuperación de contraseña. Corta a propósito: reduce la ventana
@@ -139,6 +140,8 @@ public class AuthService {
             // role_id) — sin esto, el .getRole().getName() de abajo truena con NPE crudo.
             throw new IllegalStateException("Tu cuenta no tiene un rol asignado, contacta a tu administrador");
         }
+        // Ventana de mantenimiento activa: solo el SUPER_ADMIN entra (para hacer pruebas).
+        maintenanceWindowService.assertCanOperate(user);
         // Una sola sesión activa por cuenta a la vez — evita que dos cajeros terminen
         // operando sin querer con el mismo usuario desde dos cajas distintas. Se checa
         // DESPUÉS de validar credenciales (nunca antes): si fuera antes, cualquiera podría
@@ -238,6 +241,7 @@ public class AuthService {
         if (Boolean.TRUE.equals(refreshToken.getRevoked()) || refreshToken.getExpiresAt().isBefore(LocalDateTime.now())) {
             throw new InvalidRefreshTokenException("Sesión expirada, vuelve a iniciar sesión");
         }
+        maintenanceWindowService.assertCanOperate(refreshToken.getUser());
         return jwtTokenProvider.generateAccessToken(refreshToken.getUser());
     }
 

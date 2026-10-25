@@ -5,6 +5,8 @@ import com.boutique.pos.dto.BarcodeLabelRequest;
 import com.boutique.pos.service.BarcodeLabelPdfService;
 import com.boutique.pos.service.ProductBarcodeService;
 import com.boutique.pos.service.StockImportService;
+import com.boutique.pos.service.InventoryAuditService;
+import com.boutique.pos.model.InventoryAuditAction;
 import com.boutique.pos.dto.StockImportResult;
 import com.boutique.pos.dto.BulkImportResult;
 import com.boutique.pos.dto.InventoryAdjustRequest;
@@ -36,6 +38,9 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import com.boutique.pos.util.SortParams;
+import org.springframework.data.domain.Sort;
+import java.util.Map;
 
 /**
  * Controlador de productos, expuesto bajo {@code /api/products}.
@@ -60,10 +65,16 @@ public class ProductController {
     private final ProductBarcodeService productBarcodeService;
     private final BarcodeLabelPdfService barcodeLabelPdfService;
     private final StockImportService stockImportService;
+    private final InventoryAuditService auditService;
 
     // Tope de etiquetas por PDF, para no armar un archivo gigante por error (ej. 500
     // copias de todo el catálogo).
     private static final int MAX_LABELS_PER_PDF = 5000;
+
+    // Columnas ordenables de la tabla de Inventario (clave del frontend -> propiedad JPQL).
+    private static final Map<String, String> SORT_PRODUCTS = Map.of("name", "name", "category", "category.name",
+            "barcode", "barcode", "price", "price", "stock", "stock", "minStock", "minStock");
+    private static final Sort DEFAULT_SORT_PRODUCTS = Sort.by("name");
 
     // Ventana para que un rol con CREATE (sin EDIT) suba las fotos del producto que acaba de
     // crear — ver uploadImage. Holgada para varias fotos pesadas en una conexión lenta.
@@ -102,7 +113,8 @@ public class ProductController {
                                      @RequestParam(defaultValue = "0") int page,
                                      @RequestParam(defaultValue = "20") int size,
                                      @AuthenticationPrincipal User actor) {
-        Pageable pageable = PageRequest.of(page, size);
+        // Alfabético explícito: la consulta no trae ORDER BY propio (lo comparte la tabla de Inventario).
+        Pageable pageable = PageRequest.of(page, size, Sort.by("name"));
         Page<Product> result = productService.search(q, categoryId, lowStock, pageable, actor);
         return ResponseEntity.ok(ApiResponse.ok(result.getContent(), null));
     }
@@ -130,10 +142,12 @@ public class ProductController {
                                                                     @RequestParam(required = false) Long categoryId,
                                                                     @RequestParam(required = false) Boolean lowStock,
                                                                     @RequestParam(required = false) String sold,
+                                                                    @RequestParam(required = false) String sort,
+                                                                    @RequestParam(required = false) String dir,
                                                                     @RequestParam(defaultValue = "0") int page,
                                                                     @RequestParam(defaultValue = "20") int size,
                                                                     @AuthenticationPrincipal User actor) {
-        Pageable pageable = PageRequest.of(page, size);
+        Pageable pageable = SortParams.page(page, size, sort, dir, SORT_PRODUCTS, DEFAULT_SORT_PRODUCTS);
         Page<Product> result = productService.searchPage(q, categoryId, lowStock, sold, pageable, actor);
         return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
     }
@@ -256,16 +270,16 @@ public class ProductController {
     }
 
     /**
-     * Aplica un ajuste manual de stock (entrada o salida) sobre un producto. Cuenta como
-     * una edición del producto — requiere la acción EDIT otorgada en INVENTORY (ver
-     * {@link #create} para el criterio).
+     * Aplica un ajuste manual de stock (entrada o salida) sobre un producto. Requiere la
+     * acción "Ajustar stock" (ADJUST_STOCK) en INVENTORY — separada de EDIT, que solo
+     * edita los datos del producto (ver {@link #create} para el criterio).
      *
      * @param id    identificador del producto a ajustar
      * @param req   datos del ajuste (cantidad, motivo, etc.)
      * @param actor usuario autenticado que realiza el ajuste
      */
     @PostMapping("/{id}/adjust-stock")
-    @PreAuthorize("@sectionAccess.checkAction('INVENTORY', 'EDIT')")
+    @PreAuthorize("@sectionAccess.checkAction('INVENTORY', 'ADJUST_STOCK')")
     public ResponseEntity<ApiResponse<Product>> adjustStock(@PathVariable Long id,
                                                              @Valid @RequestBody InventoryAdjustRequest req,
                                                              @AuthenticationPrincipal User actor) {
@@ -373,6 +387,7 @@ public class ProductController {
     @GetMapping("/count-sheet.xlsx")
     @PreAuthorize("@sectionAccess.check('INVENTORY')")
     public ResponseEntity<byte[]> countSheetExcel(@AuthenticationPrincipal User actor) {
+        auditService.log(actor, InventoryAuditAction.EXPORT, "Descargó el inventario en Excel");
         return ResponseEntity.ok()
                 .header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 .header("Content-Disposition", "attachment; filename=\"inventario-" + LocalDate.now() + ".xlsx\"")
@@ -383,6 +398,7 @@ public class ProductController {
     @GetMapping("/count-sheet.pdf")
     @PreAuthorize("@sectionAccess.check('INVENTORY')")
     public ResponseEntity<byte[]> countSheetPdf(@AuthenticationPrincipal User actor) {
+        auditService.log(actor, InventoryAuditAction.EXPORT, "Descargó el inventario en PDF");
         return ResponseEntity.ok()
                 .header("Content-Type", "application/pdf")
                 .header("Content-Disposition", "attachment; filename=\"inventario-" + LocalDate.now() + ".pdf\"")
@@ -420,6 +436,7 @@ public class ProductController {
         List<Product> products = productService.findForLabels(null, actor);
         Tienda tienda = products.get(0).getTienda();
         String title = "Códigos de productos" + (tienda != null ? " — " + tienda.getName() : "") + " — " + LocalDate.now();
+        auditService.log(actor, InventoryAuditAction.EXPORT, "Descargó la hoja de códigos (" + products.size() + " productos)");
         return ResponseEntity.ok()
                 .header("Content-Type", "application/pdf")
                 .header("Content-Disposition", "attachment; filename=\"codigos-" + LocalDate.now() + ".pdf\"")
@@ -438,6 +455,12 @@ public class ProductController {
         int copies = req.getCopies() != null ? req.getCopies() : 1;
         if ((long) products.size() * copies > MAX_LABELS_PER_PDF) {
             throw new IllegalArgumentException("Máximo " + MAX_LABELS_PER_PDF + " etiquetas por impresión; reduce las copias por producto");
+        }
+        if (products.size() == 1) {
+            auditService.log(actor, InventoryAuditAction.LABELS_PRINTED, products.get(0), copies + " etiqueta(s)");
+        } else {
+            auditService.log(actor, InventoryAuditAction.LABELS_PRINTED,
+                    products.size() + " productos × " + copies + " = " + (products.size() * copies) + " etiqueta(s)");
         }
         return ResponseEntity.ok()
                 .header("Content-Type", "application/pdf")
@@ -464,10 +487,9 @@ public class ProductController {
     /**
      * "Actualizar existencias": sube la hoja de inventario en Excel con la columna "Cantidad
      * real" llenada y deja el stock de cada producto en esa cantidad (ver {@link
-     * StockImportService}). Mismo permiso que ajustar stock (INVENTORY:EDIT); bajar stock
-     * además requiere ser admin/supervisor.
+     * StockImportService}). Mismo permiso que ajustar stock (INVENTORY:ADJUST_STOCK).
      */
-    @PreAuthorize("@sectionAccess.checkAction('INVENTORY', 'EDIT')")
+    @PreAuthorize("@sectionAccess.checkAction('INVENTORY', 'ADJUST_STOCK')")
     @PostMapping(value = "/stock-import", consumes = "multipart/form-data")
     public ResponseEntity<ApiResponse<StockImportResult>> stockImport(@RequestParam("file") MultipartFile file,
                                                                       @AuthenticationPrincipal User actor) {

@@ -1,5 +1,6 @@
 package com.boutique.pos.service;
 
+import com.boutique.pos.model.InventoryAuditAction;
 import com.boutique.pos.model.Product;
 import com.boutique.pos.model.Tienda;
 import com.boutique.pos.model.User;
@@ -33,6 +34,7 @@ public class ProductBarcodeService {
     private final ProductRepository productRepository;
     private final TiendaRepository tiendaRepository;
     private final TenantScope tenantScope;
+    private final InventoryAuditService auditService;
 
     /**
      * Toma el siguiente consecutivo libre de la tienda y lo regresa ya formateado. Bloquea
@@ -102,6 +104,10 @@ public class ProductBarcodeService {
             p.setBarcodeGenerated(true);
             p.setUpdatedBy(actor);
             productRepository.save(p);
+        }
+        if (!pending.isEmpty()) {
+            auditService.log(actor, InventoryAuditAction.BARCODES_GENERATED, "Códigos asignados a " + pending.size() + " producto(s): "
+                    + pending.get(0).getBarcode() + (pending.size() > 1 ? " a " + pending.get(pending.size() - 1).getBarcode() : ""));
         }
         return pending.size();
     }

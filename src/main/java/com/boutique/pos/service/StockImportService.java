@@ -3,6 +3,7 @@ package com.boutique.pos.service;
 import com.boutique.pos.dto.BulkImportRowError;
 import com.boutique.pos.dto.StockImportResult;
 import com.boutique.pos.exception.FieldConflictException;
+import com.boutique.pos.model.InventoryAuditAction;
 import com.boutique.pos.model.Product;
 import com.boutique.pos.model.User;
 import com.boutique.pos.security.TenantScope;
@@ -32,8 +33,8 @@ import java.util.Set;
  * <p>Cada producto se busca por su código (no por nombre) dentro de la tienda del actor.
  * Una "Cantidad real" vacía significa "no cambiar". La diferencia contra el stock actual
  * se aplica con {@link ProductService#setStockTo} (mismas reglas que un ajuste manual): queda
- * registrado un movimiento de inventario, y solo admin/supervisor/super admin pueden
- * BAJAR stock. Cada fila es independiente: una fila con error no detiene a las demás.</p>
+ * registrado un movimiento de inventario, y requiere el permiso "Ajustar stock". Cada
+ * fila es independiente: una fila con error no detiene a las demás.</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -47,6 +48,7 @@ public class StockImportService {
 
     private final ProductService productService;
     private final TenantScope tenantScope;
+    private final InventoryAuditService auditService;
 
     /**
      * @param file  Excel (.xlsx) con al menos las columnas "Código" y "Cantidad real"
@@ -103,6 +105,9 @@ public class StockImportService {
             throw new IllegalArgumentException("No se pudo leer el archivo — ¿es un Excel (.xlsx) válido?");
         }
 
+        auditService.log(actor, InventoryAuditAction.STOCK_IMPORT_FILE,
+                ProductBulkImportService.fileLabel(file) + ": " + updated + " actualizado(s), " + unchanged + " sin cambio, "
+                        + errors.size() + " con error");
         return StockImportResult.builder()
                 .totalRows(totalRows)
                 .updated(updated)

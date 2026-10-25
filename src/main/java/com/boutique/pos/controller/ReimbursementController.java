@@ -16,6 +16,9 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
+import com.boutique.pos.util.SortParams;
+import org.springframework.data.domain.Sort;
+import java.util.Map;
 
 /**
  * Reembolsos ({@code /api/reimbursements}): dinero que la tienda debe a quien puso efectivo
@@ -27,15 +30,22 @@ import java.math.BigDecimal;
 @RequiredArgsConstructor
 public class ReimbursementController {
 
+    // Columnas ordenables de la tabla (clave que manda el frontend -> propiedad JPQL);
+    // cualquier otra clave usa el orden por defecto. Ver SortParams.
+    private static final Map<String, String> SORT_REIMBURSEMENTS = Map.of("person", "rp.name", "date", "createdAt", "amount", "amount");
+    private static final Sort DEFAULT_SORT_REIMBURSEMENTS = Sort.by(Sort.Direction.DESC, "createdAt");
+
     private final ReimbursementService reimbursementService;
 
     @GetMapping
     @PreAuthorize("@sectionAccess.check('CASH_CUTS')")
     public ResponseEntity<ApiResponse<PageResponse<Reimbursement>>> list(@RequestParam(required = false) ReimbursementStatus status,
+                                                                         @RequestParam(required = false) String sort,
+                                                                         @RequestParam(required = false) String dir,
                                                                          @RequestParam(defaultValue = "0") int page,
                                                                          @RequestParam(defaultValue = "20") int size,
                                                                          @AuthenticationPrincipal User actor) {
-        return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(reimbursementService.search(status, PageRequest.of(page, size), actor)), null));
+        return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(reimbursementService.search(status, SortParams.page(page, size, sort, dir, SORT_REIMBURSEMENTS, DEFAULT_SORT_REIMBURSEMENTS), actor)), null));
     }
 
     @GetMapping("/pending-total")

@@ -232,6 +232,7 @@ public class SaleService {
             mv.setPreviousStock(previous);
             mv.setNewStock(previous - qtyInt);
             mv.setReason("Venta");
+            mv.setSource(MovementSource.SALE);
             movementRepository.save(mv);
 
             grossSubtotal = grossSubtotal.add(lineGross);
@@ -321,7 +322,8 @@ public class SaleService {
             mv.setQuantity(qty);
             mv.setPreviousStock(previous);
             mv.setNewStock(previous + qty);
-            mv.setReason("Cancelación de venta #" + id);
+            mv.setReason("Cancelación de venta folio " + sale.getFolio());
+            mv.setSource(MovementSource.SALE_CANCEL);
             movementRepository.save(mv);
         }
         sale.setStatus(SaleStatus.CANCELLED);

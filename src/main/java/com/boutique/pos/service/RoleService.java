@@ -76,7 +76,7 @@ public class RoleService {
      */
     public Page<Role> findAll(User actor, Pageable pageable) {
         Long scope = tenantScope.scopeId(actor);
-        return scope == null ? roleRepository.findAllByIsActiveTrueOrderByNameAsc(pageable) : roleRepository.findAllByTiendaIdAndIsActiveTrueOrderByNameAsc(scope, pageable);
+        return scope == null ? roleRepository.findAllByIsActiveTrue(pageable) : roleRepository.findAllByTiendaIdAndIsActiveTrue(scope, pageable);
     }
 
     /**

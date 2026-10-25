@@ -21,6 +21,9 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import com.boutique.pos.util.SortParams;
+import org.springframework.data.domain.Sort;
+import java.util.Map;
 
 /**
  * Controlador de ventas, expuesto bajo {@code /api/sales}.
@@ -35,6 +38,11 @@ import java.time.LocalDateTime;
 @RequestMapping("/api/sales")
 @RequiredArgsConstructor
 public class SaleController {
+
+    // Columnas ordenables de la tabla (clave que manda el frontend -> propiedad JPQL);
+    // cualquier otra clave usa el orden por defecto. Ver SortParams.
+    private static final Map<String, String> SORT_SALES = Map.of("folio", "folio", "date", "createdAt", "customer", "customerName", "seller", "su.name", "method", "paymentMethod", "total", "total", "status", "status");
+    private static final Sort DEFAULT_SORT_SALES = Sort.by(Sort.Direction.DESC, "createdAt");
 
     private final SaleService saleService;
     private final EscPosTicketService escPosTicketService;
@@ -81,10 +89,12 @@ public class SaleController {
             @RequestParam(required = false) String customerName,
             @RequestParam(required = false) PaymentMethod paymentMethod,
             @RequestParam(required = false) SaleStatus status,
+            @RequestParam(required = false) String sort,
+            @RequestParam(required = false) String dir,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @AuthenticationPrincipal User actor) {
-        Pageable pageable = PageRequest.of(page, size);
+        Pageable pageable = SortParams.page(page, size, sort, dir, SORT_SALES, DEFAULT_SORT_SALES);
         Page<Sale> result = saleService.findAll(from, to, customerName, paymentMethod, status, pageable, actor);
         return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
     }

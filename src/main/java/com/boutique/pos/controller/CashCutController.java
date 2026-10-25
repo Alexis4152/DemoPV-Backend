@@ -30,6 +30,9 @@ import org.springframework.web.multipart.MultipartFile;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import com.boutique.pos.util.SortParams;
+import org.springframework.data.domain.Sort;
+import java.util.Map;
 
 /**
  * Controlador de cortes de caja ("CashCut"), expuesto bajo {@code /api/cash-cuts}.
@@ -44,6 +47,11 @@ import java.util.Optional;
 @RequestMapping("/api/cash-cuts")
 @RequiredArgsConstructor
 public class CashCutController {
+
+    // Columnas ordenables de la tabla (clave que manda el frontend -> propiedad JPQL);
+    // cualquier otra clave usa el orden por defecto. Ver SortParams.
+    private static final Map<String, String> SORT_CASH_CUTS = Map.of("id", "id", "register", "cr.name", "opened", "openedAt", "closed", "closedAt", "cashier", "cu.name", "sales", "totalSales", "status", "status");
+    private static final Sort DEFAULT_SORT_CASH_CUTS = Sort.by(Sort.Direction.DESC, "openedAt");
 
     private final CashCutService cashCutService;
     private final CashMovementService cashMovementService;
@@ -70,10 +78,12 @@ public class CashCutController {
             @RequestParam(required = false) CashCutStatus status,
             @RequestParam(required = false) Long userId,
             @RequestParam(required = false) HandoverStatus arqueoStatus,
+            @RequestParam(required = false) String sort,
+            @RequestParam(required = false) String dir,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @AuthenticationPrincipal User actor) {
-        Pageable pageable = PageRequest.of(page, size);
+        Pageable pageable = SortParams.page(page, size, sort, dir, SORT_CASH_CUTS, DEFAULT_SORT_CASH_CUTS);
         Page<CashCut> result = cashCutService.findAll(from, to, status, userId, arqueoStatus, pageable, actor);
         return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
     }
