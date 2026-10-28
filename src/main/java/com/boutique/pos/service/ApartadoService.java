@@ -281,6 +281,9 @@ public class ApartadoService {
         }
         if (saved.getCustomerEmail() != null && !saved.getCustomerEmail().isBlank()) {
             emailService.sendApartadoConfirmedCustomerEmail(saved, saved.getCustomerEmail());
+            if (Boolean.TRUE.equals(req.getSendTicketEmail())) {
+                emailService.sendTicketEmail(depositSale, saved.getCustomerEmail());
+            }
         }
         return saved;
     }

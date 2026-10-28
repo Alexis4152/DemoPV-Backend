@@ -54,4 +54,9 @@ public class ApartadoDepositRequest {
     @DecimalMax(value = "9999999999.99", message = "El número es excesivamente grande — el máximo permitido es 9,999,999,999.99")
     @Digits(integer = 10, fraction = 2, message = "Máximo 2 decimales")
     private BigDecimal amountReceived;
+
+    // Ticket digital: true = además se manda por correo el ticket (PDF) de la venta del
+    // anticipo a customerEmail, igual que una venta normal. null/false = ticket físico
+    // (lo imprime el POS) — el correo de confirmación del apartado se manda en ambos casos.
+    private Boolean sendTicketEmail;
 }

@@ -3,6 +3,7 @@ package com.boutique.pos.service;
 import com.boutique.pos.model.PaymentMethod;
 import com.boutique.pos.model.Sale;
 import com.boutique.pos.model.SaleItem;
+import com.boutique.pos.model.SaleKind;
 import com.boutique.pos.model.Tienda;
 import com.boutique.pos.model.TiendaInfo;
 import com.boutique.pos.repository.TiendaInfoRepository;
@@ -99,6 +100,14 @@ public class TicketPdfService {
             }
             addAddressLines(document, info);
             addSeparator(document, 10);
+
+            // Leyenda de anticipo (igual que el ticket impreso, ver EscPosTicketService#build).
+            if (sale.getKind() == SaleKind.DEPOSIT) {
+                document.add(paragraph("ANTICIPO", FONT_TOTAL, Element.ALIGN_CENTER, 0, 2));
+                if (sale.getApartadoFolio() != null) {
+                    document.add(paragraph("Apartado #" + sale.getApartadoFolio(), FONT_BODY, Element.ALIGN_CENTER, 0, 8));
+                }
+            }
 
             // ── Datos de la venta ────────────────────────────────────────────
             String vendedor = sale.getUser() != null ? sale.getUser().getName() : "—";

@@ -3,6 +3,7 @@ package com.boutique.pos.service;
 import com.boutique.pos.model.PaymentMethod;
 import com.boutique.pos.model.Sale;
 import com.boutique.pos.model.SaleItem;
+import com.boutique.pos.model.SaleKind;
 import com.boutique.pos.model.TiendaInfo;
 import com.boutique.pos.repository.TiendaInfoRepository;
 import lombok.RequiredArgsConstructor;
@@ -76,6 +77,17 @@ public class EscPosTicketService {
                 : null;
         if (info != null && info.getRfc() != null && !info.getRfc().isBlank()) {
             text(buf, "RFC: " + info.getRfc() + "\n");
+        }
+        // Leyenda de anticipo: el ticket NO es de una compra liquidada, solo del pago a
+        // cuenta de un apartado — se deja claro arriba, antes que cualquier otro dato.
+        if (sale.getKind() == SaleKind.DEPOSIT) {
+            text(buf, line());
+            ctl(buf, 0x1B, 0x45, 0x01);
+            text(buf, "*** ANTICIPO ***\n");
+            ctl(buf, 0x1B, 0x45, 0x00);
+            if (sale.getApartadoFolio() != null) {
+                text(buf, "Apartado #" + sale.getApartadoFolio() + "\n");
+            }
         }
         ctl(buf, 0x1B, 0x61, 0x00); // alinear a la izquierda
         text(buf, line());
