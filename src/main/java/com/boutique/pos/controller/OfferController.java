@@ -78,6 +78,13 @@ public class OfferController {
         return ResponseEntity.ok(ApiResponse.ok(offerService.update(id, req, actor), "Oferta actualizada"));
     }
 
+    // Reactivar una oferta desactivada — cuenta como editarla.
+    @PostMapping("/{id}/activate")
+    @PreAuthorize("@sectionAccess.checkAction('OFFERS', 'EDIT')")
+    public ResponseEntity<ApiResponse<Offer>> activate(@PathVariable Long id, @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(offerService.activate(id, actor), "Oferta reactivada"));
+    }
+
     @DeleteMapping("/{id}")
     @PreAuthorize("@sectionAccess.checkAction('OFFERS', 'DELETE')")
     public ResponseEntity<ApiResponse<Void>> delete(@PathVariable Long id, @AuthenticationPrincipal User actor) {

@@ -7,6 +7,7 @@ import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -111,8 +112,14 @@ public class Apartado {
     /** Cuándo un cajero/admin la confirmó (pasó a {@code ACTIVE} y se descontó el stock). Null mientras está {@code PENDING}. */
     private LocalDateTime confirmedAt;
 
-    /** {@code confirmedAt + durationHours}. Null mientras está {@code PENDING} (todavía no corre el conteo). */
+    /** {@code confirmedAt + durationHours}. Null mientras está {@code PENDING} (todavía no corre el conteo).
+     *  También null en los anticipos ({@code origin = DEPOSIT}): no vencen solos — el cliente ya
+     *  dejó dinero; quedan activos hasta que se entregan o alguien los cancela. */
     private LocalDateTime expiresAt;
+
+    /** Fecha en que se le entrega el pedido al cliente (solo anticipos). Un día antes el
+     *  apartado se marca "Próximo a entregar" en la pantalla de Apartados. */
+    private LocalDate deliveryDate;
 
     // LAZY + JsonIgnoreProperties: mismo motivo que en Sale.user (evitar el ciclo
     // User→Role/Tienda→...→User al serializar, y no cargar en cadena lo que no hace falta).

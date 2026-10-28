@@ -1,6 +1,7 @@
 package com.boutique.pos.service;
 
 import com.boutique.pos.dto.OfferRequest;
+import com.boutique.pos.exception.FieldConflictException;
 import com.boutique.pos.model.Offer;
 import com.boutique.pos.model.Product;
 import com.boutique.pos.model.Tienda;
@@ -121,9 +122,17 @@ public class OfferService {
 
     private void validatePayLessThanBuy(OfferRequest req) {
         if (!req.isPayLessThanBuy()) {
-            throw new IllegalArgumentException(
+            throw new FieldConflictException("payQuantity",
                     "Lo que se paga (" + req.getPayQuantity() + ") debe ser menor a lo que se lleva ("
                             + req.getBuyQuantity() + ") — si no, no es una oferta");
+        }
+        // "Empieza" puede ser pasada; "Termina" no (con 1 min de tolerancia por el desfase
+        // entre lo que el usuario ve en su reloj y el instante en que llega al servidor).
+        if (req.getEndsAt() != null && req.getEndsAt().isBefore(LocalDateTime.now().minusMinutes(1))) {
+            throw new FieldConflictException("endsAt", "No puede ser anterior a la fecha y hora actual");
+        }
+        if (req.getStartsAt() != null && req.getEndsAt() != null && !req.getEndsAt().isAfter(req.getStartsAt())) {
+            throw new FieldConflictException("endsAt", "Debe terminar después de que empieza");
         }
     }
 
@@ -153,5 +162,15 @@ public class OfferService {
         offer.setDeletedBy(actor);
         offer.setDeletedAt(LocalDateTime.now());
         offerRepository.save(offer);
+    }
+
+    /** Revierte {@link #delete}: la oferta vuelve a aplicar en el POS (según su vigencia). */
+    public Offer activate(Long id, User actor) {
+        Offer offer = findById(id, actor);
+        offer.setIsActive(true);
+        offer.setDeletedBy(null);
+        offer.setDeletedAt(null);
+        offer.setUpdatedBy(actor);
+        return offerRepository.save(offer);
     }
 }

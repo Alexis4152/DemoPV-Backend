@@ -425,6 +425,9 @@ public class EmailService {
             }
             body.append(". Ya se descontó del inventario.\n\n");
             body.append("Productos:\n").append(productLines(apartado));
+            if (apartado.getDeliveryDate() != null) {
+                body.append("\nFecha de entrega: ").append(apartado.getDeliveryDate());
+            }
             if (apartado.getExpiresAt() != null) {
                 body.append("\nVence: ").append(apartado.getExpiresAt()).append(" — si el cliente no lo recoge antes, se reintegra solo al inventario.");
             }

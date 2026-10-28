@@ -2,6 +2,7 @@ package com.boutique.pos.service;
 
 import com.boutique.pos.dto.SaleItemRequest;
 import com.boutique.pos.dto.SaleRequest;
+import com.boutique.pos.exception.FieldConflictException;
 import com.boutique.pos.model.*;
 import com.boutique.pos.repository.*;
 import com.boutique.pos.security.TenantScope;
@@ -640,10 +641,10 @@ public class SaleService {
         BigDecimal changeGiven = null;
         if (paymentMethod == PaymentMethod.CASH) {
             if (amountReceived == null) {
-                throw new IllegalStateException("Debes indicar con cuánto pagó el cliente para cobrar en efectivo");
+                throw new FieldConflictException("amountReceived", "Debes indicar con cuánto pagó el cliente para cobrar en efectivo");
             }
             if (amountReceived.compareTo(depositAmount) < 0) {
-                throw new IllegalStateException("El monto recibido es menor al anticipo");
+                throw new FieldConflictException("amountReceived", "El monto recibido es menor al anticipo");
             }
             changeGiven = amountReceived.subtract(depositAmount);
         } else {

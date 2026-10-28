@@ -14,20 +14,25 @@ import java.util.List;
 @Data
 public class OfferRequest {
 
-    @NotBlank
+    @NotBlank(message = "El nombre es obligatorio")
     @Size(max = 150, message = "El nombre no puede tener más de 150 caracteres")
     private String name;
 
+    // Topes de 1000: una promoción de más piezas no es realista y, sin tope, un número
+    // gigante desborda el INTEGER de la columna con un error crudo de la base de datos.
     @NotNull(message = "Indica cuántas piezas se lleva el cliente (el \"X\" de compra X paga Y)")
     @Min(value = 2, message = "Debe llevarse al menos 2 piezas (si no, no hay oferta que aplicar)")
+    @Max(value = 1000, message = "Máximo 1000 piezas por promoción")
     private Integer buyQuantity;
 
     @NotNull(message = "Indica cuántas piezas paga el cliente (el \"Y\" de compra X paga Y)")
     @Min(value = 1, message = "Debe pagar al menos 1 pieza")
+    @Max(value = 999, message = "Máximo 999 piezas pagadas por promoción")
     private Integer payQuantity;
 
     // null = sin límite de promociones por línea de venta.
     @Min(value = 1, message = "El límite de promociones debe ser al menos 1 (o déjalo vacío para no poner límite)")
+    @Max(value = 1000, message = "El límite de promociones no puede ser mayor a 1000")
     private Integer maxPromosPerSale;
 
     private LocalDateTime startsAt;

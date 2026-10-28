@@ -44,7 +44,7 @@ public class ApartadoController {
 
     // Columnas ordenables de la tabla (clave que manda el frontend -> propiedad JPQL);
     // cualquier otra clave usa el orden por defecto. Ver SortParams.
-    private static final Map<String, String> SORT_APARTADOS = Map.of("customer", "customerName", "total", "total", "status", "status", "requested", "requestedAt", "expires", "expiresAt");
+    private static final Map<String, String> SORT_APARTADOS = Map.of("customer", "customerName", "total", "total", "status", "status", "requested", "requestedAt", "expires", "expiresAt", "delivery", "deliveryDate");
     private static final Sort DEFAULT_SORT_APARTADOS = Sort.by(Sort.Direction.DESC, "requestedAt");
 
     private final ApartadoService apartadoService;

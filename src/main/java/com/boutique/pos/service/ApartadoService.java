@@ -39,6 +39,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import com.boutique.pos.exception.FieldConflictException;
 
 /**
  * Ciclo de vida completo de un {@link Apartado}: solicitud pública, confirmación,
@@ -71,6 +72,7 @@ public class ApartadoService {
     private final InventoryMovementRepository movementRepository;
     private final UserRepository userRepository;
     private final SaleService saleService;
+    private final OfferService offerService;
     private final EmailService emailService;
     private final TenantScope tenantScope;
 
@@ -198,11 +200,18 @@ public class ApartadoService {
 
         List<ApartadoItem> items = new ArrayList<>();
         BigDecimal subtotal = BigDecimal.ZERO;
+        LocalDateTime now = LocalDateTime.now();
         for (ApartadoItemRequest ir : req.getItems()) {
             Product product = productRepository.findByIdForUpdate(ir.getProductId())
                     .orElseThrow(() -> new IllegalArgumentException("Producto no encontrado: " + ir.getProductId()));
             if (!product.getTienda().getId().equals(tienda.getId())) {
                 throw new IllegalArgumentException("\"" + product.getName() + "\" no pertenece a esta tienda");
+            }
+            // El anticipo cobra a precio de lista: un producto con oferta vigente se vende
+            // aparte (venta normal), nunca mezclado en un anticipo — ver POS#openDepositModal.
+            if (offerService.findActiveOfferForProduct(product, now).isPresent()) {
+                throw new IllegalStateException("No se puede registrar un anticipo con productos en oferta (\""
+                        + product.getName() + "\") — el anticipo es solo para productos sin oferta");
             }
             boolean madeToOrder = Boolean.TRUE.equals(product.getIsMadeToOrder());
             if (!madeToOrder && BigDecimal.valueOf(product.getStock()).compareTo(ir.getQuantity()) < 0) {
@@ -241,20 +250,23 @@ public class ApartadoService {
         }
 
         if (req.getDepositAmount().compareTo(subtotal) >= 0) {
-            throw new IllegalStateException("El anticipo debe ser menor al total del pedido ("
+            throw new FieldConflictException("depositAmount", "El anticipo debe ser menor al total del pedido ("
                     + MONEY_FMT.format(subtotal) + ") — si ya cubre todo, regístralo como una venta normal");
         }
 
-        int durationHours = req.getDurationHours() != null ? req.getDurationHours() : tienda.getDefaultApartadoHours();
+        if (req.getDeliveryDate().isBefore(LocalDate.now())) {
+            throw new FieldConflictException("deliveryDate", "La fecha de entrega no puede ser anterior a hoy");
+        }
 
         apartado.setItems(items);
         apartado.setSubtotal(subtotal);
         apartado.setDiscount(BigDecimal.ZERO);
         apartado.setTotal(subtotal);
         apartado.setDepositAmount(req.getDepositAmount());
-        apartado.setDurationHours(durationHours);
+        // Sin vigencia ni vencimiento: el anticipo no vence solo (ver Apartado#expiresAt);
+        // expireOverdue() solo toma apartados con expiresAt, así que este queda fuera.
+        apartado.setDeliveryDate(req.getDeliveryDate());
         apartado.setConfirmedAt(LocalDateTime.now());
-        apartado.setExpiresAt(apartado.getConfirmedAt().plusHours(durationHours));
         apartado.setConfirmedBy(actor);
         apartado.setStatus(ApartadoStatus.ACTIVE);
         Apartado saved = apartadoRepository.save(apartado);

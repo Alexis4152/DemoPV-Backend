@@ -7,6 +7,7 @@ import lombok.Data;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.time.LocalDate;
 
 /**
  * Payload para que un cajero/admin registre, en persona, un apartado con anticipo
@@ -16,7 +17,7 @@ import java.util.List;
  */
 @Data
 public class ApartadoDepositRequest {
-    @NotBlank
+    @NotBlank(message = "El nombre es obligatorio")
     @Size(max = 150, message = "El nombre no puede tener más de 150 caracteres")
     private String customerName;
 
@@ -24,7 +25,7 @@ public class ApartadoDepositRequest {
     @Pattern(regexp = "^[0-9]{10}$", message = "El teléfono debe tener 10 dígitos")
     private String customerPhone;
 
-    @Email
+    @Email(message = "Correo inválido")
     @Size(max = 150, message = "El correo no puede tener más de 150 caracteres")
     private String customerEmail;
 
@@ -35,19 +36,22 @@ public class ApartadoDepositRequest {
     @Valid
     private List<ApartadoItemRequest> items;
 
-    // Cuántas horas dura el apartado antes de vencer; null = usa el default de la tienda
-    // (igual que al confirmar un apartado normal — ver ApartadoConfirmRequest).
-    private Integer durationHours;
+    // Fecha de entrega del pedido (reemplaza a las horas de vigencia: un anticipo no vence
+    // solo). Debe ser hoy o posterior — ApartadoService#createWithDeposit lo valida.
+    @NotNull(message = "Elige la fecha de entrega")
+    private LocalDate deliveryDate;
 
     @NotNull(message = "Captura cuánto dejó de anticipo")
     @DecimalMin(value = "0.01", message = "El anticipo debe ser mayor a 0")
     @DecimalMax(value = "9999999999.99", message = "El número es excesivamente grande — el máximo permitido es 9,999,999,999.99")
+    @Digits(integer = 10, fraction = 2, message = "Máximo 2 decimales")
     private BigDecimal depositAmount;
 
-    @NotNull
+    @NotNull(message = "Elige el método de pago")
     private PaymentMethod paymentMethod;
 
     // Con cuánto pagó el cliente el anticipo; obligatorio si paymentMethod = CASH.
     @DecimalMax(value = "9999999999.99", message = "El número es excesivamente grande — el máximo permitido es 9,999,999,999.99")
+    @Digits(integer = 10, fraction = 2, message = "Máximo 2 decimales")
     private BigDecimal amountReceived;
 }
