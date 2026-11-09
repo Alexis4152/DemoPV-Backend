@@ -195,7 +195,9 @@ public class ReportPdfService {
         addHeaderCell(table, "Total vendido", Element.ALIGN_RIGHT);
         addHeaderCell(table, "# Ventas", Element.ALIGN_RIGHT);
         for (Object[] row : rows) {
-            table.addCell(cell(metodoPagoEs((PaymentMethod) row[0]), Element.ALIGN_LEFT, FONT_BODY));
+            // Consulta nativa (ver SaleRepository#salesByPaymentMethod): el método llega como texto.
+            PaymentMethod method = row[0] instanceof PaymentMethod pm ? pm : PaymentMethod.valueOf(String.valueOf(row[0]));
+            table.addCell(cell(metodoPagoEs(method), Element.ALIGN_LEFT, FONT_BODY));
             table.addCell(cell(money(row[1]), Element.ALIGN_RIGHT, FONT_BODY));
             table.addCell(cell(count(row[2]), Element.ALIGN_RIGHT, FONT_BODY));
         }

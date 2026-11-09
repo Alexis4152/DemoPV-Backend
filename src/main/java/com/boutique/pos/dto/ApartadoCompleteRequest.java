@@ -8,6 +8,7 @@ import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * Payload para COMPLETAR un apartado {@code ACTIVE}: el cliente llegó y pagó, se genera
@@ -36,4 +37,7 @@ public class ApartadoCompleteRequest {
     @Email
     @Size(max = 150, message = "El correo no puede tener más de 150 caracteres")
     private String customerEmail;
+
+    /** Líneas sobre pedido que al liquidar sí salen del inventario. */
+    private List<Long> deductItemIds;
 }

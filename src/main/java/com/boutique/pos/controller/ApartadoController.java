@@ -6,9 +6,14 @@ import com.boutique.pos.dto.ApartadoConfirmRequest;
 import com.boutique.pos.dto.ApartadoDepositRequest;
 import com.boutique.pos.dto.ApiResponse;
 import com.boutique.pos.dto.PageResponse;
+import java.util.List;
+import com.boutique.pos.dto.ApartadoPaymentRow;
+import com.boutique.pos.dto.ApartadoRefundRequest;
+import com.boutique.pos.dto.ApartadoStockReviewRequest;
 import com.boutique.pos.model.Apartado;
 import com.boutique.pos.model.ApartadoOrigin;
 import com.boutique.pos.model.ApartadoStatus;
+import com.boutique.pos.model.DepositResolution;
 import com.boutique.pos.model.User;
 import com.boutique.pos.service.ApartadoService;
 import jakarta.validation.Valid;
@@ -44,7 +49,7 @@ public class ApartadoController {
 
     // Columnas ordenables de la tabla (clave que manda el frontend -> propiedad JPQL);
     // cualquier otra clave usa el orden por defecto. Ver SortParams.
-    private static final Map<String, String> SORT_APARTADOS = Map.of("customer", "customerName", "total", "total", "status", "status", "requested", "requestedAt", "expires", "expiresAt", "delivery", "deliveryDate");
+    private static final Map<String, String> SORT_APARTADOS = Map.of("folio", "folio", "customer", "customerName", "total", "total", "status", "status", "requested", "requestedAt", "expires", "expiresAt", "delivery", "deliveryDate");
     private static final Sort DEFAULT_SORT_APARTADOS = Sort.by(Sort.Direction.DESC, "requestedAt");
 
     private final ApartadoService apartadoService;
@@ -67,6 +72,7 @@ public class ApartadoController {
             @RequestParam(required = false) ApartadoStatus status,
             @RequestParam(required = false) ApartadoOrigin origin,
             @RequestParam(required = false) Long folio,
+            @RequestParam(required = false) Boolean review,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
             @RequestParam(required = false) String q,
@@ -76,7 +82,7 @@ public class ApartadoController {
             @RequestParam(defaultValue = "20") int size,
             @AuthenticationPrincipal User actor) {
         Pageable pageable = SortParams.page(page, size, sort, dir, SORT_APARTADOS, DEFAULT_SORT_APARTADOS);
-        Page<Apartado> result = apartadoService.search(status, origin, folio, from, to, q, pageable, actor);
+        Page<Apartado> result = apartadoService.search(status, origin, folio, review, from, to, q, pageable, actor);
         return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
     }
 
@@ -98,6 +104,23 @@ public class ApartadoController {
      * Cuántos apartados {@code PENDING} tiene la tienda del actor — para el badge del
      * sidebar. Accesible también desde {@code DASHBOARD}, igual que el resumen de ventas.
      */
+    /** Cuántos apartados tienen el inventario por revisar (ver {@link ApartadoService#reviewStock}). */
+    @GetMapping("/review-count")
+    @PreAuthorize("@sectionAccess.check('APARTADOS')")
+    public ResponseEntity<ApiResponse<Long>> reviewCount(@AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(apartadoService.stockReviewCount(actor), null));
+    }
+
+    /** Revisa el inventario de un apartado vencido o cancelado por el cliente. */
+    @PostMapping("/{id}/stock-review")
+    @PreAuthorize("@sectionAccess.checkAction('APARTADOS', 'EDIT')")
+    public ResponseEntity<ApiResponse<Apartado>> reviewStock(
+            @PathVariable Long id,
+            @Valid @RequestBody ApartadoStockReviewRequest req,
+            @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(apartadoService.reviewStock(id, req, actor), "Inventario revisado"));
+    }
+
     @GetMapping("/pending-count")
     @PreAuthorize("@sectionAccess.checkAny('APARTADOS', 'DASHBOARD')")
     public ResponseEntity<ApiResponse<Long>> pendingCount(@AuthenticationPrincipal User actor) {
@@ -108,6 +131,13 @@ public class ApartadoController {
     @PreAuthorize("@sectionAccess.check('APARTADOS')")
     public ResponseEntity<ApiResponse<Apartado>> get(@PathVariable Long id, @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(apartadoService.findById(id, actor), null));
+    }
+
+    /** Desglose de cobros de un apartado (anticipo, saldo o pago completo), ver {@link ApartadoService#payments}. */
+    @GetMapping("/{id}/payments")
+    @PreAuthorize("@sectionAccess.check('APARTADOS')")
+    public ResponseEntity<ApiResponse<List<ApartadoPaymentRow>>> payments(@PathVariable Long id, @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(apartadoService.payments(id, actor), null));
     }
 
     /**
@@ -141,6 +171,15 @@ public class ApartadoController {
      * Completa un apartado {@code ACTIVE}: el cliente recogió y pagó, se genera la venta
      * real (ver {@link ApartadoService#complete}).
      */
+    @PostMapping("/{id}/installments")
+    @PreAuthorize("@sectionAccess.checkAction('APARTADOS', 'EDIT')")
+    public ResponseEntity<ApiResponse<com.boutique.pos.model.Sale>> addInstallment(
+            @PathVariable Long id,
+            @Valid @RequestBody com.boutique.pos.dto.ApartadoInstallmentRequest req,
+            @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(apartadoService.addInstallment(id, req, actor), "Abono registrado"));
+    }
+
     @PostMapping("/{id}/complete")
     @PreAuthorize("@sectionAccess.checkAction('APARTADOS', 'EDIT')")
     public ResponseEntity<ApiResponse<Apartado>> complete(
@@ -148,6 +187,26 @@ public class ApartadoController {
             @Valid @RequestBody ApartadoCompleteRequest req,
             @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(apartadoService.complete(id, req, actor), "Apartado completado"));
+    }
+
+    /** Registra la entrega de un apartado pagado completo (ver {@link ApartadoService#deliver}). */
+    @PostMapping("/{id}/deliver")
+    @PreAuthorize("@sectionAccess.checkAction('APARTADOS', 'EDIT')")
+    public ResponseEntity<ApiResponse<Apartado>> deliver(
+            @PathVariable Long id,
+            @RequestBody(required = false) com.boutique.pos.dto.ApartadoDeliverRequest req,
+            @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(apartadoService.deliver(id, req, actor), "Entrega registrada"));
+    }
+
+    /** Devuelve un apartado completado (el cliente lo regresó), ver {@link ApartadoService#refund}. */
+    @PostMapping("/{id}/refund")
+    @PreAuthorize("@sectionAccess.checkAction('APARTADOS', 'DELETE')")
+    public ResponseEntity<ApiResponse<Apartado>> refund(
+            @PathVariable Long id,
+            @Valid @RequestBody ApartadoRefundRequest req,
+            @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(apartadoService.refund(id, req, actor), "Devolución registrada"));
     }
 
     /**
@@ -161,7 +220,6 @@ public class ApartadoController {
             @PathVariable Long id,
             @Valid @RequestBody(required = false) ApartadoCancelRequest req,
             @AuthenticationPrincipal User actor) {
-        String reason = req != null ? req.getReason() : null;
-        return ResponseEntity.ok(ApiResponse.ok(apartadoService.cancel(id, reason, actor), "Apartado cancelado"));
+        return ResponseEntity.ok(ApiResponse.ok(apartadoService.cancel(id, req, actor), "Apartado cancelado"));
     }
 }

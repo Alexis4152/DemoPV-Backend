@@ -31,6 +31,7 @@ import java.util.List;
 @Slf4j
 public class CashDayCloseService {
 
+    private final EntityLocks entityLocks;
     private final CashRegisterRepository registerRepository;
     private final CashCutRepository cashCutRepository;
     private final CashCutReportNotifier reportNotifier;
@@ -50,12 +51,13 @@ public class CashDayCloseService {
      */
     @Transactional
     public int finishDay(Long registerId) {
-        CashRegister r = registerRepository.findByIdForUpdate(registerId).orElseThrow();
+        CashRegister r = registerRepository.findByIdForUpdate(registerId).map(entityLocks::fresh).orElseThrow();
+        LocalDateTime since = reportedUntil(r);
         List<CashCut> cuts = unreportedCuts(r);
         r.setLastDayCloseAt(LocalDateTime.now());
         r.setDayClosed(true);
         registerRepository.save(r);
-        if (!cuts.isEmpty()) reportNotifier.notifyRegisterDay(r, cuts);
+        if (!cuts.isEmpty()) reportNotifier.notifyRegisterDay(r, cuts, since);
         return cuts.size();
     }
 
@@ -70,7 +72,7 @@ public class CashDayCloseService {
             try {
                 List<CashCut> cuts = unreportedCuts(r);
                 if (!cuts.isEmpty()) {
-                    reportNotifier.notifyRegisterDay(r, cuts);
+                    reportNotifier.notifyRegisterDay(r, cuts, reportedUntil(r));
                     r.setLastDayCloseAt(LocalDateTime.now());
                 }
                 r.setDayClosed(false);
@@ -86,7 +88,11 @@ public class CashDayCloseService {
     }
 
     private List<CashCut> unreportedCuts(CashRegister r) {
-        LocalDateTime from = r.getLastDayCloseAt() != null ? r.getLastDayCloseAt() : LocalDate.now().atStartOfDay();
-        return cashCutRepository.findClosedByRegisterSince(r.getId(), from);
+        return cashCutRepository.findClosedByRegisterSince(r.getId(), reportedUntil(r));
+    }
+
+    /** Hasta dónde llegó el último reporte de la caja (o el inicio del día, la primera vez). */
+    private static LocalDateTime reportedUntil(CashRegister r) {
+        return r.getLastDayCloseAt() != null ? r.getLastDayCloseAt() : LocalDate.now().atStartOfDay();
     }
 }

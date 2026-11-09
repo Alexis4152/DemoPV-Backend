@@ -60,6 +60,30 @@ public class Tienda {
     @Column(precision = 5, scale = 2)
     private BigDecimal maxDiscountPercent;
 
+    // Devoluciones que un cajero puede hacer sin un administrador/supervisor (ver
+    // SaleService#ensureCanRefund): hasta este monto y de ventas de hasta estos días. Por
+    // encima de cualquiera de los dos, solo ADMIN/SUPERVISOR. null = sin límite en ese criterio.
+    @Column(precision = 12, scale = 2)
+    private BigDecimal cashierRefundMaxAmount;
+
+    private Integer cashierRefundMaxDays;
+
+    // Apartados con anticipo: % del TOTAL del apartado que la tienda retiene si el cliente
+    // cancela o devuelve por cambio de opinión (nunca más de lo que ya pagó). Se copia al
+    // apartado al registrarlo (Apartado#retentionPercent), que es lo que dice su ticket.
+    // null = regla anterior: lo pagado a cuenta (anticipo y abonos) no se devuelve.
+    @Column(precision = 5, scale = 2)
+    private BigDecimal apartadoRetentionPercent;
+
+    // Reporte diario de inventario (ver InventoryReportService): hora "HH:mm" a la que se
+    // manda al supervisor. null = no se manda.
+    @Column(length = 5)
+    private String inventoryReportTime;
+
+    // Último día que se mandó, para no repetirlo si el servidor se reinicia.
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private java.time.LocalDate lastInventoryReportDate;
+
     // ── Apartados (reservas) ─────────────────────────────────────────────────
     // Mismo par que arriba (maxDiscountAmount/Percent) pero para apartados, a propósito
     // separado: una tienda puede querer condiciones de descuento distintas para incentivar

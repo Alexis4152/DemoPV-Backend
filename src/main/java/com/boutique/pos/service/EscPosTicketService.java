@@ -1,5 +1,6 @@
 package com.boutique.pos.service;
 
+import com.boutique.pos.model.ApartadoItem;
 import com.boutique.pos.model.PaymentMethod;
 import com.boutique.pos.model.Sale;
 import com.boutique.pos.model.SaleItem;
@@ -14,6 +15,7 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.text.NumberFormat;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.Locale;
 
 /**
@@ -49,6 +51,8 @@ public class EscPosTicketService {
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
 
     private final TiendaInfoRepository tiendaInfoRepository;
+    private final ApartadoRetentionLegend retentionLegend;
+    private final DepositLines depositLines;
 
     /**
      * Arma el ticket completo de una venta y lo entrega como cadena hexadecimal, lista
@@ -83,11 +87,12 @@ public class EscPosTicketService {
         if (sale.getKind() == SaleKind.DEPOSIT) {
             text(buf, line());
             ctl(buf, 0x1B, 0x45, 0x01);
-            text(buf, "*** ANTICIPO ***\n");
+            text(buf, Boolean.TRUE.equals(sale.getInstallment()) ? "*** ABONO ***\n" : "*** ANTICIPO ***\n");
             ctl(buf, 0x1B, 0x45, 0x00);
             if (sale.getApartadoFolio() != null) {
                 text(buf, "Apartado #" + sale.getApartadoFolio() + "\n");
             }
+            for (String l : wrapWords(stripAccents(retentionLegend.text(sale)))) text(buf, l + "\n");
         }
         ctl(buf, 0x1B, 0x61, 0x00); // alinear a la izquierda
         text(buf, line());
@@ -100,27 +105,45 @@ public class EscPosTicketService {
         }
         text(buf, line());
 
-        for (SaleItem item : sale.getItems()) {
-            text(buf, wrap(item.getProductName()) + "\n");
-            String left = stripTrailingZeros(item.getQuantity()) + " x " + money(item.getUnitPrice());
-            text(buf, padBetween(left, money(item.getSubtotal())) + "\n");
-        }
-        text(buf, line());
+        // Anticipo: primero lo que se apartó y el anticipo restando; el resto de los tickets, su detalle.
+        List<ApartadoItem> apartadoItems = DepositLines.isDeposit(sale) && !Boolean.TRUE.equals(sale.getInstallment())
+                ? depositLines.apartadoItems(sale) : List.of();
+        if (!apartadoItems.isEmpty()) {
+            appendDepositBody(buf, sale, apartadoItems);
+        } else {
+            for (SaleItem item : sale.getItems()) {
+                text(buf, wrap(DepositLines.itemName(sale, item.getProductName())) + "\n");
+                String left = stripTrailingZeros(item.getQuantity()) + " x " + money(item.getUnitPrice());
+                text(buf, padBetween(left, money(item.getSubtotal())) + "\n");
+            }
+            text(buf, line());
 
-        text(buf, padBetween("Subtotal", money(sale.getSubtotal())) + "\n");
-        if (sale.getDiscount() != null && sale.getDiscount().signum() > 0) {
-            text(buf, padBetween("Descuento", "-" + money(sale.getDiscount())) + "\n");
-        }
-        if (sale.getTax() != null && sale.getTax().signum() > 0) {
-            text(buf, padBetween("Impuestos", money(sale.getTax())) + "\n");
-        }
-        ctl(buf, 0x1B, 0x45, 0x01);
-        text(buf, padBetween("TOTAL", money(sale.getTotal())) + "\n");
-        ctl(buf, 0x1B, 0x45, 0x00);
+            text(buf, padBetween("Subtotal", money(sale.getSubtotal())) + "\n");
+            if (sale.getDiscount() != null && sale.getDiscount().signum() > 0) {
+                text(buf, padBetween("Descuento", "-" + money(sale.getDiscount())) + "\n");
+            }
+            if (sale.getDepositApplied() != null && sale.getDepositApplied().signum() > 0) {
+                String label = sale.getDepositSaleFolio() != null ? "Anticipo pagado #" + sale.getDepositSaleFolio() : "Anticipo y abonos";
+                text(buf, padBetween(label, "-" + money(sale.getDepositApplied())) + "\n");
+            }
+            if (sale.getTax() != null && sale.getTax().signum() > 0) {
+                text(buf, padBetween("Impuestos", money(sale.getTax())) + "\n");
+            }
+            ctl(buf, 0x1B, 0x45, 0x01);
+            text(buf, padBetween("TOTAL", money(sale.getTotal())) + "\n");
+            ctl(buf, 0x1B, 0x45, 0x00);
 
-        if (sale.getAmountReceived() != null) {
-            text(buf, padBetween("Recibido", money(sale.getAmountReceived())) + "\n");
-            text(buf, padBetween("Cambio", money(sale.getChangeGiven())) + "\n");
+            if (sale.getAmountReceived() != null) {
+                text(buf, padBetween("Recibido", money(sale.getAmountReceived())) + "\n");
+                text(buf, padBetween("Cambio", money(sale.getChangeGiven())) + "\n");
+            }
+            // Anticipo o abono: cuánto le falta pagar al cliente después de este pago.
+            if (sale.getBalanceAfter() != null) {
+                text(buf, line());
+                ctl(buf, 0x1B, 0x45, 0x01);
+                text(buf, padBetween("SALDO PENDIENTE", money(sale.getBalanceAfter())) + "\n");
+                ctl(buf, 0x1B, 0x45, 0x00);
+            }
         }
 
         text(buf, line());
@@ -191,6 +214,40 @@ public class EscPosTicketService {
     }
 
     /** Acomoda dos textos en una sola linea, uno pegado a la izquierda y otro a la derecha. */
+    /**
+     * Cuerpo del ticket de un anticipo: los productos del apartado, su total, el anticipo
+     * restando y el saldo. Al final lo recibido y el cambio, que son de lo que se cobró hoy.
+     */
+    private void appendDepositBody(ByteArrayOutputStream buf, Sale sale, List<ApartadoItem> items) {
+        BigDecimal apartadoTotal = BigDecimal.ZERO;
+        for (ApartadoItem ai : items) {
+            text(buf, wrap(ai.getProductName()) + "\n");
+            String left = stripTrailingZeros(ai.getQuantity()) + " x " + money(ai.getUnitPrice());
+            text(buf, padBetween(left, money(ai.getSubtotal())) + "\n");
+            apartadoTotal = apartadoTotal.add(ai.getSubtotal());
+        }
+        text(buf, line());
+        text(buf, padBetween("Total del apartado", money(apartadoTotal)) + "\n");
+        String label = DepositLines.label(sale);
+        String amount = "-" + money(sale.getTotal());
+        // A 32 columnas la leyenda con su monto puede no caber: el monto baja a su renglón.
+        if (label.length() + amount.length() < WIDTH) {
+            text(buf, padBetween(label, amount) + "\n");
+        } else {
+            text(buf, wrap(label) + "\n");
+            text(buf, padBetween("", amount) + "\n");
+        }
+        BigDecimal balance = sale.getBalanceAfter() != null ? sale.getBalanceAfter() : apartadoTotal.subtract(sale.getTotal());
+        ctl(buf, 0x1B, 0x45, 0x01);
+        text(buf, padBetween("SALDO PENDIENTE", money(balance)) + "\n");
+        ctl(buf, 0x1B, 0x45, 0x00);
+        if (sale.getAmountReceived() != null) {
+            text(buf, "\n");
+            text(buf, padBetween("Recibido", money(sale.getAmountReceived())) + "\n");
+            text(buf, padBetween("Cambio", money(sale.getChangeGiven())) + "\n");
+        }
+    }
+
     private String padBetween(String left, String right) {
         int spaces = WIDTH - left.length() - right.length();
         if (spaces < 1) return left + " " + right; // no cupieron en una sola linea, no truena
@@ -201,6 +258,27 @@ public class EscPosTicketService {
     private String wrap(String text) {
         if (text == null) return "";
         return text.length() > WIDTH ? text.substring(0, WIDTH) : text;
+    }
+
+    // La impresora térmica no trae acentos en su página de códigos (por eso "Atendio").
+    private static String stripAccents(String text) {
+        return java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFD).replaceAll("\\p{M}", "");
+    }
+
+    /** Parte un texto largo en líneas de {@link #WIDTH}, sin cortar palabras. */
+    private static java.util.List<String> wrapWords(String text) {
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        StringBuilder line = new StringBuilder();
+        for (String word : text.split(" ")) {
+            if (line.length() > 0 && line.length() + 1 + word.length() > WIDTH) {
+                lines.add(line.toString());
+                line.setLength(0);
+            }
+            if (line.length() > 0) line.append(' ');
+            line.append(word);
+        }
+        if (line.length() > 0) lines.add(line.toString());
+        return lines;
     }
 
     private String money(BigDecimal amount) {

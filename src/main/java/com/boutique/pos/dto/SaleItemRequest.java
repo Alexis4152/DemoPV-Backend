@@ -1,7 +1,11 @@
 package com.boutique.pos.dto;
 
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -20,9 +24,15 @@ import java.math.BigDecimal;
 @Data
 public class SaleItemRequest {
     private Long productId;
+    // Alineado a sale_items.quantity NUMERIC(10,3): sin tope, un número enorme tronaba en la BD.
     @NotNull @Positive
+    @Digits(integer = 7, fraction = 3, message = "Cantidad inválida: máximo 9,999,999 con 3 decimales")
     private BigDecimal quantity;
-    // Descuento aplicado a esta partida (opcional); si es null se trata como cero.
+    // Descuento aplicado a esta partida (opcional); si es null se trata como cero. Nunca
+    // negativo: uno negativo subiría el precio, y SaleService#validateDiscountLimit además
+    // impide que pase del importe de la línea (una venta nunca puede quedar en negativo).
+    @PositiveOrZero(message = "El descuento no puede ser negativo")
+    @DecimalMax(value = "9999999999.99", message = "El número es excesivamente grande — el máximo permitido es 9,999,999,999.99")
     private BigDecimal discount;
     // El cajero marcó "No quiero promoción" para esta línea (ver POS.jsx) — el producto
     // puede tener una oferta vigente, pero el cliente no quiere aprovecharla (ej. solo
@@ -30,8 +40,12 @@ public class SaleItemRequest {
     private Boolean skipOffer;
     // Solo para líneas "por concepto" (productId nulo): nombre libre capturado por el
     // cajero, se guarda tal cual en SaleItem.productName y así aparece en el ticket.
+    // Alineado a sale_items.product_name VARCHAR(200): sin tope, uno más largo tronaba en la BD.
+    @Size(max = 200, message = "El nombre no puede tener más de 200 caracteres")
     private String conceptName;
     // Solo para líneas "por concepto": precio unitario capturado a mano (no viene de
-    // ningún catálogo).
+    // ningún catálogo). Alineado a sale_items.unit_price NUMERIC(12,2).
+    @DecimalMax(value = "9999999999.99", message = "El número es excesivamente grande — el máximo permitido es 9,999,999,999.99")
+    @Digits(integer = 10, fraction = 2, message = "Máximo 2 decimales")
     private BigDecimal unitPrice;
 }

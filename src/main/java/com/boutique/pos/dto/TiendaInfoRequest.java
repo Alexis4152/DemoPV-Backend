@@ -2,10 +2,12 @@ package com.boutique.pos.dto;
 
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -68,6 +70,25 @@ public class TiendaInfoRequest {
     @DecimalMin(value = "0", message = "El porcentaje máximo de descuento no puede ser negativo")
     @DecimalMax(value = "100", message = "El porcentaje máximo de descuento no puede ser mayor a 100")
     private BigDecimal maxDiscountPercent;
+
+    // Devoluciones sin autorización (Tienda.cashierRefundMaxAmount/MaxDays). null = sin límite.
+    @DecimalMin(value = "0", message = "El monto máximo de devolución no puede ser negativo")
+    @DecimalMax(value = "9999999999.99", message = "El número es excesivamente grande — el máximo permitido es 9,999,999,999.99")
+    private BigDecimal cashierRefundMaxAmount;
+
+    @Min(value = 0, message = "Los días no pueden ser negativos")
+    @Max(value = 3650, message = "Los días no pueden ser más de 3650")
+    private Integer cashierRefundMaxDays;
+
+    // Tienda.apartadoRetentionPercent. null = lo pagado a cuenta no se devuelve.
+    @DecimalMin(value = "0", message = "El porcentaje de retención no puede ser negativo")
+    @DecimalMax(value = "100", message = "El porcentaje de retención no puede ser mayor a 100")
+    @Digits(integer = 3, fraction = 2, message = "El porcentaje admite hasta 2 decimales")
+    private BigDecimal apartadoRetentionPercent;
+
+    // Tienda.inventoryReportTime. null = no se manda el reporte diario de inventario.
+    @Pattern(regexp = "^([01][0-9]|2[0-3]):[0-5][0-9]$", message = "Elige una hora válida")
+    private String inventoryReportTime;
 
     // ── Apartados (Tienda.apartadosEnabled/publicSlug/maxApartadoDiscount*/defaultApartadoHours
     // — se editan desde esta misma pantalla). Mismo patrón que los de venta física de arriba.

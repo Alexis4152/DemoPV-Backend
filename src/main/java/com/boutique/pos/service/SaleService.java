@@ -1,6 +1,10 @@
 package com.boutique.pos.service;
 
+import com.boutique.pos.dto.ApartadoItemBrief;
+import com.boutique.pos.dto.ItemOutcomeRequest;
+import com.boutique.pos.dto.SaleCancelRequest;
 import com.boutique.pos.dto.SaleItemRequest;
+import com.boutique.pos.dto.SaleRefundRequest;
 import com.boutique.pos.dto.SaleRequest;
 import com.boutique.pos.exception.FieldConflictException;
 import com.boutique.pos.model.*;
@@ -15,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.text.NumberFormat;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -41,6 +46,7 @@ public class SaleService {
 
     private static final NumberFormat MONEY_FMT = NumberFormat.getCurrencyInstance(new Locale("es", "MX"));
 
+    private final EntityLocks entityLocks;
     private final SaleRepository saleRepository;
     private final ProductRepository productRepository;
     private final ProductService productService;
@@ -52,6 +58,11 @@ public class SaleService {
     private final TiendaRepository tiendaRepository;
     private final OfferService offerService;
     private final ApartadoRepository apartadoRepository;
+    private final CashMovementService cashMovementService;
+    private final CashBalanceCalculator calculator;
+    private final StockReturnService stockReturnService;
+    private final TicketPdfService ticketPdfService;
+    private final MailConfigService mailConfigService;
 
     /**
      * Calcula el próximo folio de venta de una tienda (consecutivo propio, no global) bajo
@@ -65,7 +76,7 @@ public class SaleService {
      *         en la misma transacción)
      */
     private Long nextSaleFolio(Tienda tienda) {
-        Tienda locked = tiendaRepository.findByIdForUpdate(tienda.getId())
+        Tienda locked = tiendaRepository.findByIdForUpdate(tienda.getId()).map(entityLocks::fresh)
                 .orElseThrow(() -> new IllegalStateException("Tienda no encontrada"));
         long next = locked.getLastSaleFolio() + 1;
         locked.setLastSaleFolio(next);
@@ -166,11 +177,12 @@ public class SaleService {
      * @return página de ventas que cumplen los filtros
      */
     public Page<Sale> findAll(LocalDateTime from, LocalDateTime to, String customerName,
-                               PaymentMethod paymentMethod, SaleStatus status, Pageable pageable, User actor) {
+                               PaymentMethod paymentMethod, SaleStatus status, Boolean refunded,
+                               Pageable pageable, User actor) {
         Long scope = tenantScope.scopeId(actor);
         LocalDateTime effectiveFrom = from != null ? from : MIN_DATE;
         LocalDateTime effectiveTo = to != null ? to : MAX_DATE;
-        Page<Sale> page = saleRepository.search(scope, effectiveFrom, effectiveTo, customerName, paymentMethod, status, pageable);
+        Page<Sale> page = saleRepository.search(scope, effectiveFrom, effectiveTo, customerName, paymentMethod, status, refunded, pageable);
         populatePendingBalances(page.getContent());
         return page;
     }
@@ -193,6 +205,7 @@ public class SaleService {
         for (Sale s : sales) {
             if (s.getKind() != SaleKind.DEPOSIT || s.getApartadoId() == null) continue;
             Apartado a = byId.get(s.getApartadoId());
+            if (a != null) s.setApartadoItems(a.getItems().stream().map(ApartadoItemBrief::of).toList());
             // Solo mientras el apartado sigue ACTIVE (esperando a que el cliente venga por
             // su pedido) — una vez COMPLETED el saldo ya se cobró (ver Sale kind=BALANCE),
             // y CANCELLED/EXPIRED ya no se va a cobrar; en ambos casos mostrar un "saldo
@@ -225,6 +238,21 @@ public class SaleService {
      * @return la venta encontrada, perteneciente al alcance del actor
      * @throws IllegalArgumentException si no existe o no pertenece a la tienda del actor
      */
+    /** El ticket digital (PDF) de una venta, el mismo que se manda por correo. */
+    @Transactional(readOnly = true)
+    public byte[] ticketPdf(Long id, User actor) {
+        return ticketPdfService.generate(findById(id, actor));
+    }
+
+    /** Manda por correo el ticket digital de una venta ya registrada. */
+    @Transactional(readOnly = true)
+    public void sendTicket(Long id, String email, User actor) {
+        if (!Boolean.TRUE.equals(mailConfigService.getEntity().getEnabled())) {
+            throw new IllegalStateException("El envío de correos está desactivado; actívalo en Configuración de correo");
+        }
+        emailService.sendTicketEmail(findById(id, actor), email.trim());
+    }
+
     public Sale findById(Long id, User actor) {
         Sale s = findById(id);
         populatePendingBalances(List.of(s));
@@ -308,12 +336,16 @@ public class SaleService {
                     throw new IllegalArgumentException("Captura el nombre del producto para la línea por concepto");
                 }
                 BigDecimal conceptUnitPrice = ir.getUnitPrice();
-                if (conceptUnitPrice == null || conceptUnitPrice.compareTo(BigDecimal.ZERO) < 0) {
-                    throw new IllegalArgumentException("Captura un precio válido para \"" + conceptName + "\"");
+                if (conceptUnitPrice == null || conceptUnitPrice.signum() <= 0) {
+                    throw new IllegalArgumentException("Captura un precio mayor a 0 para \"" + conceptName + "\"");
                 }
                 BigDecimal conceptQty = ir.getQuantity();
                 BigDecimal conceptDiscount = ir.getDiscount() != null ? ir.getDiscount() : BigDecimal.ZERO;
-                BigDecimal conceptLineGross = conceptUnitPrice.multiply(conceptQty);
+                BigDecimal conceptLineGross = conceptUnitPrice.multiply(conceptQty).setScale(2, RoundingMode.HALF_UP);
+                // sale_items.subtotal es NUMERIC(12,2): cantidad × precio no debe pasar de ahí.
+                if (conceptLineGross.compareTo(new BigDecimal("9999999999.99")) > 0) {
+                    throw new IllegalArgumentException("El importe de \"" + conceptName + "\" es excesivamente grande — el máximo permitido es $9,999,999,999.99");
+                }
                 validateDiscountLimit(conceptDiscount, conceptLineGross, conceptName, tienda);
 
                 SaleItem item = new SaleItem();
@@ -403,9 +435,24 @@ public class SaleService {
         // SaleRequest.discount) — antes de este fix, el descuento por línea nunca se
         // reflejaba aquí, aunque sí se restaba correctamente en cada item.subtotal.
         BigDecimal globalDiscount = req.getDiscount() != null ? req.getDiscount() : BigDecimal.ZERO;
+        // El descuento global pasa por las mismas reglas que el de cada línea (no negativo,
+        // no mayor a lo que queda por cobrar, dentro del límite de la tienda).
+        BigDecimal remaining = grossSubtotal.subtract(itemDiscountTotal);
+        if (globalDiscount.compareTo(remaining) > 0) {
+            throw new IllegalStateException("El descuento general no puede ser mayor al total de la venta ("
+                    + MONEY_FMT.format(remaining) + ")");
+        }
+        validateDiscountLimit(globalDiscount, remaining, "la venta", tienda);
         BigDecimal discount = itemDiscountTotal.add(globalDiscount);
         BigDecimal tax = req.getTax() != null ? req.getTax() : BigDecimal.ZERO;
+        if (tax.signum() < 0) {
+            throw new IllegalStateException("El impuesto no puede ser negativo");
+        }
         BigDecimal total = grossSubtotal.subtract(discount).add(tax);
+        // Última barrera: una venta en negativo restaría al efectivo esperado del corte.
+        if (total.signum() < 0) {
+            throw new IllegalStateException("El total de la venta no puede ser negativo");
+        }
 
         // En efectivo, el cajero debe capturar con cuánto pagó el cliente para poder
         // calcular el cambio a entregar; en tarjeta/transferencia no aplica y se ignora
@@ -461,36 +508,359 @@ public class SaleService {
      */
     @Transactional
     public Sale cancel(Long id, User actor) {
-        Sale sale = findById(id, actor);
+        return cancel(id, null, actor);
+    }
+
+    /**
+     * Igual que {@link #cancel(Long, User)}, eligiendo por artículo qué pasó con el producto
+     * ({@code req.items}: regresa / merma / no regresó; los que no vengan regresan). Si alguno no
+     * regresa al stock vendible, {@code req.reason} es obligatorio.
+     */
+    @Transactional
+    public Sale cancel(Long id, SaleCancelRequest req, User actor) {
+        // Bloqueada y releída: dos cancelaciones simultáneas no deben pasar ambas.
+        Sale sale = entityLocks.fresh(findById(id, actor));
         if (sale.getStatus() == SaleStatus.CANCELLED) {
             throw new IllegalStateException("La venta ya está cancelada");
         }
+        if (sale.getRefundedAt() != null) {
+            throw new IllegalStateException("Esta venta ya se devolvió");
+        }
+        // Cancelar cambia la venta en SU corte: si ese corte ya se cerró (y se contó), eso
+        // reescribiría un turno cerrado y el dinero saldría de otra caja sin registro — en
+        // ese caso es una devolución (ver refund).
+        if (sale.getCashCut() != null && sale.getCashCut().getStatus() != CashCutStatus.OPEN) {
+            throw new IllegalStateException("Esta venta es de un turno ya cerrado: regístrala como devolución");
+        }
+        // Cancelar saca el dinero de la caja del turno de la venta: un cajero solo puede hacerlo
+        // en su propio turno; en el de otro, solo un administrador o supervisor.
+        if (sale.getCashCut() != null && sale.getCashCut().getUser() != null
+                && !sale.getCashCut().getUser().getId().equals(actor.getId()) && !tenantScope.isAdminLevel(actor)) {
+            throw new IllegalStateException("Esta venta es del turno de " + sale.getCashCut().getUser().getName()
+                    + ": solo esa persona, un administrador o un supervisor pueden cancelarla");
+        }
+        // El anticipo está ligado a su apartado: cancelarlo aquí dejaría el apartado activo
+        // como si estuviera pagado. Se cancela el apartado y ahí se decide qué pasa con él.
+        if (sale.getKind() == SaleKind.DEPOSIT) {
+            throw new IllegalStateException("Esta venta es " + (Boolean.TRUE.equals(sale.getInstallment()) ? "un abono" : "el anticipo")
+                    + " del apartado #" + sale.getApartadoFolio() + ": no es reembolsable; se gestiona desde Apartados");
+        }
+        ensureCutCanReturn(sale, actor);
+        // La venta final de un apartado: cancelarla deshace el cobro, no el apartado. Vuelve a
+        // quedar activo (el cliente lo sigue teniendo reservado y se puede volver a cobrar o
+        // cancelar desde Apartados) y el stock NO regresa: sigue apartado para él.
+        Apartado apartado = apartadoRepository.findBySaleId(sale.getId()).map(entityLocks::fresh).orElse(null);
+        if (apartado != null && apartado.getStatus() == ApartadoStatus.COMPLETED) {
+            apartado.setStatus(ApartadoStatus.ACTIVE);
+            apartado.setPendingDelivery(false);
+            apartado.setCompletedBy(null);
+            apartado.setSaleId(null);
+            apartado.setSaleFolio(null);
+            // Si su vigencia ya pasó mientras estuvo completado, se le da otra igual desde hoy:
+            // si no, el vencimiento automático lo vencería en minutos.
+            if (apartado.getExpiresAt() != null && apartado.getConfirmedAt() != null
+                    && apartado.getExpiresAt().isBefore(LocalDateTime.now())) {
+                java.time.Duration vigencia = java.time.Duration.between(apartado.getConfirmedAt(), apartado.getExpiresAt());
+                apartado.setExpiresAt(LocalDateTime.now().plus(vigencia.isNegative() || vigencia.isZero()
+                        ? java.time.Duration.ofDays(1) : vigencia));
+            }
+            apartadoRepository.save(apartado);
+            return markCancelled(sale, actor);
+        }
+        String reason = req != null && req.getReason() != null && !req.getReason().isBlank() ? req.getReason().trim() : null;
+        Map<Long, ItemReturnOutcome> outcomes = stockReturnService.resolve(
+                req != null ? req.getItems() : null, stockItemIds(sale), reason, "reason");
+        sale.setCancelReason(reason);
+        return cancelInternal(sale, actor, outcomes, reason);
+    }
+
+    /** Ids de las líneas con inventario que regresar (con producto y que no sea por pedido). */
+    private static List<Long> stockItemIds(Sale sale) {
+        return sale.getItems().stream()
+                .filter(i -> i.getProduct() != null && !Boolean.TRUE.equals(i.getProduct().getIsMadeToOrder()))
+                .map(SaleItem::getId)
+                .toList();
+    }
+
+    /**
+     * Cancelar regresa el dinero desde la caja del turno de la venta: ese turno debe seguir
+     * abierto (se bloquea su corte, así no se cierra a la mitad) y, en efectivo, tener ese
+     * efectivo; si no, el esperado quedaría en negativo (p. ej. ya se retiró).
+     */
+    private void ensureCutCanReturn(Sale sale, User actor) {
+        if (sale.getCashCut() == null) return;
+        CashCut cut = cashCutRepository.findByIdForUpdate(sale.getCashCut().getId()).map(entityLocks::fresh)
+                .orElseThrow(() -> new IllegalStateException("No se encontró el corte de la venta"));
+        if (cut.getStatus() != CashCutStatus.OPEN) {
+            throw new IllegalStateException("Esta venta es de un turno ya cerrado: regístrala como devolución");
+        }
+        if (sale.getPaymentMethod() != PaymentMethod.CASH || sale.getTotal() == null || sale.getTotal().signum() <= 0) return;
+        BigDecimal available = calculator.expectedCash(cut);
+        if (sale.getTotal().compareTo(available) > 0) {
+            // Con conteo ciego el mensaje no dice cuánto hay: revelaría el efectivo esperado.
+            boolean blind = cut.getTienda() != null && Boolean.TRUE.equals(cut.getTienda().getBlindCashCount())
+                    && !tenantScope.isAdminLevel(actor);
+            throw new IllegalStateException(blind
+                    ? "No hay suficiente efectivo en la caja de ese turno para regresar esta venta."
+                    : "Solo hay " + MONEY_FMT.format(available.max(BigDecimal.ZERO)) + " en la caja de ese turno: no alcanza para regresar los "
+                            + MONEY_FMT.format(sale.getTotal()) + " de esta venta.");
+        }
+    }
+
+    private Sale cancelInternal(Sale sale, User actor, Map<Long, ItemReturnOutcome> outcomes, String reason) {
+        String what = "cancelación de venta folio " + sale.getFolio();
         for (SaleItem item : sale.getItems()) {
             if (item.getProduct() == null) continue; // el producto pudo eliminarse desde entonces; no hay a quién devolverle stock
             // findByIdForUpdate: mismo motivo que en create() — dos cancelaciones (o una
             // cancelación y una venta nueva) sobre el mismo producto no deben pisarse.
             Product p = productService.findByIdForUpdate(item.getProduct().getId());
             if (Boolean.TRUE.equals(p.getIsMadeToOrder())) continue; // nunca se descontó stock real, nada que devolver
-            int qty = item.getQuantity().intValue();
-            int previous = p.getStock();
-            p.setStock(previous + qty);
-            productRepository.save(p);
-
-            InventoryMovement mv = new InventoryMovement();
-            mv.setProduct(p);
-            mv.setUser(sale.getUser());
-            mv.setType(MovementType.IN);
-            mv.setQuantity(qty);
-            mv.setPreviousStock(previous);
-            mv.setNewStock(previous + qty);
-            mv.setReason("Cancelación de venta folio " + sale.getFolio());
-            mv.setSource(MovementSource.SALE_CANCEL);
-            movementRepository.save(mv);
+            ItemReturnOutcome outcome = outcomes.getOrDefault(item.getId(), ItemReturnOutcome.RESTOCK);
+            item.setReturnOutcome(outcome);
+            stockReturnService.apply(p, item.getQuantity().intValue(), outcome, actor != null ? actor : sale.getUser(),
+                    MovementSource.SALE_CANCEL, "Cancelación de venta folio " + sale.getFolio(), what, reason);
         }
+        return markCancelled(sale, actor);
+    }
+
+    private Sale markCancelled(Sale sale, User actor) {
         sale.setStatus(SaleStatus.CANCELLED);
         sale.setCancelledBy(actor);
         sale.setCancelledAt(LocalDateTime.now());
         return saleRepository.save(sale);
+    }
+
+    /**
+     * Devuelve una venta de un turno ya cerrado (para una del turno abierto se usa
+     * {@link #cancel}). A diferencia de cancelar:
+     * <ul>
+     *   <li>La venta sigue {@code COMPLETED} y contando en su corte: ese turno ya se cerró y
+     *       se contó, no se reescribe. Solo se marca como devuelta (quién, cuándo, motivo).</li>
+     *   <li>En efectivo, el dinero sale de la caja de quien devuelve: se registra una salida
+     *       {@link CashMovementType#REFUND} en SU corte abierto (obligatorio), limitada al
+     *       efectivo que tenga. Con tarjeta/transferencia no sale nada de la caja (el reembolso
+     *       va por el mismo medio); solo queda registrada.</li>
+     *   <li>Por artículo se decide si el cliente lo entregó: los que sí regresan al inventario;
+     *       los que no, dejan un movimiento {@link MovementSource#SALE_REFUND_NO_PRODUCT} (sin
+     *       cambiar el stock) para que quede a la vista.</li>
+     * </ul>
+     * Siempre es la venta completa (no hay devoluciones parciales). Las ventas de apartados y
+     * anticipos no se devuelven aquí: están ligadas a su apartado.
+     *
+     * @throws IllegalStateException si la venta ya está cancelada o devuelta, es de un turno
+     *         abierto, es de un apartado/anticipo, o es en efectivo y el actor no tiene un
+     *         corte abierto con suficiente efectivo
+     */
+    @Transactional
+    public Sale refund(Long id, SaleRefundRequest req, User actor) {
+        // Bloqueada y releída: dos devoluciones simultáneas sacarían el efectivo dos veces.
+        Sale sale = entityLocks.fresh(findById(id, actor));
+        if (sale.getStatus() == SaleStatus.CANCELLED) {
+            throw new IllegalStateException("La venta está cancelada, no hay nada que devolver");
+        }
+        if (sale.getRefundedAt() != null) {
+            throw new IllegalStateException("Esta venta ya se devolvió");
+        }
+        if (sale.getKind() != SaleKind.REGULAR || apartadoRepository.findBySaleId(sale.getId()).isPresent()) {
+            throw new IllegalStateException("Las ventas de apartados y anticipos no se devuelven desde aquí: devuelve el apartado desde Apartados");
+        }
+        if (sale.getCashCut() != null && sale.getCashCut().getStatus() == CashCutStatus.OPEN) {
+            throw new IllegalStateException("Esta venta es de un turno que sigue abierto: cancélala en lugar de devolverla");
+        }
+        // Solo ventas de antes de validar descuentos/impuestos pueden tener total negativo.
+        if (sale.getTotal() != null && sale.getTotal().signum() < 0) {
+            throw new IllegalStateException("Esta venta tiene un total negativo: no se puede devolver");
+        }
+        ensureCanRefund(sale.getTienda(), sale.getTotal(), sale.getCreatedAt(), actor);
+        String reason = req.getReason().trim();
+        List<Long> eligible = stockItemIds(sale);
+        // Compatibilidad: sin `items`, los de returnedItemIds regresan y los demás no regresaron.
+        List<ItemOutcomeRequest> chosen = req.getItems();
+        if (chosen == null) {
+            java.util.Set<Long> returnedIds = req.getReturnedItemIds() != null
+                    ? new java.util.HashSet<>(req.getReturnedItemIds()) : java.util.Set.of();
+            for (Long itemId : returnedIds) {
+                if (sale.getItems().stream().noneMatch(i -> itemId.equals(i.getId()))) {
+                    throw new IllegalArgumentException("Ese artículo no pertenece a la venta");
+                }
+            }
+            chosen = eligible.stream().map(itemId -> new ItemOutcomeRequest(itemId,
+                    returnedIds.contains(itemId) ? ItemReturnOutcome.RESTOCK : ItemReturnOutcome.NOT_RETURNED)).toList();
+        }
+        Map<Long, ItemReturnOutcome> outcomes = stockReturnService.resolve(chosen, eligible, reason, "reason");
+
+        // El efectivo primero: si la caja no alcanza, no se toca nada del inventario.
+        Long refundCutId = null;
+        if (sale.getPaymentMethod() == PaymentMethod.CASH && sale.getTotal().signum() > 0) {
+            CashCut cut = cashCutRepository.findFirstByUserIdAndStatus(actor.getId(), CashCutStatus.OPEN)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Abre tu corte de caja: el efectivo de la devolución sale de tu caja"));
+            cashMovementService.registerRefund(cut.getId(), sale.getTotal(),
+                    refundConcept(sale), actor, sale.getId());
+            refundCutId = cut.getId();
+        }
+
+        String folio = "venta folio " + sale.getFolio();
+        for (SaleItem item : sale.getItems()) {
+            if (item.getProduct() == null) continue; // por concepto o producto eliminado: no hay inventario
+            Product p = productService.findByIdForUpdate(item.getProduct().getId());
+            if (Boolean.TRUE.equals(p.getIsMadeToOrder())) continue; // nunca se descontó stock real
+            ItemReturnOutcome outcome = outcomes.getOrDefault(item.getId(), ItemReturnOutcome.RESTOCK);
+            item.setReturnOutcome(outcome);
+            item.setReturnedToStock(outcome == ItemReturnOutcome.RESTOCK);
+            stockReturnService.apply(p, item.getQuantity().intValue(), outcome, actor,
+                    MovementSource.SALE_REFUND, "Devolución de " + folio, "devolución de " + folio, reason);
+        }
+
+        sale.setRefundedBy(actor);
+        sale.setRefundedAt(LocalDateTime.now());
+        sale.setRefundReason(reason);
+        sale.setRefundCashCutId(refundCutId);
+        return saleRepository.save(sale);
+    }
+
+    /**
+     * Devuelve el dinero de UNA venta de un apartado que el cliente regresó después de
+     * recogerlo (lo llama {@code ApartadoService#refund}). Siempre como devolución, aunque su
+     * turno siga abierto: la venta sí ocurrió (el cliente se llevó el producto), así que no
+     * se cancela; en efectivo el dinero sale de la caja de quien devuelve. El inventario lo
+     * resuelve el apartado. Si la venta ya estaba cancelada o devuelta, no hace nada.
+     */
+    @Transactional
+    public void refundForApartado(Long saleId, String concept, String reason, User actor) {
+        refundForApartado(saleId, null, concept, reason, actor);
+    }
+
+    /**
+     * Igual, pero devolviendo solo {@code amount} (la tienda retiene el resto, ver {@code
+     * ApartadoService#retention}); null = todo.
+     */
+    @Transactional
+    public void refundForApartado(Long saleId, BigDecimal amount, String concept, String reason, User actor) {
+        Sale sale = saleRepository.findById(saleId).map(entityLocks::fresh)
+                .orElseThrow(() -> new IllegalStateException("No se encontró la venta del apartado"));
+        if (sale.getStatus() == SaleStatus.CANCELLED || sale.getRefundedAt() != null) return;
+        BigDecimal refund = amount == null ? sale.getTotal() : amount;
+        Long refundCutId = null;
+        if (sale.getPaymentMethod() == PaymentMethod.CASH && refund.signum() > 0) {
+            CashCut cut = cashCutRepository.findFirstByUserIdAndStatus(actor.getId(), CashCutStatus.OPEN)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Abre tu corte de caja: el efectivo de la devolución sale de tu caja"));
+            cashMovementService.registerRefund(cut.getId(), refund, concept, actor, sale.getId());
+            refundCutId = cut.getId();
+        }
+        if (refund.compareTo(sale.getTotal()) < 0) sale.setRefundAmount(refund);
+        sale.setRefundedBy(actor);
+        sale.setRefundedAt(LocalDateTime.now());
+        String withReason = concept + (reason != null && !reason.isBlank() ? ": " + reason.trim() : "");
+        sale.setRefundReason(withReason.length() > 300 ? withReason.substring(0, 300) : withReason);
+        sale.setRefundCashCutId(refundCutId);
+        saleRepository.save(sale);
+    }
+
+    /** Marca en las líneas de una venta qué pasó con cada producto (por producto). */
+    @Transactional
+    public void markItemOutcomes(Long saleId, Map<Long, ItemReturnOutcome> byProductId) {
+        saleRepository.findById(saleId).ifPresent(sale -> {
+            for (SaleItem item : sale.getItems()) {
+                if (item.getProduct() == null) continue;
+                ItemReturnOutcome o = byProductId.get(item.getProduct().getId());
+                if (o == null) continue;
+                item.setReturnOutcome(o);
+                item.setReturnedToStock(o == ItemReturnOutcome.RESTOCK);
+            }
+            saleRepository.save(sale);
+        });
+    }
+
+    /**
+     * Le regresa al cliente el anticipo de un apartado que se está cancelando (lo llama
+     * {@code ApartadoService#cancel} con "devolver anticipo"). El anticipo no tiene productos
+     * (el stock lo regresa el apartado), así que solo se resuelve el dinero:
+     * <ul>
+     *   <li>Si quien cancela tiene su propio corte abierto y no es el del anticipo, el dinero
+     *       sale de su caja como devolución ({@link CashMovementType#REFUND} si es efectivo).</li>
+     *   <li>Si no, y el turno del anticipo sigue abierto, se cancela la venta en ese turno (el
+     *       dinero sale de la caja que lo recibió; queda en sus ventas canceladas).</li>
+     *   <li>Si el turno del anticipo ya cerró y quien cancela no tiene corte abierto: en
+     *       efectivo no hay de dónde sacarlo; con tarjeta/transferencia solo se registra.</li>
+     * </ul>
+     * Si la venta ya estaba cancelada o devuelta, no hace nada.
+     */
+    @Transactional
+    public void refundDeposit(Long saleId, Long apartadoFolio, String reason, User actor) {
+        refundDeposit(saleId, null, apartadoFolio, reason, actor);
+    }
+
+    /**
+     * Igual, pero devolviendo solo {@code amount} (la tienda retiene el resto); null = todo.
+     * Una devolución parcial nunca cancela la venta (sí se cobró, aunque sea en parte): sale
+     * de la caja de quien cancela, que necesita su corte abierto si es en efectivo.
+     */
+    @Transactional
+    public void refundDeposit(Long saleId, BigDecimal amount, Long apartadoFolio, String reason, User actor) {
+        Sale sale = saleRepository.findById(saleId).map(entityLocks::fresh)
+                .orElseThrow(() -> new IllegalStateException("No se encontró la venta del anticipo"));
+        if (sale.getStatus() == SaleStatus.CANCELLED || sale.getRefundedAt() != null) return;
+        BigDecimal refund = amount == null ? sale.getTotal() : amount;
+        boolean partial = refund.compareTo(sale.getTotal()) < 0;
+
+        CashCut actorCut = actor == null ? null
+                : cashCutRepository.findFirstByUserIdAndStatus(actor.getId(), CashCutStatus.OPEN).orElse(null);
+        CashCut saleCut = sale.getCashCut();
+        boolean saleTurnOpen = saleCut != null && saleCut.getStatus() == CashCutStatus.OPEN;
+        boolean ownTurn = actorCut != null && saleCut != null && actorCut.getId().equals(saleCut.getId());
+
+        if (!partial && saleTurnOpen && (ownTurn || actorCut == null)) {
+            ensureCutCanReturn(sale, actor);
+            cancelInternal(sale, actor, Map.of(), null);
+            return;
+        }
+        String text = "Devolución " + (Boolean.TRUE.equals(sale.getInstallment()) ? "abono" : "anticipo")
+                + " apartado #" + apartadoFolio + " (venta folio " + sale.getFolio() + ")";
+        String withReason = text + (reason != null && !reason.isBlank() ? ": " + reason.trim() : "");
+        Long refundCutId = null;
+        if (sale.getPaymentMethod() == PaymentMethod.CASH && refund.signum() > 0) {
+            if (actorCut == null) {
+                throw new IllegalStateException("Abre tu corte de caja: el efectivo del anticipo sale de tu caja");
+            }
+            cashMovementService.registerRefund(actorCut.getId(), refund, text, actor, sale.getId());
+            refundCutId = actorCut.getId();
+        }
+        if (partial) sale.setRefundAmount(refund);
+        sale.setRefundedBy(actor);
+        sale.setRefundedAt(LocalDateTime.now());
+        sale.setRefundReason(withReason.length() > 300 ? withReason.substring(0, 300) : withReason);
+        sale.setRefundCashCutId(refundCutId);
+        saleRepository.save(sale);
+    }
+
+    /**
+     * Un cajero solo puede devolver hasta el monto y la antigüedad que la tienda configuró en
+     * "Datos de la tienda" ({@link Tienda#getCashierRefundMaxAmount()}/{@code MaxDays}); por
+     * encima, solo un administrador o supervisor. Sin configurar = sin límite.
+     *
+     * @param amount lo que se devuelve
+     * @param soldAt cuándo se hizo la venta
+     */
+    public void ensureCanRefund(Tienda tienda, BigDecimal amount, LocalDateTime soldAt, User actor) {
+        if (tienda == null || tenantScope.isAdminLevel(actor)) return;
+        if (tienda.getCashierRefundMaxAmount() != null && amount != null
+                && amount.compareTo(tienda.getCashierRefundMaxAmount()) > 0) {
+            throw new IllegalStateException("Las devoluciones de más de " + MONEY_FMT.format(tienda.getCashierRefundMaxAmount())
+                    + " las registra un administrador o supervisor");
+        }
+        if (tienda.getCashierRefundMaxDays() != null && soldAt != null
+                && soldAt.toLocalDate().isBefore(LocalDate.now().minusDays(tienda.getCashierRefundMaxDays()))) {
+            throw new IllegalStateException("Esta venta tiene más de " + tienda.getCashierRefundMaxDays()
+                    + " días: la devolución la registra un administrador o supervisor");
+        }
+    }
+
+    // Concepto del movimiento de caja: solo "Devolución venta folio 12". El motivo queda en la
+    // venta (refundReason) y qué pasó con cada producto se ve en la subtabla del corte.
+    private static String refundConcept(Sale sale) {
+        return "Devolución venta folio " + sale.getFolio();
     }
 
     /**
@@ -527,6 +897,17 @@ public class SaleService {
      */
     @Transactional
     public Sale completeFromApartado(Apartado apartado, PaymentMethod paymentMethod, BigDecimal amountReceived, String customerEmailOverride, User actor) {
+        return completeFromApartado(apartado, paymentMethod, amountReceived, customerEmailOverride, actor, BigDecimal.ZERO);
+    }
+
+    /**
+     * Igual, cuando el anticipo se cobró en este mismo pago: {@code amountReceived} es todo lo
+     * que entregó el cliente (lo que dice el ticket) y {@code paidNow} la parte que ya se
+     * registró como anticipo, que no cuenta para el cambio.
+     */
+    @Transactional
+    public Sale completeFromApartado(Apartado apartado, PaymentMethod paymentMethod, BigDecimal amountReceived,
+                                     String customerEmailOverride, User actor, BigDecimal paidNow) {
         CashCut openCut = cashCutRepository.findFirstByUserIdAndStatus(actor.getId(), CashCutStatus.OPEN)
                 .orElseThrow(() -> new IllegalStateException("Debes abrir un corte de caja antes de completar un apartado"));
 
@@ -544,15 +925,14 @@ public class SaleService {
                 && apartado.getDepositAmount() != null && apartado.getDepositAmount().signum() > 0;
         sale.setNotes(isDeposit
                 ? "Saldo del apartado #" + apartado.getFolio() + " — ya se había pagado "
-                        + MONEY_FMT.format(apartado.getDepositAmount()) + " de anticipo"
+                        + MONEY_FMT.format(apartado.getDepositAmount()) + " a cuenta"
                 : "Generada desde el apartado #" + apartado.getFolio());
         sale.setTienda(apartado.getTienda());
         sale.setFolio(nextSaleFolio(apartado.getTienda()));
         sale.setKind(isDeposit ? SaleKind.BALANCE : SaleKind.REGULAR);
-        if (isDeposit) {
-            sale.setApartadoId(apartado.getId());
-            sale.setApartadoFolio(apartado.getFolio());
-        }
+        // Ligada a su apartado también sin anticipo, para mostrarlo en Ventas.
+        sale.setApartadoId(apartado.getId());
+        sale.setApartadoFolio(apartado.getFolio());
 
         List<SaleItem> items = new ArrayList<>();
         BigDecimal grossSubtotal = BigDecimal.ZERO;
@@ -573,22 +953,26 @@ public class SaleService {
             itemDiscountTotal = itemDiscountTotal.add(ai.getDiscount());
         }
 
-        // El anticipo ya pagado se suma al descuento de la línea (no es un descuento
-        // promocional, pero así "Subtotal - Descuento = Total" sigue cerrando en el
-        // ticket, con `notes` dejando clarísimo que es un anticipo ya cobrado, no una
-        // rebaja — ver el aviso de arriba).
-        if (isDeposit) itemDiscountTotal = itemDiscountTotal.add(apartado.getDepositAmount());
-        BigDecimal total = grossSubtotal.subtract(itemDiscountTotal);
+        // El anticipo ya pagado va en su propio renglón, no como descuento:
+        // Total = Subtotal − Descuento − Anticipo.
+        BigDecimal depositApplied = isDeposit ? apartado.getDepositAmount() : BigDecimal.ZERO;
+        BigDecimal total = grossSubtotal.subtract(itemDiscountTotal).subtract(depositApplied);
+        if (isDeposit) {
+            sale.setDepositApplied(depositApplied);
+            boolean withInstallments = saleRepository.findApartadoPayments(apartado.getId(), List.of(-1L)).stream()
+                    .anyMatch(s -> Boolean.TRUE.equals(s.getInstallment()));
+            sale.setDepositSaleFolio(withInstallments ? null : apartado.getDepositSaleFolio());
+        }
 
         BigDecimal changeGiven = null;
         if (paymentMethod == PaymentMethod.CASH) {
             if (amountReceived == null) {
                 throw new IllegalStateException("Debes indicar con cuánto pagó el cliente para cobrar en efectivo");
             }
-            if (amountReceived.compareTo(total) < 0) {
+            if (amountReceived.compareTo(total.add(paidNow)) < 0) {
                 throw new IllegalStateException("El monto recibido es menor al saldo pendiente del apartado");
             }
-            changeGiven = amountReceived.subtract(total);
+            changeGiven = amountReceived.subtract(total).subtract(paidNow);
         } else {
             amountReceived = null;
         }
@@ -635,8 +1019,20 @@ public class SaleService {
     @Transactional
     public Sale createDeposit(Apartado apartado, BigDecimal depositAmount, PaymentMethod paymentMethod,
                                BigDecimal amountReceived, User actor) {
+        return createDeposit(apartado, depositAmount, paymentMethod, amountReceived, actor, false);
+    }
+
+    /**
+     * Igual que {@link #createDeposit(Apartado, BigDecimal, PaymentMethod, BigDecimal, User)};
+     * con {@code installment = true} es un abono posterior al anticipo (misma venta
+     * {@code DEPOSIT}, marcada {@link Sale#getInstallment()}).
+     */
+    @Transactional
+    public Sale createDeposit(Apartado apartado, BigDecimal depositAmount, PaymentMethod paymentMethod,
+                               BigDecimal amountReceived, User actor, boolean installment) {
+        String what = installment ? "abono" : "anticipo";
         CashCut openCut = cashCutRepository.findFirstByUserIdAndStatus(actor.getId(), CashCutStatus.OPEN)
-                .orElseThrow(() -> new IllegalStateException("Debes abrir un corte de caja antes de recibir un anticipo"));
+                .orElseThrow(() -> new IllegalStateException("Debes abrir un corte de caja antes de recibir un " + what));
 
         BigDecimal changeGiven = null;
         if (paymentMethod == PaymentMethod.CASH) {
@@ -644,15 +1040,12 @@ public class SaleService {
                 throw new FieldConflictException("amountReceived", "Debes indicar con cuánto pagó el cliente para cobrar en efectivo");
             }
             if (amountReceived.compareTo(depositAmount) < 0) {
-                throw new FieldConflictException("amountReceived", "El monto recibido es menor al anticipo");
+                throw new FieldConflictException("amountReceived", "El monto recibido es menor al " + what);
             }
             changeGiven = amountReceived.subtract(depositAmount);
         } else {
             amountReceived = null;
         }
-
-        String itemNames = apartado.getItems().stream().map(i -> i.getProductName())
-                .reduce((a, b) -> a + ", " + b).orElse("producto por pedido");
 
         Sale sale = new Sale();
         sale.setUser(actor);
@@ -661,16 +1054,22 @@ public class SaleService {
         sale.setCustomerEmail(apartado.getCustomerEmail());
         sale.setPaymentMethod(paymentMethod);
         sale.setStatus(SaleStatus.COMPLETED);
-        sale.setNotes("Anticipo del apartado #" + apartado.getFolio());
+        sale.setNotes((installment ? "Abono al apartado #" : "Anticipo del apartado #") + apartado.getFolio());
         sale.setTienda(apartado.getTienda());
         sale.setFolio(nextSaleFolio(apartado.getTienda()));
         sale.setKind(SaleKind.DEPOSIT);
+        if (installment) sale.setInstallment(true);
+        // Lo pagado a cuenta tras este pago: en el anticipo depositAmount ya es este monto;
+        // en un abono todavía no lo incluye (lo suma ApartadoService#addInstallment después).
+        BigDecimal paidAfter = installment ? apartado.getDepositAmount().add(depositAmount) : depositAmount;
+        sale.setBalanceAfter(apartado.getTotal().subtract(paidAfter));
         sale.setApartadoId(apartado.getId());
         sale.setApartadoFolio(apartado.getFolio());
 
         SaleItem item = new SaleItem();
         item.setSale(sale);
-        item.setProductName("Anticipo — " + itemNames);
+        // Una sola línea con la leyenda, sin concatenar los productos (ver DepositLines).
+        item.setProductName(DepositLines.label(sale));
         item.setQuantity(BigDecimal.ONE);
         item.setUnitPrice(depositAmount);
         item.setDiscount(BigDecimal.ZERO);
@@ -708,11 +1107,22 @@ public class SaleService {
      *                  traducir el límite en porcentaje a un monto comparable
      * @param productName nombre del producto, solo para el mensaje de error
      * @param tienda tienda del vendedor; si es null (SUPER_ADMIN sin tienda) no aplica límite
-     * @throws IllegalStateException si el descuento excede el límite en monto o en porcentaje,
-     *         o si la tienda no tiene ningún límite configurado
+     * @throws IllegalStateException si el descuento es negativo, mayor al importe de la
+     *         línea, excede el límite en monto o en porcentaje, o si la tienda no tiene
+     *         ningún límite configurado
      */
     private void validateDiscountLimit(BigDecimal discount, BigDecimal lineGross, String productName, Tienda tienda) {
-        if (discount.signum() <= 0 || tienda == null) return;
+        // Estas dos van ANTES de cualquier salida temprana: un descuento negativo subiría el
+        // precio, y uno mayor al importe dejaría la línea en negativo — y una venta negativa
+        // en efectivo baja el efectivo esperado del corte (dinero que saldría sin descuadrar).
+        if (discount.signum() < 0) {
+            throw new IllegalStateException("El descuento de \"" + productName + "\" no puede ser negativo");
+        }
+        if (discount.compareTo(lineGross) > 0) {
+            throw new IllegalStateException("El descuento de \"" + productName + "\" no puede ser mayor a su importe ("
+                    + MONEY_FMT.format(lineGross) + ")");
+        }
+        if (discount.signum() == 0 || tienda == null) return;
 
         if (tienda.getMaxDiscountAmount() == null && tienda.getMaxDiscountPercent() == null) {
             throw new IllegalStateException("Los descuentos están deshabilitados: el administrador debe configurar "

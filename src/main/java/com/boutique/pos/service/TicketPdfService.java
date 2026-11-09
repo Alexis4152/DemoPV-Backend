@@ -1,5 +1,6 @@
 package com.boutique.pos.service;
 
+import com.boutique.pos.model.ApartadoItem;
 import com.boutique.pos.model.PaymentMethod;
 import com.boutique.pos.model.Sale;
 import com.boutique.pos.model.SaleItem;
@@ -19,6 +20,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.awt.Color;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -62,8 +64,11 @@ public class TicketPdfService {
     private static final Font FONT_BODY = FontFactory.getFont(FontFactory.HELVETICA, 9);
     private static final Font FONT_BODY_BOLD = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9);
     private static final Font FONT_TOTAL = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 13);
+    private static final Font FONT_NEGATIVE = FontFactory.getFont(FontFactory.HELVETICA, 9, new Color(200, 0, 0));
 
     private final TiendaInfoRepository tiendaInfoRepository;
+    private final ApartadoRetentionLegend retentionLegend;
+    private final DepositLines depositLines;
 
     @Value("${app.uploads.dir}")
     private String uploadsDir;
@@ -103,10 +108,11 @@ public class TicketPdfService {
 
             // Leyenda de anticipo (igual que el ticket impreso, ver EscPosTicketService#build).
             if (sale.getKind() == SaleKind.DEPOSIT) {
-                document.add(paragraph("ANTICIPO", FONT_TOTAL, Element.ALIGN_CENTER, 0, 2));
+                document.add(paragraph(Boolean.TRUE.equals(sale.getInstallment()) ? "ABONO" : "ANTICIPO", FONT_TOTAL, Element.ALIGN_CENTER, 0, 2));
                 if (sale.getApartadoFolio() != null) {
-                    document.add(paragraph("Apartado #" + sale.getApartadoFolio(), FONT_BODY, Element.ALIGN_CENTER, 0, 8));
+                    document.add(paragraph("Apartado #" + sale.getApartadoFolio(), FONT_BODY, Element.ALIGN_CENTER, 0, 2));
                 }
+                document.add(paragraph(retentionLegend.text(sale), FONT_BODY, Element.ALIGN_CENTER, 0, 8));
             }
 
             // ── Datos de la venta ────────────────────────────────────────────
@@ -123,38 +129,53 @@ public class TicketPdfService {
             addSeparator(document, 10);
 
             // ── Cuerpo: detalle de la venta ──────────────────────────────────
-            PdfPTable table = new PdfPTable(new float[]{4, 1, 2, 2});
-            table.setWidthPercentage(100);
-            table.setSpacingAfter(10);
-            addHeaderCell(table, "Producto", Element.ALIGN_LEFT);
-            addHeaderCell(table, "Cant.", Element.ALIGN_CENTER);
-            addHeaderCell(table, "P. Unit.", Element.ALIGN_RIGHT);
-            addHeaderCell(table, "Subtotal", Element.ALIGN_RIGHT);
-
+            // Anticipo: primero lo que se apartó y el anticipo restando; el resto de los tickets, su detalle.
+            List<ApartadoItem> apartadoItems = DepositLines.isDeposit(sale) && !Boolean.TRUE.equals(sale.getInstallment())
+                    ? depositLines.apartadoItems(sale) : List.of();
             BigDecimal totalArticulos = BigDecimal.ZERO;
-            for (SaleItem item : sale.getItems()) {
-                table.addCell(cell(item.getProductName(), Element.ALIGN_LEFT));
-                table.addCell(cell(item.getQuantity().toPlainString(), Element.ALIGN_CENTER));
-                table.addCell(cell(money(item.getUnitPrice()), Element.ALIGN_RIGHT));
-                table.addCell(cell(money(item.getSubtotal()), Element.ALIGN_RIGHT));
-                totalArticulos = totalArticulos.add(item.getQuantity());
-            }
-            document.add(table);
+            if (!apartadoItems.isEmpty()) {
+                totalArticulos = addDepositBody(document, sale, apartadoItems);
+            } else {
+                PdfPTable table = new PdfPTable(new float[]{4, 1, 2, 2});
+                table.setWidthPercentage(100);
+                table.setSpacingAfter(10);
+                addHeaderCell(table, "Producto", Element.ALIGN_LEFT);
+                addHeaderCell(table, "Cant.", Element.ALIGN_CENTER);
+                addHeaderCell(table, "P. Unit.", Element.ALIGN_RIGHT);
+                addHeaderCell(table, "Subtotal", Element.ALIGN_RIGHT);
 
-            // ── Totales ──────────────────────────────────────────────────────
-            document.add(paragraph("Subtotal: " + money(sale.getSubtotal()), FONT_BODY, Element.ALIGN_RIGHT, 0, 2));
-            if (sale.getDiscount() != null && sale.getDiscount().compareTo(BigDecimal.ZERO) > 0) {
-                document.add(paragraph("Descuento: -" + money(sale.getDiscount()), FONT_BODY, Element.ALIGN_RIGHT, 0, 2));
-            }
-            if (sale.getTax() != null && sale.getTax().compareTo(BigDecimal.ZERO) > 0) {
-                document.add(paragraph("Impuestos: " + money(sale.getTax()), FONT_BODY, Element.ALIGN_RIGHT, 0, 2));
-            }
-            document.add(paragraph("Total: " + money(sale.getTotal()), FONT_TOTAL, Element.ALIGN_RIGHT, 4, 0));
-            // Recibido/cambio solo aplican a ventas en efectivo; en ventas anteriores a
-            // este feature (o pagadas con tarjeta/transferencia) amountReceived es null.
-            if (sale.getAmountReceived() != null) {
-                document.add(paragraph("Recibido: " + money(sale.getAmountReceived()), FONT_BODY, Element.ALIGN_RIGHT, 4, 0));
-                document.add(paragraph("Cambio: " + money(sale.getChangeGiven()), FONT_BODY_BOLD, Element.ALIGN_RIGHT, 0, 0));
+                for (SaleItem item : sale.getItems()) {
+                    table.addCell(cell(DepositLines.itemName(sale, item.getProductName()), Element.ALIGN_LEFT));
+                    table.addCell(cell(item.getQuantity().toPlainString(), Element.ALIGN_CENTER));
+                    table.addCell(cell(money(item.getUnitPrice()), Element.ALIGN_RIGHT));
+                    table.addCell(cell(money(item.getSubtotal()), Element.ALIGN_RIGHT));
+                    totalArticulos = totalArticulos.add(item.getQuantity());
+                }
+                document.add(table);
+
+                // ── Totales ──────────────────────────────────────────────────────
+                document.add(paragraph("Subtotal: " + money(sale.getSubtotal()), FONT_BODY, Element.ALIGN_RIGHT, 0, 2));
+                if (sale.getDiscount() != null && sale.getDiscount().compareTo(BigDecimal.ZERO) > 0) {
+                    document.add(paragraph("Descuento: -" + money(sale.getDiscount()), FONT_BODY, Element.ALIGN_RIGHT, 0, 2));
+                }
+                if (sale.getDepositApplied() != null && sale.getDepositApplied().signum() > 0) {
+                    String label = sale.getDepositSaleFolio() != null ? "Anticipo pagado (venta #" + sale.getDepositSaleFolio() + ")" : "Anticipo y abonos pagados";
+                    document.add(paragraph(label + ": -" + money(sale.getDepositApplied()), FONT_BODY, Element.ALIGN_RIGHT, 0, 2));
+                }
+                if (sale.getTax() != null && sale.getTax().compareTo(BigDecimal.ZERO) > 0) {
+                    document.add(paragraph("Impuestos: " + money(sale.getTax()), FONT_BODY, Element.ALIGN_RIGHT, 0, 2));
+                }
+                document.add(paragraph("Total: " + money(sale.getTotal()), FONT_TOTAL, Element.ALIGN_RIGHT, 4, 0));
+                // Recibido/cambio solo aplican a ventas en efectivo; en ventas anteriores a
+                // este feature (o pagadas con tarjeta/transferencia) amountReceived es null.
+                if (sale.getAmountReceived() != null) {
+                    document.add(paragraph("Recibido: " + money(sale.getAmountReceived()), FONT_BODY, Element.ALIGN_RIGHT, 4, 0));
+                    document.add(paragraph("Cambio: " + money(sale.getChangeGiven()), FONT_BODY_BOLD, Element.ALIGN_RIGHT, 0, 0));
+                }
+                // Anticipo o abono: cuánto le falta pagar al cliente después de este pago.
+                if (sale.getBalanceAfter() != null) {
+                    document.add(paragraph("Saldo pendiente: " + money(sale.getBalanceAfter()), FONT_TOTAL, Element.ALIGN_RIGHT, 6, 0));
+                }
             }
             addSeparator(document, 10);
 
@@ -256,6 +277,42 @@ public class TicketPdfService {
         p.add(new Chunk(line));
         p.setSpacingAfter(spacingAfter);
         document.add(p);
+    }
+
+    /**
+     * Cuerpo del ticket de un anticipo: los productos del apartado, su total, el anticipo
+     * restando y el saldo. Al final lo recibido y el cambio, que son de lo que se cobró hoy.
+     *
+     * @return las piezas apartadas
+     */
+    private BigDecimal addDepositBody(Document document, Sale sale, List<ApartadoItem> items) throws DocumentException {
+        PdfPTable products = new PdfPTable(new float[]{4, 1, 2, 2});
+        products.setWidthPercentage(100);
+        products.setSpacingAfter(10);
+        addHeaderCell(products, "Producto", Element.ALIGN_LEFT);
+        addHeaderCell(products, "Cant.", Element.ALIGN_CENTER);
+        addHeaderCell(products, "P. Unit.", Element.ALIGN_RIGHT);
+        addHeaderCell(products, "Subtotal", Element.ALIGN_RIGHT);
+        BigDecimal apartadoTotal = BigDecimal.ZERO;
+        BigDecimal pieces = BigDecimal.ZERO;
+        for (ApartadoItem ai : items) {
+            products.addCell(cell(ai.getProductName(), Element.ALIGN_LEFT));
+            products.addCell(cell(stripTrailingZeros(ai.getQuantity()), Element.ALIGN_CENTER));
+            products.addCell(cell(money(ai.getUnitPrice()), Element.ALIGN_RIGHT));
+            products.addCell(cell(money(ai.getSubtotal()), Element.ALIGN_RIGHT));
+            apartadoTotal = apartadoTotal.add(ai.getSubtotal());
+            pieces = pieces.add(ai.getQuantity());
+        }
+        document.add(products);
+        document.add(paragraph("Total del apartado: " + money(apartadoTotal), FONT_BODY, Element.ALIGN_RIGHT, 0, 2));
+        document.add(paragraph(DepositLines.label(sale) + ": -" + money(sale.getTotal()), FONT_NEGATIVE, Element.ALIGN_RIGHT, 0, 2));
+        BigDecimal balance = sale.getBalanceAfter() != null ? sale.getBalanceAfter() : apartadoTotal.subtract(sale.getTotal());
+        document.add(paragraph("Saldo pendiente: " + money(balance), FONT_TOTAL, Element.ALIGN_RIGHT, 4, 0));
+        if (sale.getAmountReceived() != null) {
+            document.add(paragraph("Recibido: " + money(sale.getAmountReceived()), FONT_BODY, Element.ALIGN_RIGHT, 8, 0));
+            document.add(paragraph("Cambio: " + money(sale.getChangeGiven()), FONT_BODY_BOLD, Element.ALIGN_RIGHT, 0, 0));
+        }
+        return pieces;
     }
 
     private void addHeaderCell(PdfPTable table, String text, int align) {

@@ -70,6 +70,10 @@ public class CashMovement {
     @Column(length = 10)
     private WithdrawalDestination destination;
 
+    /** Destino escrito a mano cuando {@code destination} es {@code OTHER}. */
+    @Column(length = 100)
+    private String destinationOther;
+
     @Column(length = 100)
     private String reference;
 
@@ -115,6 +119,9 @@ public class CashMovement {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "reimbursement_id")
     private Reimbursement reimbursement;
+
+    /** Devolución ({@code REFUND}): la venta devuelta, para ver sus productos en el corte. */
+    private Long saleId;
 
     @JsonProperty("cashCutId")
     public Long getCashCutId() {

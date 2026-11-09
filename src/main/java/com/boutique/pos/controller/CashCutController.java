@@ -2,6 +2,9 @@ package com.boutique.pos.controller;
 
 import com.boutique.pos.dto.ApiResponse;
 import com.boutique.pos.dto.ArqueoResolveRequest;
+import com.boutique.pos.dto.CancelledSaleRow;
+import com.boutique.pos.dto.CutSaleItemRow;
+import com.boutique.pos.dto.NonCashRefundRow;
 import com.boutique.pos.dto.CashCutCloseRequest;
 import com.boutique.pos.dto.CashCutForceCloseRequest;
 import com.boutique.pos.dto.CashCutOpenRequest;
@@ -244,6 +247,28 @@ public class CashCutController {
     @PreAuthorize("@sectionAccess.check('CASH_CUTS')")
     public ResponseEntity<ApiResponse<List<CashMovement>>> movements(@PathVariable Long id, @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(cashCutService.movements(id, actor), null));
+    }
+
+    /** Ventas canceladas del turno, con quién las canceló (ver CashCutService#cancelledSales). */
+    /** Productos de una venta cancelada o devuelta en este corte (subtabla de movimientos). */
+    @GetMapping("/{id}/sales/{saleId}/items")
+    @PreAuthorize("@sectionAccess.check('CASH_CUTS')")
+    public ResponseEntity<ApiResponse<List<CutSaleItemRow>>> saleItems(@PathVariable Long id, @PathVariable Long saleId,
+                                                                      @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(cashCutService.saleItems(id, saleId, actor), null));
+    }
+
+    /** Devoluciones con tarjeta o transferencia hechas en el turno (informativas: no son efectivo). */
+    @GetMapping("/{id}/non-cash-refunds")
+    @PreAuthorize("@sectionAccess.check('CASH_CUTS')")
+    public ResponseEntity<ApiResponse<List<NonCashRefundRow>>> nonCashRefunds(@PathVariable Long id, @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(cashCutService.nonCashRefunds(id, actor), null));
+    }
+
+    @GetMapping("/{id}/cancelled-sales")
+    @PreAuthorize("@sectionAccess.check('CASH_CUTS')")
+    public ResponseEntity<ApiResponse<List<CancelledSaleRow>>> cancelledSales(@PathVariable Long id, @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(cashCutService.cancelledSales(id, actor), null));
     }
 
     /** Movimientos con la caja cerrada que el corte vio al recibir la caja. */

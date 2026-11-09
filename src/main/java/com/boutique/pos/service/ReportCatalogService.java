@@ -176,9 +176,13 @@ public class ReportCatalogService {
     // ── Ventas ────────────────────────────────────────────────────────────────────────────
 
     private Report ventas(Ctx c, Filters f) {
-        SaleStatus status = enumOrNull(f.status(), SaleStatus.class);
+        // "REFUNDED" (Devuelta) no es un SaleStatus: es una venta COMPLETED con devolución
+        // (ver SaleController#list); "COMPLETED" excluye las devueltas.
+        boolean refundedFilter = "REFUNDED".equals(f.status());
+        SaleStatus status = refundedFilter ? SaleStatus.COMPLETED : enumOrNull(f.status(), SaleStatus.class);
+        Boolean refunded = refundedFilter ? Boolean.TRUE : status == SaleStatus.COMPLETED ? Boolean.FALSE : null;
         PaymentMethod method = enumOrNull(f.method(), PaymentMethod.class);
-        Page<Sale> page = saleRepository.search(c.tiendaId(), c.start(), c.end(), null, method, status,
+        Page<Sale> page = saleRepository.search(c.tiendaId(), c.start(), c.end(), null, method, status, refunded,
                 PageRequest.of(0, c.limit(), Sort.by(Sort.Direction.DESC, "createdAt")));
 
         List<Column> columns = List.of(
@@ -200,7 +204,7 @@ public class ReportCatalogService {
                     "cliente", blankToDash(s.getCustomerName()),
                     "vendedor", s.getUser() != null ? s.getUser().getName() : "",
                     "metodo", METHOD_LABEL.getOrDefault(s.getPaymentMethod(), ""),
-                    "estado", SALE_STATUS_LABEL.getOrDefault(s.getStatus(), ""),
+                    "estado", s.getRefundedAt() != null ? "Devuelta" : SALE_STATUS_LABEL.getOrDefault(s.getStatus(), ""),
                     "subtotal", s.getSubtotal(),
                     "descuento", s.getDiscount(),
                     "total", s.getTotal()));
@@ -260,14 +264,14 @@ public class ReportCatalogService {
 
     private Report apartados(Ctx c, Filters f) {
         ApartadoStatus status = enumOrNull(f.status(), ApartadoStatus.class);
-        Page<Apartado> page = apartadoRepository.search(c.tiendaId(), status, null, null, c.start(), c.end(), null,
+        Page<Apartado> page = apartadoRepository.search(c.tiendaId(), status, null, null, null, c.start(), c.end(), null,
                 PageRequest.of(0, c.limit(), Sort.by(Sort.Direction.DESC, "requestedAt")));
         return apartadosReport(c, page);
     }
 
     private Report apartadosPendientes(Ctx c) {
         // "snapshot": todos los PENDING ahora mismo, sin filtrar por fecha de solicitud.
-        Page<Apartado> page = apartadoRepository.search(c.tiendaId(), ApartadoStatus.PENDING, null, null, MIN_DATE, MAX_DATE,
+        Page<Apartado> page = apartadoRepository.search(c.tiendaId(), ApartadoStatus.PENDING, null, null, null, MIN_DATE, MAX_DATE,
                 null, PageRequest.of(0, c.limit(), Sort.by(Sort.Direction.DESC, "requestedAt")));
         return apartadosReport(c, page);
     }
@@ -382,7 +386,8 @@ public class ReportCatalogService {
         List<Point> points = new ArrayList<>();
         BigDecimal totalSum = BigDecimal.ZERO;
         for (Object[] r : rowsRaw) {
-            PaymentMethod m = (PaymentMethod) r[0];
+            // Consulta nativa (ver SaleRepository#salesByPaymentMethod): el método llega como texto.
+            PaymentMethod m = r[0] instanceof PaymentMethod pm ? pm : PaymentMethod.valueOf(String.valueOf(r[0]));
             BigDecimal total = toDecimal(r[1]);
             long count = ((Number) r[2]).longValue();
             String label = METHOD_LABEL.getOrDefault(m, String.valueOf(m));

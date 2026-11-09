@@ -187,6 +187,75 @@ public class EmailService {
         }
     }
 
+    /** Envía el reporte diario de inventario de una tienda, con su Excel. */
+    @Async
+    public void sendInventoryReportEmail(Tienda tienda, byte[] excelBytes, String toEmail) {
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite el reporte de inventario de {}", tienda.getName());
+            return;
+        }
+        try {
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            applySenderAndReplyTo(helper, cfg, tienda);
+            helper.setTo(toEmail);
+            helper.setSubject("Reporte de inventario — " + tienda.getName());
+            helper.setText(
+                    "Adjuntamos el reporte de inventario de " + tienda.getName() + ":\n" +
+                    "los productos con sus piezas actuales y los anticipos sobre pedido por entregar."
+            );
+            helper.addAttachment("inventario-" + java.time.LocalDate.now() + ".xlsx",
+                    new org.springframework.core.io.ByteArrayResource(excelBytes));
+            sender.send(message);
+            log.info("Reporte de inventario de {} enviado a {}", tienda.getName(), toEmail);
+        } catch (MessagingException | RuntimeException e) {
+            log.error("No se pudo enviar el reporte de inventario de {} a {}: {}", tienda.getName(), toEmail, e.getMessage());
+        }
+    }
+
+    /**
+     * Avisa de un gasto o retiro que un cajero registró al recibir la caja: de lo que quedó del
+     * día anterior y ya no estaba.
+     *
+     * @param kind "Gasto" o "Retiro"
+     * @param detail destino del retiro o concepto del gasto
+     * @param personName quién hizo el gasto o retiró
+     */
+    @Async
+    public void sendCashBeforeOpeningEmail(Tienda tienda, String registerName, String cashierName, String kind,
+                                           java.math.BigDecimal amount, String detail, String personName,
+                                           java.time.LocalDateTime when, String toEmail) {
+        MailConfig cfg = mailConfigService.getEntity();
+        if (!Boolean.TRUE.equals(cfg.getEnabled())) {
+            log.info("Envío de correo deshabilitado (mail_config.enabled=false); se omite el aviso de {} de {}", kind, registerName);
+            return;
+        }
+        try {
+            JavaMailSender sender = buildSender(cfg);
+            MimeMessage message = sender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+            applySenderAndReplyTo(helper, cfg, tienda);
+            helper.setTo(toEmail);
+            helper.setSubject(kind + " antes de abrir caja — " + registerName + " · " + tienda.getName());
+            helper.setText(
+                    "Se registró un movimiento de efectivo al recibir la caja, de lo que quedó del día anterior.\n\n" +
+                    "Caja: " + registerName + "\n" +
+                    "Cajero: " + cashierName + "\n" +
+                    "Tipo: " + kind + "\n" +
+                    "Monto: $" + String.format(java.util.Locale.US, "%,.2f", amount) + "\n" +
+                    ("Retiro".equals(kind) ? "Destino: " : "Concepto: ") + detail + "\n" +
+                    ("Retiro".equals(kind) ? "Retiró: " : "Hizo el gasto: ") + personName + "\n" +
+                    "Hora: " + when.format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"))
+            );
+            sender.send(message);
+            log.info("Aviso de {} de {} / {} enviado a {}", kind, tienda.getName(), registerName, toEmail);
+        } catch (MessagingException | RuntimeException e) {
+            log.error("No se pudo enviar el aviso de {} de {} / {} a {}: {}", kind, tienda.getName(), registerName, toEmail, e.getMessage());
+        }
+    }
+
     /**
      * Envía el reporte de fin de día de UNA caja (un correo, un Excel con sus cortes del día).
      *
@@ -429,7 +498,7 @@ public class EmailService {
                 body.append("\nFecha de entrega: ").append(apartado.getDeliveryDate());
             }
             if (apartado.getExpiresAt() != null) {
-                body.append("\nVence: ").append(apartado.getExpiresAt()).append(" — si el cliente no lo recoge antes, se reintegra solo al inventario.");
+                body.append("\nVence: ").append(apartado.getExpiresAt()).append(" — si el cliente no lo recoge antes, vence y queda por revisar qué pasó con el producto antes de regresarlo al inventario.");
             }
 
             JavaMailSender sender = buildSender(cfg);
@@ -600,7 +669,7 @@ public class EmailService {
             StringBuilder body = new StringBuilder();
             body.append("El apartado #").append(apartado.getFolio()).append(" de ")
                     .append(apartado.getCustomerName()).append(" venció — el cliente no lo recogió a tiempo. ")
-                    .append("El stock ya se reintegró automáticamente al inventario.\n\n");
+                    .append("El producto todavía NO regresó al inventario: entra a Apartados y revisa qué pasó con cada producto (regresa, merma o no regresó).\n\n");
             body.append("Productos:\n").append(productLines(apartado));
 
             JavaMailSender sender = buildSender(cfg);
@@ -639,7 +708,7 @@ public class EmailService {
             body.append("Hola ").append(apartado.getCustomerName()).append(",\n\n");
             body.append("Tu apartado #").append(apartado.getFolio()).append(" en ")
                     .append(apartado.getTienda().getName()).append(" venció porque no se recogió a tiempo, ")
-                    .append("así que el producto ya se liberó de vuelta al inventario de la tienda.\n\n");
+                    .append("así que el producto ya no está apartado a tu nombre.\n\n");
             body.append("Productos:\n").append(productLines(apartado));
             body.append("\nSi todavía te interesa, puedes volver a apartarlo desde el mismo link de siempre.");
 

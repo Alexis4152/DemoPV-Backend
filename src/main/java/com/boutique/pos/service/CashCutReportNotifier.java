@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,15 +34,20 @@ public class CashCutReportNotifier {
     private final EmailService emailService;
     private final CashReportRecipientService recipientService;
 
-    /** Reporte de fin de día de una caja: un solo correo con un solo Excel por destinatario. */
-    public void notifyRegisterDay(CashRegister register, List<CashCut> cuts) {
+    /**
+     * Reporte de fin de día de una caja: un solo correo con un solo Excel por destinatario.
+     *
+     * @param since fin de día anterior de la caja, desde donde se reportan las devoluciones con
+     *              tarjeta o transferencia de sus ventas
+     */
+    public void notifyRegisterDay(CashRegister register, List<CashCut> cuts, LocalDateTime since) {
         if (cuts.isEmpty()) return;
         // La tienda del corte (EAGER, entidad real) y no la de la caja (proxy LAZY): el envío
         // es asíncrono y corre ya fuera de esta transacción.
         Tienda tienda = cuts.get(0).getTienda();
         byte[] excel;
         try {
-            excel = excelService.build(tienda, cuts);
+            excel = excelService.build(tienda, cuts, since);
         } catch (RuntimeException e) {
             log.error("No se pudo generar el reporte de fin de día de {} / {}: {}", tienda.getName(), register.getName(), e.getMessage());
             return;
@@ -68,7 +74,7 @@ public class CashCutReportNotifier {
             Tienda tienda = cuts.get(0).getTienda();
             byte[] excel;
             try {
-                excel = excelService.build(tienda, cuts);
+                excel = excelService.build(tienda, cuts, null);
             } catch (RuntimeException e) {
                 log.error("No se pudo generar el reporte de cierre para {}: {}", tienda.getName(), e.getMessage());
                 continue;

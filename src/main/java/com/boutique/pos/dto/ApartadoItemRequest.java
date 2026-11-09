@@ -15,4 +15,7 @@ public class ApartadoItemRequest {
     @NotNull
     @DecimalMin(value = "0.001", message = "La cantidad debe ser mayor a 0")
     private BigDecimal quantity;
+
+    /** Solo en un anticipo: true = sobre pedido, no se descuenta del inventario. */
+    private Boolean onOrder;
 }

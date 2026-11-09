@@ -31,6 +31,7 @@ public class ProductBarcodeService {
     static final long MAX_TIENDA_ID = 999;
     static final int MAX_SEQUENCE = 99_999;
 
+    private final EntityLocks entityLocks;
     private final ProductRepository productRepository;
     private final TiendaRepository tiendaRepository;
     private final TenantScope tenantScope;
@@ -53,7 +54,7 @@ public class ProductBarcodeService {
         if (tiendaId > MAX_TIENDA_ID) {
             throw new IllegalStateException("Esta tienda no puede generar códigos automáticos (número de tienda mayor a 999)");
         }
-        Tienda tienda = tiendaRepository.findByIdForUpdate(tiendaId)
+        Tienda tienda = tiendaRepository.findByIdForUpdate(tiendaId).map(entityLocks::fresh)
                 .orElseThrow(() -> new IllegalArgumentException("Tienda no encontrada: " + tiendaId));
         int seq = tienda.getBarcodeSequence() != null ? tienda.getBarcodeSequence() : 0;
         String code;

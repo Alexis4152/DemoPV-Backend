@@ -77,9 +77,9 @@ public class CashRegisterController {
         return ResponseEntity.ok(ApiResponse.ok(cashRegisterService.reopenDay(id, actor), "Caja reabierta"));
     }
 
-    /** Retiro o entrada de efectivo con la caja cerrada (entre turnos). */
+    /** Movimiento de efectivo con la caja cerrada: un cajero, solo gastos o retiros al recibirla. */
     @PostMapping("/{id}/movements")
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERVISOR')")
+    @PreAuthorize("@sectionAccess.check('CASH_CUTS')")
     public ResponseEntity<ApiResponse<CashMovement>> closedMovement(@PathVariable Long id,
                                                                      @Valid @RequestBody CashMovementRequest req,
                                                                      @AuthenticationPrincipal User actor) {

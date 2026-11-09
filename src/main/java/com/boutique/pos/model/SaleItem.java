@@ -53,4 +53,17 @@ public class SaleItem {
     @Column(nullable = false, precision = 12, scale = 2)
     @Builder.Default
     private BigDecimal subtotal = BigDecimal.ZERO;
+
+    /**
+     * Solo en ventas devueltas (ver {@code Sale#refundedAt}): true si el cliente entregó esta
+     * pieza y regresó al inventario, false si se devolvió el dinero sin el producto. Null
+     * mientras la venta no se haya devuelto.
+     */
+    private Boolean returnedToStock;
+
+    /** Qué pasó con el producto al cancelar o devolver la venta (ver {@link ItemReturnOutcome}).
+     *  Null mientras la venta siga vigente, o si no tiene inventario (por concepto/por pedido). */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 15)
+    private ItemReturnOutcome returnOutcome;
 }

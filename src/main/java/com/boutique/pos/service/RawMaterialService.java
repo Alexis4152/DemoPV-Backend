@@ -35,6 +35,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class RawMaterialService {
 
+    private final EntityLocks entityLocks;
     private final RawMaterialRepository rawMaterialRepository;
     private final RawMaterialMovementRepository movementRepository;
     private final CategoryService categoryService;
@@ -113,7 +114,7 @@ public class RawMaterialService {
             throw new IllegalStateException("Solo un administrador puede quitar piezas de la materia prima");
         }
         findById(id, actor);
-        RawMaterial m = rawMaterialRepository.findByIdForUpdate(id).orElseThrow();
+        RawMaterial m = rawMaterialRepository.findByIdForUpdate(id).map(entityLocks::fresh).orElseThrow();
         int previous = m.getStock();
         long next = (long) previous + req.getQuantity();
         if (next < 0) throw new FieldConflictException("quantity", "Stock insuficiente");
@@ -140,7 +141,7 @@ public class RawMaterialService {
     @Transactional
     public RawMaterial transferToInventory(Long id, RawMaterialTransferRequest req, User actor) {
         findById(id, actor);
-        RawMaterial m = rawMaterialRepository.findByIdForUpdate(id).orElseThrow();
+        RawMaterial m = rawMaterialRepository.findByIdForUpdate(id).map(entityLocks::fresh).orElseThrow();
         int qty = req.getQuantity();
         if (qty > m.getStock()) {
             throw new FieldConflictException("quantity", "Solo hay " + m.getStock() + " pieza" + (m.getStock() == 1 ? "" : "s") + " de materia prima");
@@ -164,7 +165,7 @@ public class RawMaterialService {
             pr.setCategoryId(req.getNewProductCategoryId());
             pr.setIsReservable(false);
             Product created = productService.create(pr, actor);
-            product = productService.findByIdForUpdate(created.getId());
+            product = created; // recién creado en esta transacción: nadie más lo puede tocar
         }
 
         int previous = m.getStock();

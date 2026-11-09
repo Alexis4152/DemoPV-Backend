@@ -201,6 +201,10 @@ public class CashCut {
     @Column(precision = 12, scale = 2)
     private BigDecimal loansOutTotal;
 
+    /** Suma de devoluciones en efectivo hechas en este corte (ventas de turnos ya cerrados). */
+    @Column(precision = 12, scale = 2)
+    private BigDecimal refundsTotal;
+
     /** Efectivo contado al cerrar; null si nadie lo contó. */
     @Column(precision = 12, scale = 2)
     private BigDecimal countedAmount;

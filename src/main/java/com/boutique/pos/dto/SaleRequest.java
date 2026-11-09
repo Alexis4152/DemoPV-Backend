@@ -6,6 +6,7 @@ import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -34,9 +35,15 @@ public class SaleRequest {
     @NotNull
     private PaymentMethod paymentMethod;
     // Descuento global de la venta (opcional, se trata como cero si no se envía),
-    // adicional a los descuentos por partida en cada SaleItemRequest.
+    // adicional a los descuentos por partida en cada SaleItemRequest. Nunca negativo, y
+    // SaleService lo valida contra el límite de la tienda igual que el de cada línea.
+    @PositiveOrZero(message = "El descuento no puede ser negativo")
+    @DecimalMax(value = "9999999999.99", message = "El número es excesivamente grande — el máximo permitido es 9,999,999,999.99")
     private BigDecimal discount;
-    // Impuesto de la venta (opcional, se trata como cero si no se envía).
+    // Impuesto de la venta (opcional, se trata como cero si no se envía). Nunca negativo:
+    // uno negativo funcionaría como un descuento sin límite.
+    @PositiveOrZero(message = "El impuesto no puede ser negativo")
+    @DecimalMax(value = "9999999999.99", message = "El número es excesivamente grande — el máximo permitido es 9,999,999,999.99")
     private BigDecimal tax;
     // Con cuánto pagó el cliente. Obligatorio cuando paymentMethod = CASH (el servicio
     // rechaza la venta si falta o es menor al total); se ignora para tarjeta/transferencia.

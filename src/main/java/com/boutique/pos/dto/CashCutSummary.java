@@ -42,5 +42,10 @@ public class CashCutSummary {
     private BigDecimal reimbursementsTotal;
     // Préstamos a otras cajas: restan del efectivo pero no son gasto (no bajan la utilidad).
     private BigDecimal loansOutTotal;
+    // Devoluciones en efectivo de ventas de turnos ya cerrados (ver SaleService#refund).
+    private BigDecimal refundsTotal;
+    // Lo devuelto con tarjeta y transferencia de las ventas del corte: informativo, no sale de la caja.
+    private BigDecimal cardRefunds;
+    private BigDecimal transferRefunds;
     private BigDecimal expectedCash;
 }

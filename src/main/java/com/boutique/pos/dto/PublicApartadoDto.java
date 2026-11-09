@@ -37,6 +37,12 @@ public class PublicApartadoDto {
     private BigDecimal subtotal;
     private BigDecimal discount;
     private BigDecimal total;
+    /** Anticipo pagado en tienda (apartado registrado en el POS): el cliente no puede editarlo
+     *  ni cancelarlo desde aquí, eso lo resuelve la tienda. Null si no tiene anticipo. */
+    private BigDecimal depositAmount;
+    /** % del total que retiene la tienda si cancela por cambio de opinión (null = lo pagado
+     *  a cuenta no se devuelve). Solo con anticipo. */
+    private BigDecimal retentionPercent;
     private List<Item> items;
 
     @Data @Builder @NoArgsConstructor @AllArgsConstructor

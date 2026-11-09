@@ -1,5 +1,6 @@
 package com.boutique.pos.model;
 
+import com.boutique.pos.dto.ApartadoItemBrief;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
@@ -105,12 +106,34 @@ public class Sale {
     /** Folio (no el id) de ese mismo apartado — lo que de verdad se le muestra al personal. */
     private Long apartadoFolio;
 
+    /** Solo en ventas {@code BALANCE}: el anticipo ya cobrado que se resta del total (no es
+     *  un descuento: Total = Subtotal − Descuento − Anticipo). */
+    @Column(precision = 12, scale = 2)
+    private BigDecimal depositApplied;
+
+    /** Folio de la venta en que se cobró ese anticipo, para mostrarlo en el ticket. Null si
+     *  además del anticipo hubo abonos (lo pagado a cuenta son varias ventas). */
+    private Long depositSaleFolio;
+
+    /** Solo en ventas {@code DEPOSIT}: true si es un abono (un pago a cuenta posterior al
+     *  anticipo, ver {@code ApartadoService#addInstallment}); null/false = el anticipo. */
+    private Boolean installment;
+
+    /** Solo en ventas {@code DEPOSIT} (anticipo o abono): saldo que le quedó al apartado
+     *  después de este pago, para imprimirlo en su ticket. Null en ventas anteriores. */
+    @Column(precision = 12, scale = 2)
+    private BigDecimal balanceAfter;
+
     // Transiente: SOLO se llena en ventas kind=DEPOSIT, con el saldo que todavía falta
     // cobrar del apartado (apartado.total - apartado.depositAmount) — ver
     // SaleService#withPendingBalance, usado por la pantalla de Historial de ventas para
     // mostrar "Anticipo — saldo $X" sin que el frontend tenga que ir a buscar el apartado
     // aparte. No es columna de "sales" (igual que Product#primaryImage).
     private transient BigDecimal pendingBalance;
+
+    // Transiente: SOLO en ventas kind=DEPOSIT, los productos de su apartado (informativos: la
+    // venta tiene una sola línea, el pago a cuenta) — ver SaleService#populatePendingBalances.
+    private transient List<ApartadoItemBrief> apartadoItems;
 
     @Column(columnDefinition = "TEXT")
     private String notes;
@@ -129,6 +152,31 @@ public class Sale {
     private User cancelledBy;
 
     private LocalDateTime cancelledAt;
+
+    /** Motivo de la cancelación; obligatorio si algún producto no regresó al stock vendible. */
+    @Column(length = 300)
+    private String cancelReason;
+
+    // Devolución (ver SaleService#refund): a diferencia de cancelar, la venta sigue COMPLETED
+    // y contando en su corte (ya cerrado y contado); el dinero sale como una salida REFUND en
+    // el corte de quien devolvió. Todo null mientras no se haya devuelto.
+    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "refunded_by_user_id")
+    private User refundedBy;
+
+    private LocalDateTime refundedAt;
+
+    @Column(length = 300)
+    private String refundReason;
+
+    /** Corte en el que salió el efectivo de la devolución (null si fue con tarjeta/transferencia). */
+    private Long refundCashCutId;
+
+    /** Cuánto se devolvió, si fue menos que el total (la tienda retuvo el resto al cancelar o
+     *  devolver un apartado). Null = se devolvió todo. Los reportes restan este monto. */
+    @Column(precision = 12, scale = 2)
+    private BigDecimal refundAmount;
 
     @CreationTimestamp
     private LocalDateTime createdAt;

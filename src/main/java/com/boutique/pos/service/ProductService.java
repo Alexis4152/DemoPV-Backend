@@ -48,6 +48,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class ProductService {
 
+    private final EntityLocks entityLocks;
     private final ProductRepository productRepository;
     private final CategoryService categoryService;
     private final InventoryMovementRepository movementRepository;
@@ -205,7 +206,7 @@ public class ProductService {
      * @throws IllegalArgumentException si no existe
      */
     public Product findByIdForUpdate(Long id) {
-        return productRepository.findByIdForUpdate(id)
+        return productRepository.findByIdForUpdate(id).map(entityLocks::fresh)
                 .orElseThrow(() -> new IllegalArgumentException("Producto no encontrado: " + id));
     }
 

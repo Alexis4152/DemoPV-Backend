@@ -11,6 +11,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * Calcula los totales de un corte a partir de sus ventas y sus movimientos de efectivo, y
@@ -18,7 +20,7 @@ import java.math.BigDecimal;
  * cierre), {@link CashMovementService} (tope de las salidas) y {@link CashRegisterService}
  * (efectivo esperado de las cajas en uso), para que los tres usen exactamente la misma fórmula:
  *
- * <pre>esperado = fondo inicial + ventas en efectivo + entradas − gastos − retiros − reembolsos − préstamos a otras cajas</pre>
+ * <pre>esperado = fondo inicial + ventas en efectivo + entradas − gastos − retiros − reembolsos − préstamos a otras cajas − devoluciones</pre>
  *
  * Las ventas con tarjeta/transferencia no son dinero físico: se reportan pero no suman.
  */
@@ -55,7 +57,7 @@ public class CashBalanceCalculator {
         }
 
         BigDecimal entries = BigDecimal.ZERO, expenses = BigDecimal.ZERO, withdrawals = BigDecimal.ZERO, reimbursements = BigDecimal.ZERO;
-        BigDecimal loansOut = BigDecimal.ZERO;
+        BigDecimal loansOut = BigDecimal.ZERO, refunds = BigDecimal.ZERO;
         for (Object[] row : movementRepository.sumByTypeForCut(cut.getId())) {
             BigDecimal sum = (BigDecimal) row[1];
             switch ((CashMovementType) row[0]) {
@@ -64,12 +66,19 @@ public class CashBalanceCalculator {
                 case EXPENSE -> expenses = expenses.add(sum);
                 case WITHDRAWAL -> withdrawals = withdrawals.add(sum);
                 case REIMBURSEMENT -> reimbursements = reimbursements.add(sum);
+                case REFUND -> refunds = refunds.add(sum);
             }
+        }
+
+        BigDecimal cardRefunds = BigDecimal.ZERO, transferRefunds = BigDecimal.ZERO;
+        for (Object[] row : nonCashRefunds(cut)) {
+            if (row[0] == PaymentMethod.CARD) cardRefunds = (BigDecimal) row[1];
+            else if (row[0] == PaymentMethod.TRANSFER) transferRefunds = (BigDecimal) row[1];
         }
 
         BigDecimal opening = cut.getOpeningAmount() != null ? cut.getOpeningAmount() : BigDecimal.ZERO;
         BigDecimal expected = opening.add(cash).add(entries)
-                .subtract(expenses).subtract(withdrawals).subtract(reimbursements).subtract(loansOut);
+                .subtract(expenses).subtract(withdrawals).subtract(reimbursements).subtract(loansOut).subtract(refunds);
 
         return CashCutSummary.builder()
                 .openingAmount(opening)
@@ -78,8 +87,17 @@ public class CashBalanceCalculator {
                 .cancelledCount(cancelledCount).cancelledTotal(cancelledTotal)
                 .entriesTotal(entries).expensesTotal(expenses).withdrawalsTotal(withdrawals).reimbursementsTotal(reimbursements)
                 .loansOutTotal(loansOut)
+                .refundsTotal(refunds)
+                .cardRefunds(cardRefunds).transferRefunds(transferRefunds)
                 .expectedCash(expected)
                 .build();
+    }
+
+    /** Tarjeta y transferencia se informan en el turno donde se devolvieron, no en el de la venta. */
+    private List<Object[]> nonCashRefunds(CashCut cut) {
+        if (cut.getCashRegister() == null) return saleRepository.sumNonCashRefundsByCashCut(cut.getId());
+        LocalDateTime to = cut.getClosedAt() != null ? cut.getClosedAt() : LocalDateTime.now();
+        return saleRepository.sumNonCashRefundsInTurn(cut.getCashRegister().getId(), cut.getOpenedAt(), to);
     }
 
     /** Solo el efectivo esperado en caja ahora mismo. */

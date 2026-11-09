@@ -1,24 +1,36 @@
 package com.boutique.pos.service;
 
 import com.boutique.pos.dto.ArqueoResolveRequest;
+import com.boutique.pos.dto.CancelledSaleRow;
+import com.boutique.pos.dto.CutSaleItemRow;
+import com.boutique.pos.dto.NonCashRefundRow;
 import com.boutique.pos.dto.CashCutCloseRequest;
 import com.boutique.pos.dto.CashCutForceCloseRequest;
 import com.boutique.pos.dto.CashCutOpenRequest;
 import com.boutique.pos.dto.CashCutSummary;
 import com.boutique.pos.exception.LargeCashDifferenceException;
+import com.boutique.pos.model.Apartado;
+import com.boutique.pos.model.ApartadoStatus;
 import com.boutique.pos.model.CashCountMethod;
 import com.boutique.pos.model.CashCut;
 import com.boutique.pos.model.CashCutStatus;
 import com.boutique.pos.model.CashMovement;
 import com.boutique.pos.model.CashRegister;
 import com.boutique.pos.model.HandoverStatus;
+import com.boutique.pos.model.Product;
+import com.boutique.pos.model.Sale;
+import com.boutique.pos.model.SaleKind;
+import com.boutique.pos.model.PaymentMethod;
+import com.boutique.pos.model.SaleStatus;
 import com.boutique.pos.model.Shortage;
 import com.boutique.pos.model.ShortageOrigin;
 import com.boutique.pos.model.Tienda;
 import com.boutique.pos.model.User;
+import com.boutique.pos.repository.ApartadoRepository;
 import com.boutique.pos.repository.CashCutRepository;
 import com.boutique.pos.repository.CashMovementRepository;
 import com.boutique.pos.repository.CashRegisterRepository;
+import com.boutique.pos.repository.SaleRepository;
 import com.boutique.pos.repository.ShortageRepository;
 import com.boutique.pos.repository.UserRepository;
 import com.boutique.pos.security.TenantScope;
@@ -62,6 +74,7 @@ public class CashCutService {
     private static final String ADMIN = "ADMIN";
     private static final NumberFormat MONEY = NumberFormat.getCurrencyInstance(new Locale("es", "MX"));
 
+    private final EntityLocks entityLocks;
     private final CashCutRepository cashCutRepository;
     private final CashRegisterRepository cashRegisterRepository;
     private final CashMovementRepository movementRepository;
@@ -71,6 +84,8 @@ public class CashCutService {
     private final CashDayCloseService dayCloseService;
     private final CashCutReportNotifier reportNotifier;
     private final CashMovementService movementService;
+    private final SaleRepository saleRepository;
+    private final ApartadoRepository apartadoRepository;
     private final TenantScope tenantScope;
 
     /**
@@ -182,7 +197,7 @@ public class CashCutService {
             case COUNT_ERROR -> {
                 CashRegister register = cut.getCashRegister();
                 if (register != null && diff.signum() != 0) {
-                    CashRegister r = cashRegisterRepository.findByIdForUpdate(register.getId()).orElseThrow();
+                    CashRegister r = cashRegisterRepository.findByIdForUpdate(register.getId()).map(entityLocks::fresh).orElseThrow();
                     boolean stillClosed = cashCutRepository.findFirstByCashRegisterIdAndStatus(r.getId(), CashCutStatus.OPEN).isEmpty();
                     boolean isLastCut = r.getLastCut() != null && r.getLastCut().getId().equals(cut.getId());
                     if (stillClosed && isLastCut && r.getPendingAmount() != null) {
@@ -254,6 +269,93 @@ public class CashCutService {
         return movementRepository.findByCashCut_IdOrderByCreatedAtAsc(id);
     }
 
+    /**
+     * Ventas canceladas de un corte, con quién las canceló. Una cancelación baja el efectivo
+     * esperado del turno; si la hizo otra persona (p. ej. un administrador sobre el turno de un
+     * cajero), el cajero tiene que poder ver por qué cambió su esperado.
+     */
+    /**
+     * Productos de una venta cancelada en este corte o devuelta desde él, con qué pasó con cada
+     * uno — para la subtabla de la tabla de movimientos del turno. La venta tiene que estar
+     * ligada a este corte (se cobró o se devolvió en él); si no, no se muestra.
+     */
+    @Transactional(readOnly = true)
+    public List<CutSaleItemRow> saleItems(Long cutId, Long saleId, User actor) {
+        CashCut cut = findById(cutId, actor);
+        Sale sale = saleRepository.findById(saleId)
+                .orElseThrow(() -> new IllegalArgumentException("Venta no encontrada"));
+        boolean linked = (sale.getCashCut() != null && sale.getCashCut().getId().equals(cutId))
+                || cutId.equals(sale.getRefundCashCutId())
+                || nonCashRefundSales(cut).stream().anyMatch(s -> s.getId().equals(saleId));
+        if (!linked) throw new IllegalArgumentException("Venta no encontrada");
+        // Un anticipo no tiene productos propios (su línea es el pago adelantado): se muestran los
+        // productos de su apartado, que es donde se decidió qué pasó con cada uno al cancelarlo.
+        if (sale.getKind() == SaleKind.DEPOSIT && sale.getApartadoId() != null) {
+            Apartado apartado = apartadoRepository.findById(sale.getApartadoId()).orElse(null);
+            if (apartado != null) {
+                return apartado.getItems().stream().map(i -> {
+                    String kind = Boolean.TRUE.equals(i.getOnOrder()) ? "MADE_TO_ORDER" : stockKind(i.getProduct());
+                    if ("STOCK".equals(kind) && i.getReturnOutcome() == null) {
+                        // Todavía no se decide nada: sigue apartado, ya se entregó o está por revisar.
+                        kind = Boolean.TRUE.equals(apartado.getStockReviewPending()) ? "REVIEW"
+                                : i.getDeliveredAt() != null || (apartado.getStatus() == ApartadoStatus.COMPLETED
+                                  && !Boolean.TRUE.equals(apartado.getPendingDelivery())) ? "DELIVERED" : "RESERVED";
+                    }
+                    return new CutSaleItemRow(i.getProductName(), i.getQuantity(), i.getUnitPrice(), i.getSubtotal(),
+                            kind, "STOCK".equals(kind) ? i.getReturnOutcome() : null);
+                }).toList();
+            }
+        }
+        return sale.getItems().stream().map(i -> {
+            String kind = stockKind(i.getProduct());
+            return new CutSaleItemRow(i.getProductName(), i.getQuantity(), i.getUnitPrice(), i.getSubtotal(),
+                    kind, "STOCK".equals(kind) ? i.getReturnOutcome() : null);
+        }).toList();
+    }
+
+    /** STOCK (del inventario), CONCEPT (sin producto) o MADE_TO_ORDER (por pedido). */
+    private static String stockKind(Product product) {
+        return product == null ? "CONCEPT"
+                : Boolean.TRUE.equals(product.getIsMadeToOrder()) ? "MADE_TO_ORDER" : "STOCK";
+    }
+
+    @Transactional(readOnly = true)
+    public List<CancelledSaleRow> cancelledSales(Long id, User actor) {
+        CashCut cut = findById(id, actor);
+        Long ownerId = cut.getUser().getId();
+        return saleRepository.findByCashCutIdAndStatusOrderByCancelledAtAsc(id, SaleStatus.CANCELLED).stream()
+                .map(s -> new CancelledSaleRow(s.getId(), s.getFolio(), s.getTotal(), s.getPaymentMethod(),
+                        s.getCreatedAt(), s.getCancelledAt(),
+                        s.getCancelledBy() != null ? s.getCancelledBy().getName() : null,
+                        s.getCancelledBy() != null && !s.getCancelledBy().getId().equals(ownerId),
+                        s.getKind() != null ? s.getKind().name() : null, s.getApartadoFolio()))
+                .toList();
+    }
+
+    /** Devoluciones con tarjeta o transferencia hechas en el turno, sea cual sea el turno de la venta. */
+    @Transactional(readOnly = true)
+    public List<NonCashRefundRow> nonCashRefunds(Long id, User actor) {
+        return nonCashRefundSales(findById(id, actor)).stream()
+                .map(s -> new NonCashRefundRow(s.getId(), s.getFolio(),
+                        s.getRefundAmount() != null ? s.getRefundAmount() : s.getTotal(),
+                        s.getPaymentMethod(), s.getRefundedAt(),
+                        s.getRefundedBy() != null ? s.getRefundedBy().getName() : null,
+                        s.getKind() != null ? s.getKind().name() : null,
+                        Boolean.TRUE.equals(s.getInstallment()), s.getApartadoFolio()))
+                .toList();
+    }
+
+    private List<Sale> nonCashRefundSales(CashCut cut) {
+        if (cut.getCashRegister() == null) {
+            return saleRepository.findByCashCutId(cut.getId()).stream()
+                    .filter(s -> s.getRefundedAt() != null && s.getStatus() == SaleStatus.COMPLETED
+                            && s.getPaymentMethod() != PaymentMethod.CASH)
+                    .toList();
+        }
+        LocalDateTime to = cut.getClosedAt() != null ? cut.getClosedAt() : LocalDateTime.now();
+        return saleRepository.findNonCashRefundsInTurn(cut.getCashRegister().getId(), cut.getOpenedAt(), to);
+    }
+
     /** Movimientos con la caja cerrada que vio este corte en el desglose de lo que recibió. */
     public List<CashMovement> receivedMovements(Long id, User actor) {
         findById(id, actor);
@@ -309,7 +411,7 @@ public class CashCutService {
         if (findOpen(actor).isPresent()) {
             throw new IllegalStateException("Ya tienes un corte abierto. Ciérralo antes de abrir otro.");
         }
-        CashRegister register = cashRegisterRepository.findByIdForUpdate(req.getCashRegisterId())
+        CashRegister register = cashRegisterRepository.findByIdForUpdate(req.getCashRegisterId()).map(entityLocks::fresh)
                 .filter(r -> r.getTienda().getId().equals(tienda.getId()))
                 .orElseThrow(() -> new IllegalArgumentException("Caja no encontrada"));
         if (!Boolean.TRUE.equals(register.getIsActive())) {
@@ -529,7 +631,7 @@ public class CashCutService {
      */
     @Transactional
     public CashCut autoClose(Long id) {
-        CashCut cut = cashCutRepository.findByIdForUpdate(id)
+        CashCut cut = cashCutRepository.findByIdForUpdate(id).map(entityLocks::fresh)
                 .orElseThrow(() -> new IllegalArgumentException("Corte no encontrado: " + id));
         ensureOpen(cut);
         return closeInternal(cut, calculator.summarize(cut), null, CashCountMethod.NOT_COUNTED, null, null,
@@ -538,7 +640,7 @@ public class CashCutService {
 
     private CashCut lockVisible(Long id, User actor) {
         findById(id, actor); // valida permiso
-        return cashCutRepository.findByIdForUpdate(id)
+        return cashCutRepository.findByIdForUpdate(id).map(entityLocks::fresh)
                 .orElseThrow(() -> new IllegalArgumentException("Corte no encontrado: " + id));
     }
 
@@ -584,6 +686,7 @@ public class CashCutService {
         cut.setWithdrawalsTotal(summary.getWithdrawalsTotal());
         cut.setReimbursementsTotal(summary.getReimbursementsTotal());
         cut.setLoansOutTotal(summary.getLoansOutTotal());
+        cut.setRefundsTotal(summary.getRefundsTotal());
         cut.setClosingAmount(expected);
         cut.setCountedAmount(counted);
         cut.setCashDifference(counted != null ? counted.subtract(expected) : null);
@@ -600,7 +703,7 @@ public class CashCutService {
         CashCut saved = cashCutRepository.save(cut);
 
         if (cut.getCashRegister() != null) {
-            CashRegister register = cashRegisterRepository.findByIdForUpdate(cut.getCashRegister().getId())
+            CashRegister register = cashRegisterRepository.findByIdForUpdate(cut.getCashRegister().getId()).map(entityLocks::fresh)
                     .orElseThrow(() -> new IllegalStateException("Caja no encontrada"));
             register.setPendingAmount(handover);
             register.setPendingCountMethod(method);

@@ -76,6 +76,14 @@ public class TiendaInfoService {
         tienda.setName(req.getName());
         tienda.setMaxDiscountAmount(req.getMaxDiscountAmount());
         tienda.setMaxDiscountPercent(req.getMaxDiscountPercent());
+        tienda.setCashierRefundMaxAmount(req.getCashierRefundMaxAmount());
+        tienda.setCashierRefundMaxDays(req.getCashierRefundMaxDays());
+        tienda.setApartadoRetentionPercent(req.getApartadoRetentionPercent());
+        // Con otra hora, hoy vuelve a tocar: si ya se mandó, llega también a la hora nueva.
+        if (!java.util.Objects.equals(tienda.getInventoryReportTime(), req.getInventoryReportTime())) {
+            tienda.setLastInventoryReportDate(null);
+        }
+        tienda.setInventoryReportTime(req.getInventoryReportTime());
 
         tienda.setApartadosEnabled(Boolean.TRUE.equals(req.getApartadosEnabled()));
         tienda.setMaxApartadoDiscountAmount(req.getMaxApartadoDiscountAmount());

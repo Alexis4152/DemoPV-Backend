@@ -29,6 +29,7 @@ import java.time.LocalDateTime;
 @RequiredArgsConstructor
 public class ReimbursementService {
 
+    private final EntityLocks entityLocks;
     private final ReimbursementRepository reimbursementRepository;
     private final CashMovementService movementService;
     private final TenantScope tenantScope;
@@ -62,7 +63,7 @@ public class ReimbursementService {
             return findInScope(id, actor);
         }
 
-        r = reimbursementRepository.findByIdForUpdate(id).orElseThrow();
+        r = reimbursementRepository.findByIdForUpdate(id).map(entityLocks::fresh).orElseThrow();
         if (r.getStatus() != ReimbursementStatus.PENDING) throw new IllegalStateException("Este reembolso ya se pagó");
         if (req.getMethod() == null) throw new IllegalStateException("Indica el método de pago");
         Tienda tienda = r.getTienda();

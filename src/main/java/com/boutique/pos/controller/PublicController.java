@@ -6,6 +6,7 @@ import com.boutique.pos.dto.ApartadoRequest;
 import com.boutique.pos.dto.ApartadoSelfCancelRequest;
 import com.boutique.pos.dto.ApiResponse;
 import com.boutique.pos.dto.PageResponse;
+import com.boutique.pos.dto.PublicApartadoBrief;
 import com.boutique.pos.dto.PublicApartadoDto;
 import com.boutique.pos.dto.PublicCategoryDto;
 import com.boutique.pos.dto.PublicProductDto;
@@ -115,10 +116,10 @@ public class PublicController {
      * menos estricta que {@link #lookupApartado}).
      */
     @PostMapping("/apartados/lookup-by-phone")
-    public ResponseEntity<ApiResponse<List<PublicApartadoDto>>> lookupApartadosByPhone(
+    public ResponseEntity<ApiResponse<List<PublicApartadoBrief>>> lookupApartadosByPhone(
             @PathVariable String slug,
             @Valid @RequestBody ApartadoPhoneLookupRequest req) {
-        List<PublicApartadoDto> results = apartadoService.publicApartadoLookupByPhone(slug, req.getPhone());
+        List<PublicApartadoBrief> results = apartadoService.publicApartadoLookupByPhone(slug, req.getPhone());
         return ResponseEntity.ok(ApiResponse.ok(results, null));
     }
 

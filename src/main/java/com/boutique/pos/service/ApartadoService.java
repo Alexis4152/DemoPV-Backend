@@ -1,16 +1,24 @@
 package com.boutique.pos.service;
 
+import com.boutique.pos.dto.ApartadoCancelRequest;
 import com.boutique.pos.dto.ApartadoCompleteRequest;
+import com.boutique.pos.dto.ApartadoDeliverRequest;
 import com.boutique.pos.dto.ApartadoConfirmRequest;
 import com.boutique.pos.dto.ApartadoDepositRequest;
+import com.boutique.pos.dto.ApartadoInstallmentRequest;
 import com.boutique.pos.dto.ApartadoItemRequest;
+import com.boutique.pos.dto.ApartadoPaymentRow;
+import com.boutique.pos.dto.ApartadoRefundRequest;
+import com.boutique.pos.dto.ApartadoStockReviewRequest;
 import com.boutique.pos.dto.ApartadoRequest;
+import com.boutique.pos.dto.PublicApartadoBrief;
 import com.boutique.pos.dto.PublicApartadoDto;
 import com.boutique.pos.dto.PublicCategoryDto;
 import com.boutique.pos.dto.PublicProductDto;
 import com.boutique.pos.dto.PublicTiendaDto;
 import com.boutique.pos.model.*;
 import com.boutique.pos.repository.ApartadoRepository;
+import com.boutique.pos.repository.SaleRepository;
 import com.boutique.pos.repository.CategoryRepository;
 import com.boutique.pos.repository.InventoryMovementRepository;
 import com.boutique.pos.repository.ProductImageRepository;
@@ -63,6 +71,7 @@ public class ApartadoService {
     private static final LocalDateTime MIN_DATE = LocalDateTime.of(2000, 1, 1, 0, 0);
     private static final LocalDateTime MAX_DATE = LocalDateTime.of(2100, 1, 1, 0, 0);
 
+    private final EntityLocks entityLocks;
     private final ApartadoRepository apartadoRepository;
     private final TiendaRepository tiendaRepository;
     private final TiendaInfoRepository tiendaInfoRepository;
@@ -72,6 +81,8 @@ public class ApartadoService {
     private final InventoryMovementRepository movementRepository;
     private final UserRepository userRepository;
     private final SaleService saleService;
+    private final SaleRepository saleRepository;
+    private final StockReturnService stockReturnService;
     private final OfferService offerService;
     private final EmailService emailService;
     private final TenantScope tenantScope;
@@ -175,10 +186,12 @@ public class ApartadoService {
      *              abierto; queda registrado como {@code confirmedBy} del apartado y
      *              {@code user} de la venta de anticipo
      * @return el apartado ya {@code ACTIVE}, con {@link Apartado#getDepositAmount()} y
-     *         {@link Apartado#getDepositSaleId()} ya fijados
+     *         {@link Apartado#getDepositSaleId()} ya fijados. Si el cliente paga el total, se
+     *         registra el anticipo mínimo de la tienda (sin mínimo, la mitad) como anticipo y
+     *         el resto como saldo: el apartado queda {@code COMPLETED}, con {@link Apartado#getSaleId()}
      * @throws IllegalStateException si el actor no tiene un corte abierto, si el anticipo
-     *         es mayor o igual al total, o si algún producto no tiene stock suficiente
-     *         (salvo que sea "por pedido")
+     *         pasa del total, o si algún producto no tiene stock suficiente (salvo que sea
+     *         "por pedido")
      * @throws IllegalArgumentException si algún producto no existe o no pertenece a la
      *         tienda del actor, o si el actor es SUPER_ADMIN sin tienda elegida para actuar
      */
@@ -202,7 +215,7 @@ public class ApartadoService {
         BigDecimal subtotal = BigDecimal.ZERO;
         LocalDateTime now = LocalDateTime.now();
         for (ApartadoItemRequest ir : req.getItems()) {
-            Product product = productRepository.findByIdForUpdate(ir.getProductId())
+            Product product = productRepository.findByIdForUpdate(ir.getProductId()).map(entityLocks::fresh)
                     .orElseThrow(() -> new IllegalArgumentException("Producto no encontrado: " + ir.getProductId()));
             if (!product.getTienda().getId().equals(tienda.getId())) {
                 throw new IllegalArgumentException("\"" + product.getName() + "\" no pertenece a esta tienda");
@@ -213,7 +226,9 @@ public class ApartadoService {
                 throw new IllegalStateException("No se puede registrar un anticipo con productos en oferta (\""
                         + product.getName() + "\") — el anticipo es solo para productos sin oferta");
             }
-            boolean madeToOrder = Boolean.TRUE.equals(product.getIsMadeToOrder());
+            boolean catalogMadeToOrder = Boolean.TRUE.equals(product.getIsMadeToOrder());
+            boolean onOrder = !catalogMadeToOrder && Boolean.TRUE.equals(ir.getOnOrder());
+            boolean madeToOrder = catalogMadeToOrder || onOrder;
             if (!madeToOrder && BigDecimal.valueOf(product.getStock()).compareTo(ir.getQuantity()) < 0) {
                 throw new IllegalStateException("No hay suficiente stock de \"" + product.getName()
                         + "\" (disponible: " + product.getStock() + ")");
@@ -221,6 +236,7 @@ public class ApartadoService {
 
             BigDecimal lineGross = product.getPrice().multiply(ir.getQuantity());
             ApartadoItem item = new ApartadoItem();
+            item.setOnOrder(onOrder);
             item.setApartado(apartado);
             item.setProduct(product);
             item.setProductName(product.getName());
@@ -245,13 +261,47 @@ public class ApartadoService {
                 mv.setPreviousStock(previous);
                 mv.setNewStock(previous - qtyInt);
                 mv.setReason("Apartado #" + apartado.getFolio() + " (anticipo)");
+                mv.setSource(MovementSource.APARTADO);
+                movementRepository.save(mv);
+            } else {
+                // No sale del inventario, pero el anticipo queda a la vista en Movimientos.
+                InventoryMovement mv = new InventoryMovement();
+                mv.setProduct(product);
+                mv.setUser(actor);
+                mv.setType(MovementType.ADJUSTMENT);
+                mv.setQuantity(ir.getQuantity().intValue());
+                mv.setPreviousStock(product.getStock());
+                mv.setNewStock(product.getStock());
+                mv.setReason("Apartado #" + apartado.getFolio() + " (anticipo, "
+                        + (catalogMadeToOrder ? "por pedido, no maneja inventario" : "sobre pedido, no sale del inventario") + ")");
+                mv.setSource(MovementSource.APARTADO);
                 movementRepository.save(mv);
             }
         }
 
-        if (req.getDepositAmount().compareTo(subtotal) >= 0) {
+        // El % de la tienda es a la vez el anticipo mínimo y lo que no se reembolsa: así lo
+        // que se retiene al cancelar por cambio de opinión siempre está pagado.
+        BigDecimal minPercent = tienda.getApartadoRetentionPercent();
+        BigDecimal minDeposit = minPercent == null ? null
+                : subtotal.multiply(minPercent).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+        // Si paga todo: el mínimo queda como anticipo y el resto como saldo, igual que si
+        // hubiera liquidado después (y al devolverlo se retiene lo mismo). Sin un mínimo que
+        // deje saldo, mitad y mitad.
+        boolean usableMin = minDeposit != null && minDeposit.signum() > 0 && minDeposit.compareTo(subtotal) < 0;
+        BigDecimal fullSplit = usableMin ? minDeposit : subtotal.divide(BigDecimal.valueOf(2), 2, RoundingMode.HALF_UP);
+        boolean fullPayment = req.getDepositAmount().compareTo(subtotal) == 0 && fullSplit.compareTo(subtotal) < 0;
+        if (!fullPayment && req.getDepositAmount().compareTo(subtotal) >= 0) {
             throw new FieldConflictException("depositAmount", "El anticipo debe ser menor al total del pedido ("
                     + MONEY_FMT.format(subtotal) + ") — si ya cubre todo, regístralo como una venta normal");
+        }
+        if (minDeposit != null && req.getDepositAmount().compareTo(minDeposit) < 0) {
+            throw new FieldConflictException("depositAmount", "El anticipo mínimo es " + MONEY_FMT.format(minDeposit)
+                    + " (" + minPercent.stripTrailingZeros().toPlainString() + " % del total)");
+        }
+        BigDecimal depositAmount = fullPayment ? fullSplit : req.getDepositAmount();
+        boolean cash = req.getPaymentMethod() == PaymentMethod.CASH;
+        if (fullPayment && cash && (req.getAmountReceived() == null || req.getAmountReceived().compareTo(subtotal) < 0)) {
+            throw new FieldConflictException("amountReceived", "El monto recibido es menor al total del pedido");
         }
 
         if (req.getDeliveryDate().isBefore(LocalDate.now())) {
@@ -262,7 +312,9 @@ public class ApartadoService {
         apartado.setSubtotal(subtotal);
         apartado.setDiscount(BigDecimal.ZERO);
         apartado.setTotal(subtotal);
-        apartado.setDepositAmount(req.getDepositAmount());
+        apartado.setDepositAmount(depositAmount);
+        // La retención que diga su ticket es la que se aplica, aunque la tienda la cambie después.
+        apartado.setRetentionPercent(tienda.getApartadoRetentionPercent());
         // Sin vigencia ni vencimiento: el anticipo no vence solo (ver Apartado#expiresAt);
         // expireOverdue() solo toma apartados con expiresAt, así que este queda fuera.
         apartado.setDeliveryDate(req.getDeliveryDate());
@@ -271,10 +323,19 @@ public class ApartadoService {
         apartado.setStatus(ApartadoStatus.ACTIVE);
         Apartado saved = apartadoRepository.save(apartado);
 
-        Sale depositSale = saleService.createDeposit(saved, req.getDepositAmount(), req.getPaymentMethod(), req.getAmountReceived(), actor);
+        // Con pago completo, el anticipo se registra exacto; lo recibido y el cambio van en la
+        // liquidación, que es el ticket que se lleva el cliente.
+        BigDecimal depositReceived = fullPayment && cash ? depositAmount : req.getAmountReceived();
+        Sale depositSale = saleService.createDeposit(saved, depositAmount, req.getPaymentMethod(), depositReceived, actor);
         saved.setDepositSaleId(depositSale.getId());
         saved.setDepositSaleFolio(depositSale.getFolio());
         saved = apartadoRepository.save(saved);
+
+        if (fullPayment) {
+            // Pagó todo, pero se lo lleva después: queda por entregar (ver #deliver).
+            saved.setPendingDelivery(true);
+            return liquidate(saved, req.getPaymentMethod(), req.getAmountReceived(), saved.getCustomerEmail(), actor, depositAmount);
+        }
 
         for (User staff : staffToNotify(saved, actor)) {
             emailService.sendApartadoConfirmedStaffEmail(saved, staff.getEmail());
@@ -295,7 +356,7 @@ public class ApartadoService {
      * ({@link Tienda#getLastApartadoFolio()}).
      */
     private Long nextApartadoFolio(Tienda tienda) {
-        Tienda locked = tiendaRepository.findByIdForUpdate(tienda.getId())
+        Tienda locked = tiendaRepository.findByIdForUpdate(tienda.getId()).map(entityLocks::fresh)
                 .orElseThrow(() -> new IllegalStateException("Tienda no encontrada"));
         long next = locked.getLastApartadoFolio() + 1;
         locked.setLastApartadoFolio(next);
@@ -313,7 +374,9 @@ public class ApartadoService {
         return PublicApartadoDto.builder()
                 .id(apartado.getId())
                 .folio(apartado.getFolio())
-                .status(apartado.getStatus().name())
+                // Pagado completo y todavía sin recoger: la tienda en línea lo muestra aparte.
+                .status(!Boolean.TRUE.equals(apartado.getPendingDelivery()) ? apartado.getStatus().name()
+                        : apartado.getItems().stream().anyMatch(i -> i.getDeliveredAt() != null) ? "PAID_PARTIAL" : "PAID")
                 .requestedAt(apartado.getRequestedAt())
                 .confirmedAt(apartado.getConfirmedAt())
                 .expiresAt(apartado.getExpiresAt())
@@ -322,6 +385,8 @@ public class ApartadoService {
                 .subtotal(apartado.getSubtotal())
                 .discount(apartado.getDiscount())
                 .total(apartado.getTotal())
+                .depositAmount(hasPaidDeposit(apartado) ? apartado.getDepositAmount() : null)
+                .retentionPercent(hasPaidDeposit(apartado) ? apartado.getRetentionPercent() : null)
                 .items(apartado.getItems().stream()
                         .map(i -> PublicApartadoDto.Item.builder()
                                 .productId(i.getProduct() != null ? i.getProduct().getId() : null)
@@ -407,8 +472,12 @@ public class ApartadoService {
      */
     @Transactional
     public PublicApartadoDto publicApartadoCancel(String slug, Long folio, String phone, String reason) {
-        Apartado apartado = resolveAndVerifyPublicApartado(slug, folio, phone);
-        return toPublicDto(doCancel(apartado, reason, null));
+        Apartado apartado = entityLocks.fresh(resolveAndVerifyPublicApartado(slug, folio, phone));
+        // Con anticipo hay dinero de por medio: lo decide la tienda, no el cliente solo.
+        if (hasPaidDeposit(apartado)) {
+            throw new IllegalStateException("Este apartado tiene un anticipo pagado: para cancelarlo comunícate con la tienda");
+        }
+        return toPublicDto(doCancel(apartado, reason, null, null, null));
     }
 
     /**
@@ -423,19 +492,18 @@ public class ApartadoService {
     /**
      * "¿No tienes tu folio?" — busca los apartados de esta tienda que coincidan con un
      * teléfono, sin necesitar el folio (ver {@link #publicApartadoLookup}, que sí lo
-     * exige). A propósito es MENOS estricto que esa otra consulta: cualquiera que sepa el
-     * teléfono de alguien puede ver su historial de apartados en esta tienda (nombre no se
-     * pide), no solo uno puntual — se decidió así explícitamente porque no es información
-     * sensible (no hay pagos ni datos financieros de por medio) y perder el folio es un
-     * caso real y frecuente. Si se vuelve un problema real, lo primero a ajustar sería
-     * pedir también el nombre exacto para filtrar.
+     * exige). Por eso devuelve SOLO fecha y estado ({@link PublicApartadoBrief}): sin folio,
+     * productos ni montos. El folio junto con el teléfono abre el detalle y permite cancelar,
+     * así que no se le da a quien solo sabe un teléfono (alguien con una lista de teléfonos
+     * podría armar quién apartó qué y cuánto pagó). El cliente llama a la tienda, da la fecha
+     * y le dan su folio. Además va limitada por IP (ver RateLimitInterceptor).
      *
      * @param slug  slug de la tienda
      * @param phone teléfono a buscar (tolerante a formato, ver {@link #phonesMatch})
-     * @return hasta {@value #PHONE_LOOKUP_RESULT_LIMIT} apartados que coinciden, más
+     * @return hasta {@value #PHONE_LOOKUP_RESULT_LIMIT} apartados (fecha y estado) que coinciden, más
      *         recientes primero; vacío si no hay ninguno o el teléfono es demasiado corto
      */
-    public List<PublicApartadoDto> publicApartadoLookupByPhone(String slug, String phone) {
+    public List<PublicApartadoBrief> publicApartadoLookupByPhone(String slug, String phone) {
         Tienda tienda = findPublicTienda(slug);
         if (phone == null || phone.replaceAll("\\D", "").length() < 7) return List.of();
         List<Apartado> candidates = apartadoRepository.findByTiendaIdOrderByRequestedAtDesc(
@@ -443,7 +511,9 @@ public class ApartadoService {
         return candidates.stream()
                 .filter(a -> phonesMatch(a.getCustomerPhone(), phone))
                 .limit(PHONE_LOOKUP_RESULT_LIMIT)
-                .map(this::toPublicDto)
+                // Solo fecha y estado (ver PublicApartadoBrief): el folio, junto con el
+                // teléfono, abre el detalle; no se le da a quien solo sabe el teléfono.
+                .map(a -> new PublicApartadoBrief(a.getRequestedAt(), a.getStatus().name()))
                 .toList();
     }
 
@@ -638,10 +708,36 @@ public class ApartadoService {
      * @param pageable paginación solicitada
      * @param actor usuario que consulta; acota el resultado a su tienda
      */
-    public Page<Apartado> search(ApartadoStatus status, ApartadoOrigin origin, Long folio, LocalDate from, LocalDate to, String q, Pageable pageable, User actor) {
+    public Page<Apartado> search(ApartadoStatus status, ApartadoOrigin origin, Long folio, Boolean review, LocalDate from, LocalDate to, String q, Pageable pageable, User actor) {
         LocalDateTime effectiveFrom = from != null ? from.atStartOfDay() : MIN_DATE;
         LocalDateTime effectiveTo = to != null ? to.plusDays(1).atStartOfDay() : MAX_DATE;
-        return apartadoRepository.search(tenantScope.scopeId(actor), status, origin, folio, effectiveFrom, effectiveTo, q, pageable);
+        return apartadoRepository.search(tenantScope.scopeId(actor), status, origin, folio, review, effectiveFrom, effectiveTo, q, pageable);
+    }
+
+    /** Cuántos apartados tienen el inventario por revisar (vencidos o cancelados por el cliente). */
+    public long stockReviewCount(User actor) {
+        return apartadoRepository.countStockReview(tenantScope.scopeId(actor));
+    }
+
+    /**
+     * Revisa el inventario de un apartado que venció o que canceló el cliente desde la tienda
+     * en línea: por producto, regresa / merma / no regresó ({@link StockReturnService}). Hasta
+     * aquí el producto seguía fuera del stock. Quita la marca de "por revisar".
+     */
+    @Transactional
+    public Apartado reviewStock(Long id, ApartadoStockReviewRequest req, User actor) {
+        Apartado apartado = entityLocks.fresh(findById(id, actor));
+        if (!Boolean.TRUE.equals(apartado.getStockReviewPending())) {
+            throw new IllegalStateException("Este apartado no tiene inventario por revisar");
+        }
+        String note = req.getNote() != null && !req.getNote().isBlank() ? req.getNote().trim() : null;
+        Map<Long, ItemReturnOutcome> outcomes = stockReturnService.resolve(req.getItems(), stockItemIds(apartado), note, "note");
+        String motivo = apartado.getStatus() == ApartadoStatus.EXPIRED ? "vencido" : "cancelado por el cliente";
+        restoreStock(apartado, motivo, actor, outcomes, note);
+        apartado.setStockReviewPending(false);
+        apartado.setStockReviewedBy(actor);
+        apartado.setStockReviewedAt(LocalDateTime.now());
+        return apartadoRepository.save(apartado);
     }
 
     /** Cuántos apartados {@code PENDING} tiene la tienda del actor — alimenta el badge del sidebar. */
@@ -726,7 +822,7 @@ public class ApartadoService {
      */
     @Transactional
     public Apartado confirm(Long id, ApartadoConfirmRequest req, User actor) {
-        Apartado apartado = findById(id, actor);
+        Apartado apartado = entityLocks.fresh(findById(id, actor));
         if (apartado.getStatus() != ApartadoStatus.PENDING) {
             throw new IllegalStateException("Este apartado ya fue confirmado, completado o cancelado");
         }
@@ -752,7 +848,7 @@ public class ApartadoService {
             // concurrentes sobre el mismo producto queden serializadas en vez de ambas
             // partir del mismo stock leído (condición de carrera — hallazgo "Media" de la
             // auditoría de código).
-            Product product = productRepository.findByIdForUpdate(item.getProduct().getId())
+            Product product = productRepository.findByIdForUpdate(item.getProduct().getId()).map(entityLocks::fresh)
                     .orElseThrow(() -> new IllegalStateException("\"" + item.getProductName() + "\" ya no existe en el catálogo"));
             // "Por pedido" (ver Product#getIsMadeToOrder): no hay inventario real que
             // validar ni descontar.
@@ -783,7 +879,7 @@ public class ApartadoService {
                 mv.setQuantity(qtyInt);
                 mv.setPreviousStock(previous);
                 mv.setNewStock(previous - qtyInt);
-                mv.setReason("Apartado #" + apartado.getId() + " confirmado");
+                mv.setReason("Apartado #" + apartado.getFolio() + " confirmado");
                 mv.setSource(MovementSource.APARTADO);
                 movementRepository.save(mv);
             }
@@ -831,11 +927,123 @@ public class ApartadoService {
      */
     @Transactional
     public Apartado complete(Long id, ApartadoCompleteRequest req, User actor) {
-        Apartado apartado = findById(id, actor);
+        Apartado apartado = entityLocks.fresh(findById(id, actor));
         if (apartado.getStatus() != ApartadoStatus.ACTIVE) {
             throw new IllegalStateException("Solo se puede completar un apartado confirmado (activo)");
         }
-        Sale sale = saleService.completeFromApartado(apartado, req.getPaymentMethod(), req.getAmountReceived(), req.getCustomerEmail(), actor);
+        // Al liquidar (o completar uno en línea) el cliente se lleva lo que falta: es su entrega.
+        List<ApartadoItem> pending = apartado.getItems().stream().filter(i -> i.getDeliveredAt() == null).toList();
+        recordDelivery(apartado, pending, req.getDeductItemIds(), actor, "descontado al liquidar");
+        return liquidate(apartado, req.getPaymentMethod(), req.getAmountReceived(), req.getCustomerEmail(), actor, BigDecimal.ZERO);
+    }
+
+    /**
+     * Registra que el cliente se llevó un apartado que pagó completo en el primer pago. Aquí se
+     * decide qué productos sobre pedido salen del inventario, como al liquidar uno normal.
+     */
+    @Transactional
+    public Apartado deliver(Long id, ApartadoDeliverRequest req, User actor) {
+        Apartado apartado = entityLocks.fresh(findById(id, actor));
+        if (apartado.getStatus() != ApartadoStatus.COMPLETED || !Boolean.TRUE.equals(apartado.getPendingDelivery())) {
+            throw new IllegalStateException("Este apartado no está por entregar");
+        }
+        if (apartado.getRefundedAt() != null) {
+            throw new IllegalStateException("Este apartado ya se devolvió");
+        }
+        // Se entrega por renglón y puede ser en varias visitas: solo lo que aún no se entrega.
+        List<ApartadoItem> pending = apartado.getItems().stream().filter(i -> i.getDeliveredAt() == null).toList();
+        List<Long> requested = req != null && req.getItemIds() != null ? req.getItemIds().stream().distinct().toList() : null;
+        List<ApartadoItem> now = requested == null ? pending
+                : pending.stream().filter(i -> requested.contains(i.getId())).toList();
+        if (requested != null && now.size() != requested.size()) {
+            throw new IllegalStateException("Algún producto ya se entregó o no es de este apartado");
+        }
+        if (now.isEmpty()) {
+            throw new IllegalStateException("Elige al menos un producto para entregar");
+        }
+        List<Long> nowIds = now.stream().map(ApartadoItem::getId).toList();
+        List<Long> deduct = req != null && req.getDeductItemIds() != null ? req.getDeductItemIds() : List.of();
+        if (!nowIds.containsAll(deduct)) {
+            throw new IllegalStateException("Solo se puede descontar lo que se entrega ahora");
+        }
+        LocalDateTime at = recordDelivery(apartado, now, deduct, actor, "descontado al entregar");
+        // Sigue por entregar mientras falte algún renglón; la del apartado es la última entrega.
+        apartado.setPendingDelivery(apartado.getItems().stream().anyMatch(i -> i.getDeliveredAt() == null));
+        apartado.setDeliveredBy(actor);
+        apartado.setDeliveredAt(at);
+        return apartadoRepository.save(apartado);
+    }
+
+    /**
+     * Registra la entrega de esas líneas (al presionar Entregar o al liquidar): lo sobre pedido
+     * indicado en {@code deduct} sale del inventario; lo demás deja un renglón informativo
+     * "Apartado entregado" para que la entrega se vea en Movimientos. Marca fecha y quién.
+     */
+    private LocalDateTime recordDelivery(Apartado apartado, List<ApartadoItem> items, List<Long> deduct, User actor, String deductWhen) {
+        List<Long> toDeduct = deduct != null ? deduct : List.of();
+        String already = apartado.getOrigin() == ApartadoOrigin.DEPOSIT ? "ya se había descontado en el anticipo" : "ya se había descontado al confirmar";
+        for (ApartadoItem item : items) {
+            Product product = item.getProduct();
+            boolean onOrder = Boolean.TRUE.equals(item.getOnOrder());
+            if (product == null || (onOrder && toDeduct.contains(item.getId()))) continue;
+            String how = Boolean.TRUE.equals(product.getIsMadeToOrder()) ? "por pedido, no maneja inventario"
+                    : onOrder ? "sobre pedido, sin descontar del inventario"
+                    : already;
+            InventoryMovement mv = new InventoryMovement();
+            mv.setProduct(product);
+            mv.setUser(actor);
+            mv.setType(MovementType.ADJUSTMENT);
+            mv.setQuantity(item.getQuantity().intValue());
+            mv.setPreviousStock(product.getStock());
+            mv.setNewStock(product.getStock());
+            mv.setReason("Apartado #" + apartado.getFolio() + " entregado (" + how + ")");
+            mv.setSource(MovementSource.APARTADO_DELIVERED);
+            movementRepository.save(mv);
+        }
+        List<Long> ids = items.stream().map(ApartadoItem::getId).toList();
+        deductOnOrderItems(apartado, toDeduct.stream().filter(ids::contains).toList(), actor, deductWhen);
+        LocalDateTime at = LocalDateTime.now();
+        for (ApartadoItem item : items) {
+            item.setDeliveredAt(at);
+            item.setDeliveredBy(actor);
+        }
+        return at;
+    }
+
+    /** Saca del inventario las líneas sobre pedido que se indicaron; las demás no se tocan. */
+    private void deductOnOrderItems(Apartado apartado, List<Long> itemIds, User actor, String when) {
+        if (itemIds == null || itemIds.isEmpty()) return;
+        for (ApartadoItem item : apartado.getItems()) {
+            if (!Boolean.TRUE.equals(item.getOnOrder()) || !itemIds.contains(item.getId()) || item.getProduct() == null) continue;
+            Product product = productRepository.findByIdForUpdate(item.getProduct().getId()).map(entityLocks::fresh)
+                    .orElseThrow(() -> new IllegalStateException("No se encontró \"" + item.getProductName() + "\""));
+            int quantity = item.getQuantity().intValue();
+            int previous = product.getStock();
+            if (previous < quantity) {
+                throw new IllegalStateException("No hay suficiente stock de \"" + product.getName()
+                        + "\" para descontarlo (disponible: " + previous + ")");
+            }
+            product.setStock(previous - quantity);
+            productRepository.save(product);
+
+            InventoryMovement mv = new InventoryMovement();
+            mv.setProduct(product);
+            mv.setUser(actor);
+            mv.setType(MovementType.OUT);
+            mv.setQuantity(quantity);
+            mv.setPreviousStock(previous);
+            mv.setNewStock(previous - quantity);
+            mv.setReason("Apartado #" + apartado.getFolio() + " (sobre pedido, " + when + ")");
+            mv.setSource(MovementSource.APARTADO_DELIVERED);
+            movementRepository.save(mv);
+            item.setOnOrder(false);
+        }
+    }
+
+    /** Cobra lo que falta de un apartado y lo deja {@code COMPLETED}. */
+    private Apartado liquidate(Apartado apartado, PaymentMethod paymentMethod, BigDecimal amountReceived,
+                               String customerEmail, User actor, BigDecimal paidNow) {
+        Sale sale = saleService.completeFromApartado(apartado, paymentMethod, amountReceived, customerEmail, actor, paidNow);
         apartado.setStatus(ApartadoStatus.COMPLETED);
         apartado.setCompletedBy(actor);
         apartado.setSaleId(sale.getId());
@@ -848,6 +1056,55 @@ public class ApartadoService {
             emailService.sendApartadoCompletedStaffEmail(saved, staff.getEmail());
         }
         return saved;
+    }
+
+    /**
+     * Registra un ABONO a un apartado con anticipo {@code ACTIVE}: un pago a cuenta menor al
+     * saldo pendiente. Se cobra como una venta {@code DEPOSIT} más (marcada como abono), en el
+     * corte de quien lo recibe, y se suma a lo pagado a cuenta ({@code depositAmount}). Igual
+     * que el anticipo, no es reembolsable. Para pagar todo el saldo está {@link #complete}.
+     *
+     * @return la venta del abono (para imprimir su ticket)
+     */
+    @Transactional
+    public Sale addInstallment(Long id, ApartadoInstallmentRequest req, User actor) {
+        Apartado apartado = entityLocks.fresh(findById(id, actor));
+        if (apartado.getStatus() != ApartadoStatus.ACTIVE) {
+            throw new IllegalStateException("Solo se puede abonar a un apartado activo");
+        }
+        if (!hasPaidDeposit(apartado)) {
+            throw new IllegalStateException("Solo los apartados con anticipo aceptan abonos");
+        }
+        BigDecimal pending = apartado.getTotal().subtract(apartado.getDepositAmount());
+        if (req.getAmount().compareTo(pending) >= 0) {
+            throw new FieldConflictException("amount", "El abono debe ser menor al saldo pendiente ("
+                    + MONEY_FMT.format(pending)
+                    + "); para pagarlo todo usa Liquidar");
+        }
+        Sale sale = saleService.createDeposit(apartado, req.getAmount(), req.getPaymentMethod(), req.getAmountReceived(), actor, true);
+        apartado.setDepositAmount(apartado.getDepositAmount().add(req.getAmount()));
+        apartadoRepository.save(apartado);
+        // Informativo: el abono se ve en Movimientos junto a los productos del apartado.
+        String note = "Apartado #" + apartado.getFolio() + " abono de " + MONEY_FMT.format(req.getAmount())
+                + " (venta #" + sale.getFolio() + "), saldo " + MONEY_FMT.format(apartado.getTotal().subtract(apartado.getDepositAmount()));
+        for (ApartadoItem item : apartado.getItems()) {
+            Product product = item.getProduct();
+            if (product == null) continue;
+            InventoryMovement mv = new InventoryMovement();
+            mv.setProduct(product);
+            mv.setUser(actor);
+            mv.setType(MovementType.ADJUSTMENT);
+            mv.setQuantity(item.getQuantity().intValue());
+            mv.setPreviousStock(product.getStock());
+            mv.setNewStock(product.getStock());
+            mv.setReason(note);
+            mv.setSource(MovementSource.APARTADO_INSTALLMENT);
+            movementRepository.save(mv);
+        }
+        String email = req.getCustomerEmail() != null && !req.getCustomerEmail().isBlank()
+                ? req.getCustomerEmail().trim() : null;
+        if (email != null) emailService.sendTicketEmail(sale, email);
+        return sale;
     }
 
     /**
@@ -869,7 +1126,7 @@ public class ApartadoService {
      */
     @Transactional
     public Apartado removeItem(Long apartadoId, Long itemId, User actor) {
-        Apartado apartado = findById(apartadoId, actor);
+        Apartado apartado = entityLocks.fresh(findById(apartadoId, actor));
         if (apartado.getStatus() != ApartadoStatus.PENDING) {
             throw new IllegalStateException("Solo se pueden quitar productos de un apartado pendiente");
         }
@@ -917,9 +1174,202 @@ public class ApartadoService {
      * @throws IllegalArgumentException si no existe o no pertenece a la tienda del actor
      */
     @Transactional
-    public Apartado cancel(Long id, String reason, User actor) {
+    public Apartado cancel(Long id, ApartadoCancelRequest req, User actor) {
+        Apartado apartado = entityLocks.fresh(findById(id, actor));
+        String reason = req != null ? req.getReason() : null;
+        DepositResolution depositAction = req != null ? req.getDepositAction() : null;
+        // Activo: el stock ya se había descontado; por producto se elige qué pasó con él
+        // (regresa / merma / no regresó). Se valida antes de tocar el dinero del anticipo.
+        String stockNote = req != null && req.getStockNote() != null && !req.getStockNote().isBlank()
+                ? req.getStockNote().trim() : null;
+        Map<Long, ItemReturnOutcome> outcomes = apartado.getStatus() == ApartadoStatus.ACTIVE
+                ? stockReturnService.resolve(req != null ? req.getItems() : null, stockItemIds(apartado), stockNote, "stockNote")
+                : Map.of();
+        if (hasPaidDeposit(apartado) && apartado.getStatus() == ApartadoStatus.ACTIVE) {
+            List<Sale> deposits = paidDeposits(apartado);
+            Retention retention = retention(apartado, req != null ? req.getReturnReason() : null,
+                    depositAction, sum(deposits), sum(deposits), reason, actor);
+            // Primero el dinero: si no se puede devolver (p. ej. no hay efectivo en la caja),
+            // el apartado no se cancela. Se devuelve desde el último pago hacia atrás.
+            BigDecimal toRefund = sum(deposits).subtract(retention.amount());
+            for (Sale deposit : newestFirst(deposits)) {
+                if (toRefund.signum() <= 0) break;
+                BigDecimal amount = toRefund.min(deposit.getTotal());
+                saleService.refundDeposit(deposit.getId(), amount, apartado.getFolio(), reason, actor);
+                toRefund = toRefund.subtract(amount);
+            }
+            apply(apartado, retention);
+        }
+        return doCancel(apartado, reason, actor, outcomes, stockNote);
+    }
+
+    /**
+     * Devuelve un apartado ya completado: el cliente lo recogió y después lo regresó.
+     * <ul>
+     *   <li>Dinero: se devuelve la venta final (saldo o pago completo); el anticipo, si lo
+     *       hubo, según {@code depositAction} (devolver o que se lo quede la tienda). Siempre
+     *       como devolución (ver {@link SaleService#refundForApartado}): en efectivo sale de la
+     *       caja de quien devuelve, que necesita su corte abierto.</li>
+     *   <li>Producto: por artículo, regresa / merma / no regresó ({@link StockReturnService}).</li>
+     * </ul>
+     * El apartado sigue {@code COMPLETED}, marcado como devuelto (quién, cuándo, motivo). Todo o
+     * nada: si no se puede devolver el efectivo, no cambia nada.
+     */
+    @Transactional
+    public Apartado refund(Long id, ApartadoRefundRequest req, User actor) {
+        Apartado apartado = entityLocks.fresh(findById(id, actor));
+        if (apartado.getStatus() != ApartadoStatus.COMPLETED) {
+            throw new IllegalStateException("Solo se puede devolver un apartado completado");
+        }
+        if (apartado.getRefundedAt() != null) {
+            throw new IllegalStateException("Este apartado ya se devolvió");
+        }
+        String reason = req.getReason().trim();
+        Map<Long, ItemReturnOutcome> outcomes = stockReturnService.resolve(req.getItems(), stockItemIds(apartado), reason, "reason");
+
+        List<Sale> deposits = hasPaidDeposit(apartado) ? paidDeposits(apartado) : List.of();
+        boolean depositPaid = !deposits.isEmpty();
+        Sale finalSale = apartado.getSaleId() == null ? null : saleRepository.findById(apartado.getSaleId())
+                .filter(s -> s.getStatus() == SaleStatus.COMPLETED && s.getRefundedAt() == null).orElse(null);
+        // Primero se devuelve la venta final (el saldo), luego los abonos y al final el anticipo.
+        List<Sale> payments = new ArrayList<>();
+        if (finalSale != null) payments.add(finalSale);
+        payments.addAll(newestFirst(deposits));
+        BigDecimal paid = sum(payments);
+        Retention retention = depositPaid
+                ? retention(apartado, req.getReturnReason(), req.getDepositAction(), paid, sum(deposits), reason, actor)
+                : new Retention(null, BigDecimal.ZERO);
+        BigDecimal toRefund = paid.subtract(retention.amount());
+        // Mismo límite que una devolución en Ventas, sobre lo que de verdad se devuelve.
+        if (finalSale != null) saleService.ensureCanRefund(apartado.getTienda(), toRefund, finalSale.getCreatedAt(), actor);
+
+        String label = "Devolución apartado #" + apartado.getFolio();
+        for (Sale payment : payments) {
+            if (toRefund.signum() <= 0) break;
+            BigDecimal amount = toRefund.min(payment.getTotal());
+            String what = payment.getKind() != SaleKind.DEPOSIT ? (depositPaid ? "saldo" : "pago")
+                    : Boolean.TRUE.equals(payment.getInstallment()) ? "abono" : "anticipo";
+            saleService.refundForApartado(payment.getId(), amount,
+                    label + " (" + what + ", venta folio " + payment.getFolio() + ")", reason, actor);
+            toRefund = toRefund.subtract(amount);
+        }
+        if (depositPaid) apply(apartado, retention);
+
+        String what = "devolución apartado #" + apartado.getFolio();
+        Map<Long, ItemReturnOutcome> byProduct = new java.util.HashMap<>();
+        boolean pendingDelivery = Boolean.TRUE.equals(apartado.getPendingDelivery());
+        for (ApartadoItem item : apartado.getItems()) {
+            if (item.getProduct() == null) continue;
+            Product product = productRepository.findByIdForUpdate(item.getProduct().getId()).map(entityLocks::fresh).orElse(null);
+            if (product == null || Boolean.TRUE.equals(product.getIsMadeToOrder()) || Boolean.TRUE.equals(item.getOnOrder())) continue;
+            // Entrega parcial: lo que nunca se entregó sigue en la tienda, así que regresa.
+            ItemReturnOutcome outcome = pendingDelivery && item.getDeliveredAt() == null ? ItemReturnOutcome.RESTOCK
+                    : outcomes.getOrDefault(item.getId(), ItemReturnOutcome.RESTOCK);
+            item.setReturnOutcome(outcome);
+            byProduct.put(product.getId(), outcome);
+            stockReturnService.apply(product, item.getQuantity().intValue(), outcome, actor,
+                    MovementSource.SALE_REFUND, label, what, reason);
+        }
+        if (apartado.getSaleId() != null) saleService.markItemOutcomes(apartado.getSaleId(), byProduct);
+
+        apartado.setPendingDelivery(false);
+        apartado.setRefundedBy(actor);
+        apartado.setRefundedAt(LocalDateTime.now());
+        apartado.setRefundReason(reason);
+        return apartadoRepository.save(apartado);
+    }
+
+    /** Marca el inventario como por revisar, si el apartado tiene productos con inventario. */
+    private static void markStockReview(Apartado apartado) {
+        if (!stockItemIds(apartado).isEmpty()) apartado.setStockReviewPending(true);
+    }
+
+    /** Ids de las líneas con inventario que regresar (con producto, no por pedido ni sobre pedido). */
+    private static List<Long> stockItemIds(Apartado apartado) {
+        return apartado.getItems().stream()
+                .filter(i -> i.getProduct() != null && !Boolean.TRUE.equals(i.getProduct().getIsMadeToOrder())
+                        && !Boolean.TRUE.equals(i.getOnOrder()))
+                .map(ApartadoItem::getId)
+                .toList();
+    }
+
+    /**
+     * Cobros de un apartado, del más antiguo al más reciente: el anticipo, el saldo (o el pago
+     * completo si no tuvo anticipo), incluidos los cancelados o devueltos, para el desglose de
+     * pagos en Apartados.
+     */
+    @Transactional(readOnly = true)
+    public List<ApartadoPaymentRow> payments(Long id, User actor) {
         Apartado apartado = findById(id, actor);
-        return doCancel(apartado, reason, actor);
+        // -1: un IN nunca vacío. saleId/depositSaleId cubren las ventas de antes de ligarlas
+        // por apartado_id (y la venta final ya cancelada sigue ligada por apartado_id).
+        List<Long> ids = new ArrayList<>(List.of(-1L));
+        if (apartado.getSaleId() != null) ids.add(apartado.getSaleId());
+        if (apartado.getDepositSaleId() != null) ids.add(apartado.getDepositSaleId());
+        return saleRepository.findApartadoPaymentRows(apartado.getId(), ids);
+    }
+
+    /** Anticipo y abonos de un apartado que siguen cobrados (ni cancelados ni devueltos). */
+    private List<Sale> paidDeposits(Apartado apartado) {
+        return saleRepository.findApartadoPayments(apartado.getId(), List.of(-1L, apartado.getDepositSaleId())).stream()
+                .filter(s -> s.getKind() == SaleKind.DEPOSIT && s.getStatus() == SaleStatus.COMPLETED && s.getRefundedAt() == null)
+                .toList();
+    }
+
+    /** Por qué se cancela/devuelve y cuánto de lo pagado se queda la tienda. */
+    private record Retention(ApartadoReturnReason reason, BigDecimal amount) {}
+
+    /**
+     * Política al cancelar o devolver un apartado con anticipo:
+     * <ul>
+     *   <li>Cambio de opinión: la tienda retiene el % del TOTAL del apartado que decía su
+     *       ticket ({@link Apartado#getRetentionPercent()}), sin pasar de lo pagado; el resto
+     *       se devuelve. Así lo retenido no depende de cuánto dio de anticipo. Apartados de
+     *       antes (sin %): se retiene lo pagado a cuenta (anticipo y abonos).</li>
+     *   <li>Defectuoso: se devuelve todo. Solo ADMIN/SUPERVISOR/SUPER_ADMIN, con motivo
+     *       (si no, cualquiera lo usaría para saltarse la retención).</li>
+     * </ul>
+     *
+     * @param paid lo que se devolvería sin retención (lo cobrado que sigue vigente)
+     * @param paidOnAccount anticipo y abonos vigentes (regla de antes)
+     */
+    private Retention retention(Apartado apartado, ApartadoReturnReason requested, DepositResolution legacy,
+                                BigDecimal paid, BigDecimal paidOnAccount, String reason, User actor) {
+        if (requested == ApartadoReturnReason.DEFECTIVE || legacy == DepositResolution.REFUNDED) {
+            if (!tenantScope.isAdminLevel(actor)) {
+                throw new IllegalStateException(
+                        "Un producto defectuoso (se devuelve todo) solo lo autoriza un administrador o supervisor");
+            }
+            if (reason == null || reason.isBlank()) {
+                throw new FieldConflictException("reason", "Escribe el motivo: qué defecto tiene el producto");
+            }
+            return new Retention(ApartadoReturnReason.DEFECTIVE, BigDecimal.ZERO);
+        }
+        BigDecimal percent = apartado.getRetentionPercent();
+        BigDecimal amount = percent == null ? paidOnAccount
+                : apartado.getTotal().multiply(percent).divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
+        return new Retention(ApartadoReturnReason.CHANGE_OF_MIND, amount.min(paid).max(BigDecimal.ZERO));
+    }
+
+    private static void apply(Apartado apartado, Retention retention) {
+        apartado.setReturnReason(retention.reason());
+        apartado.setRetainedAmount(retention.amount());
+        apartado.setDepositResolution(retention.amount().signum() > 0 ? DepositResolution.RETAINED : DepositResolution.REFUNDED);
+    }
+
+    private static BigDecimal sum(List<Sale> sales) {
+        return sales.stream().map(Sale::getTotal).reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private static List<Sale> newestFirst(List<Sale> sales) {
+        List<Sale> sorted = new ArrayList<>(sales);
+        sorted.sort(java.util.Comparator.comparing(Sale::getId).reversed());
+        return sorted;
+    }
+
+    /** Apartado de anticipo con su venta de anticipo registrada. */
+    private static boolean hasPaidDeposit(Apartado apartado) {
+        return apartado.getOrigin() == ApartadoOrigin.DEPOSIT && apartado.getDepositSaleId() != null;
     }
 
     /**
@@ -938,15 +1388,19 @@ public class ApartadoService {
      *                 cliente" de "lo canceló alguien del personal"
      * @throws IllegalStateException si ya estaba completado, cancelado o vencido
      */
-    private Apartado doCancel(Apartado apartado, String reason, User actor) {
+    private Apartado doCancel(Apartado apartado, String reason, User actor,
+                              Map<Long, ItemReturnOutcome> outcomes, String stockNote) {
         if (apartado.getStatus() != ApartadoStatus.PENDING && apartado.getStatus() != ApartadoStatus.ACTIVE) {
             throw new IllegalStateException("Este apartado ya no se puede cancelar");
         }
         if (apartado.getStatus() == ApartadoStatus.ACTIVE) {
-            // InventoryMovement.user es NOT NULL — sin actor humano (cancelación desde la
-            // vitrina pública), se le atribuye el movimiento a quien lo había confirmado,
-            // mismo criterio que ya usa expireOverdue() para su propio restoreStock.
-            restoreStock(apartado, "cancelado", actor != null ? actor : apartado.getConfirmedBy());
+            if (outcomes == null) {
+                // Sin nadie de la tienda decidiendo (lo canceló el cliente desde la tienda en
+                // línea): el producto no regresa solo; queda por revisar.
+                markStockReview(apartado);
+            } else {
+                restoreStock(apartado, "cancelado", actor, outcomes, stockNote);
+            }
         }
         apartado.setStatus(ApartadoStatus.CANCELLED);
         apartado.setCancelledBy(actor);
@@ -972,29 +1426,21 @@ public class ApartadoService {
      * @param user usuario a registrar en el movimiento — el que cancela, o (si lo dispara
      *             el job de vencimiento, sin actor humano) quien lo había confirmado
      */
-    private void restoreStock(Apartado apartado, String motivo, User user) {
+    private void restoreStock(Apartado apartado, String motivo, User user,
+                              Map<Long, ItemReturnOutcome> outcomes, String note) {
+        String what = "apartado #" + apartado.getFolio() + " " + motivo;
         for (ApartadoItem item : apartado.getItems()) {
             if (item.getProduct() == null) continue; // el producto pudo eliminarse desde entonces; no hay a quién devolverle stock
             // findByIdForUpdate: mismo motivo que en confirm() — dos operaciones
             // concurrentes sobre el mismo producto no deben pisarse.
-            Product product = productRepository.findByIdForUpdate(item.getProduct().getId()).orElse(null);
+            Product product = productRepository.findByIdForUpdate(item.getProduct().getId()).map(entityLocks::fresh).orElse(null);
             if (product == null) continue;
-            if (Boolean.TRUE.equals(product.getIsMadeToOrder())) continue; // nunca se descontó stock real, nada que devolver
-            int qty = item.getQuantity().intValue();
-            int previous = product.getStock();
-            product.setStock(previous + qty);
-            productRepository.save(product);
-
-            InventoryMovement mv = new InventoryMovement();
-            mv.setProduct(product);
-            mv.setUser(user);
-            mv.setType(MovementType.IN);
-            mv.setQuantity(qty);
-            mv.setPreviousStock(previous);
-            mv.setNewStock(previous + qty);
-            mv.setReason("Apartado #" + apartado.getId() + " " + motivo);
-            mv.setSource(MovementSource.APARTADO_RETURN);
-            movementRepository.save(mv);
+            // Nunca se descontó stock real, nada que devolver.
+            if (Boolean.TRUE.equals(product.getIsMadeToOrder()) || Boolean.TRUE.equals(item.getOnOrder())) continue;
+            ItemReturnOutcome outcome = outcomes.getOrDefault(item.getId(), ItemReturnOutcome.RESTOCK);
+            item.setReturnOutcome(outcome);
+            stockReturnService.apply(product, item.getQuantity().intValue(), outcome, user,
+                    MovementSource.APARTADO_RETURN, "Apartado #" + apartado.getFolio() + " " + motivo, what, note);
         }
     }
 
@@ -1010,8 +1456,15 @@ public class ApartadoService {
     @Transactional
     public int expireOverdue() {
         List<Apartado> overdue = apartadoRepository.findAllByStatusAndExpiresAtBefore(ApartadoStatus.ACTIVE, LocalDateTime.now());
+        int expired = 0;
         for (Apartado apartado : overdue) {
-            restoreStock(apartado, "vencido", apartado.getConfirmedBy());
+            // Se relee bloqueado: pudo completarse o cancelarse mientras corría este job.
+            entityLocks.fresh(apartado);
+            if (apartado.getStatus() != ApartadoStatus.ACTIVE || apartado.getExpiresAt() == null
+                    || !apartado.getExpiresAt().isBefore(LocalDateTime.now())) continue;
+            expired++;
+            // El producto no regresa solo: pudo dañarse o caducar mientras estuvo apartado.
+            markStockReview(apartado);
             apartado.setStatus(ApartadoStatus.EXPIRED);
             Apartado saved = apartadoRepository.save(apartado);
 
@@ -1022,7 +1475,7 @@ public class ApartadoService {
                 emailService.sendApartadoExpiredCustomerEmail(saved, saved.getCustomerEmail());
             }
         }
-        return overdue.size();
+        return expired;
     }
 
     /**
@@ -1056,6 +1509,12 @@ public class ApartadoService {
      */
     private void validateApartadoDiscountLimit(BigDecimal discount, BigDecimal lineGross, String productName, Tienda tienda) {
         if (discount == null || discount.signum() <= 0) return;
+        // Igual que en el POS (SaleService#validateDiscountLimit): con solo un tope en pesos, una
+        // línea barata podía quedar en negativo y con ella el apartado y su venta final.
+        if (discount.compareTo(lineGross) > 0) {
+            throw new IllegalStateException("El descuento de \"" + productName + "\" no puede ser mayor a su importe ("
+                    + MONEY_FMT.format(lineGross) + ")");
+        }
 
         if (tienda.getMaxApartadoDiscountAmount() == null && tienda.getMaxApartadoDiscountPercent() == null) {
             throw new IllegalStateException("Los descuentos de apartado están deshabilitados: configura un límite "

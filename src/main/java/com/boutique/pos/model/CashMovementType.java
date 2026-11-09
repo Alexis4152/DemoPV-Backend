@@ -19,7 +19,12 @@ public enum CashMovementType {
     /** Salida: préstamo de efectivo a otra caja de la tienda. NO es gasto (el dinero sigue en la tienda). */
     LOAN_OUT(true),
     /** Entrada: préstamo de efectivo recibido de otra caja de la tienda. No es ingreso. */
-    LOAN_IN(false);
+    LOAN_IN(false),
+    /**
+     * Salida: efectivo devuelto al cliente por una venta de un turno ya cerrado (ver
+     * {@code SaleService#refund}). Solo lo crea esa devolución, nunca se captura a mano.
+     */
+    REFUND(true);
 
     private final boolean outflow;
 

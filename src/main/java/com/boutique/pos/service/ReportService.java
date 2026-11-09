@@ -64,9 +64,24 @@ public class ReportService {
         map.put("averageTicket", count > 0 && total != null
                 ? total.divide(BigDecimal.valueOf(count), 2, java.math.RoundingMode.HALF_UP)
                 : BigDecimal.ZERO);
+        // Devoluciones hechas en el periodo (ya restadas en totalSales), para mostrarlas aparte.
+        BigDecimal refunds = nzero(saleRepository.refundTotalBetween(start, end, tiendaId));
+        map.put("refundsTotal", refunds);
+        map.put("refundsCount", saleRepository.refundCountBetween(start, end, tiendaId));
+        // Lo vendido en el periodo, sin restar devoluciones (el Inicio la muestra así y las
+        // devoluciones aparte), y su ticket promedio.
+        BigDecimal gross = nzero(total).add(refunds);
+        map.put("grossSales", gross);
+        map.put("grossAverageTicket", count > 0
+                ? gross.divide(BigDecimal.valueOf(count), 2, java.math.RoundingMode.HALF_UP)
+                : BigDecimal.ZERO);
         map.put("from", from);
         map.put("to", to);
         return map;
+    }
+
+    private static BigDecimal nzero(BigDecimal v) {
+        return v != null ? v : BigDecimal.ZERO;
     }
 
     /**

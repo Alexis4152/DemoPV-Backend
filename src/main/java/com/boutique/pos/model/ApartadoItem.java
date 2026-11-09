@@ -1,10 +1,13 @@
 package com.boutique.pos.model;
 
 import com.fasterxml.jackson.annotation.JsonBackReference;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 import lombok.*;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 /**
  * Línea individual de un {@link Apartado}: un producto reservado, con la cantidad y el
@@ -63,4 +66,34 @@ public class ApartadoItem {
     // ApartadoService#populateAvailableStock). Solo se llena al consultar un apartado por
     // id mientras sigue PENDING; en cualquier otra respuesta (ej. el listado) queda null.
     private transient Integer availableStock;
+
+    /** Qué pasó con el producto al cancelar el apartado (ver {@link ItemReturnOutcome}). Null
+     *  mientras siga vigente, o si nunca se descontó stock (pendiente o por pedido). */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 15)
+    private ItemReturnOutcome returnOutcome;
+
+    /** Sobre pedido: la línea no se descontó del inventario, así que tampoco regresa a él. Se
+     *  apaga si al liquidar sale del inventario (ver ApartadoService#deductOnOrderItems). */
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    @Builder.Default
+    private Boolean onOrder = false;
+
+    /**
+     * Cuándo se entregó esta línea al cliente (apartado pagado completo, ver
+     * ApartadoService#deliver). Se entrega por renglón y en una o varias visitas; null mientras
+     * no se entrega. Se conserva aunque después se devuelva el apartado (historial).
+     */
+    private LocalDateTime deliveredAt;
+
+    @JsonIgnore
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "delivered_by_user_id")
+    private User deliveredBy;
+
+    /** Quién entregó la línea (deliveredBy es LAZY y no viaja al JSON). */
+    @JsonProperty("deliveredByName")
+    public String getDeliveredByName() {
+        return deliveredBy != null ? deliveredBy.getName() : null;
+    }
 }

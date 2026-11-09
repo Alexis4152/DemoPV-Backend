@@ -1,6 +1,7 @@
 package com.boutique.pos.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 import lombok.*;
@@ -81,6 +82,8 @@ public class Apartado {
 
     /** Cuánto dejó el cliente de anticipo (solo si {@code origin == DEPOSIT}); null en los demás. */
     @Column(precision = 12, scale = 2)
+    // Lo pagado a cuenta: el anticipo más los abonos (ver ApartadoService#addInstallment);
+    // el saldo es total - depositAmount.
     private BigDecimal depositAmount;
 
     /** Id de la {@link Sale} kind=DEPOSIT generada al recibir el anticipo. Null hasta entonces. */
@@ -145,6 +148,91 @@ public class Apartado {
      *  qué no se pudo concretar (ver {@code EmailService#sendApartadoCancelledEmail}). */
     @Column(columnDefinition = "TEXT")
     private String cancelReason;
+
+    /** Al cancelar un anticipo: si se le devolvió al cliente o se lo quedó la tienda. Null
+     *  en los demás apartados y mientras no se cancele. */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 10)
+    private DepositResolution depositResolution;
+
+    /** % del total que la tienda retiene si el cliente cancela o devuelve por cambio de
+     *  opinión, copiado de la tienda al registrar el anticipo (lo que dice su ticket). Null en
+     *  los apartados de antes: lo pagado a cuenta no se devuelve. */
+    @Column(precision = 5, scale = 2)
+    private BigDecimal retentionPercent;
+
+    /** Al cancelar o devolver un apartado con anticipo: por qué (cambio de opinión o
+     *  defectuoso) y cuánto se quedó la tienda de lo pagado. */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 15)
+    private ApartadoReturnReason returnReason;
+
+    @Column(precision = 12, scale = 2)
+    private BigDecimal retainedAmount;
+
+    // Devolución de un apartado ya completado (el cliente lo recogió y lo regresó, ver
+    // ApartadoService#refund). El estado sigue COMPLETED: sí se completó; esto marca que
+    // después se devolvió.
+    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "refunded_by_user_id")
+    private User refundedBy;
+
+    private LocalDateTime refundedAt;
+
+    @Column(length = 300)
+    private String refundReason;
+
+    // Venció o lo canceló el cliente desde la tienda en línea: el producto NO regresó solo al
+    // inventario. Queda pendiente hasta que alguien de la tienda revise qué pasó con cada
+    // producto (ver ApartadoService#reviewStock). Mientras tanto sigue fuera del stock.
+    @Column(columnDefinition = "boolean default false")
+    @Builder.Default
+    private Boolean stockReviewPending = false;
+
+    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "stock_reviewed_by_user_id")
+    private User stockReviewedBy;
+
+    private LocalDateTime stockReviewedAt;
+
+    // Pagado completo en el primer pago (ver ApartadoService#createWithDeposit): ya se cobró
+    // todo, pero el cliente recoge después. Sigue COMPLETED y "por entregar" hasta que alguien
+    // registre la entrega (ApartadoService#deliver); ahí se decide qué sale del inventario de
+    // lo sobre pedido, igual que al liquidar.
+    @Column(columnDefinition = "boolean default false")
+    @Builder.Default
+    private Boolean pendingDelivery = false;
+
+    @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "delivered_by_user_id")
+    private User deliveredBy;
+
+    private LocalDateTime deliveredAt;
+
+    /** Quién registró la entrega, para la subtabla de productos (deliveredBy es LAZY y no viaja). */
+    @JsonProperty("deliveredByName")
+    public String getDeliveredByName() {
+        return deliveredBy != null ? deliveredBy.getName() : null;
+    }
+
+    /**
+     * Cuándo se decidió qué pasó con los productos (regresó, merma, no regresó): al revisar el
+     * inventario (vencido o cancelado por el cliente), al devolver o al cancelar en tienda.
+     */
+    @JsonProperty("outcomeAt")
+    public LocalDateTime getOutcomeAt() {
+        return stockReviewedAt != null ? stockReviewedAt : refundedAt != null ? refundedAt : cancelledAt;
+    }
+
+    /** Quién lo decidió (ver {@link #getOutcomeAt()}); null si fue automático. */
+    @JsonProperty("outcomeByName")
+    public String getOutcomeByName() {
+        User by = stockReviewedAt != null ? stockReviewedBy : refundedAt != null ? refundedBy : cancelledBy;
+        return by != null ? by.getName() : null;
+    }
 
     /** Id de la {@link Sale} generada al completarse (recoger y pagar). Null hasta entonces. */
     private Long saleId;

@@ -25,6 +25,9 @@ public interface ApartadoRepository extends JpaRepository<Apartado, Long> {
      */
     Optional<Apartado> findByTiendaIdAndFolio(Long tiendaId, Long folio);
 
+    /** El apartado que se completó con esta venta (su venta final), si la hay. */
+    Optional<Apartado> findBySaleId(Long saleId);
+
     /**
      * Búsqueda paginada de apartados con filtros combinables, acotada a la tienda del
      * actor. {@code tiendaId} nulo indica SUPER_ADMIN viendo todas las tiendas; {@code
@@ -51,6 +54,8 @@ public interface ApartadoRepository extends JpaRepository<Apartado, Long> {
            "AND (:status IS NULL OR a.status = :status) " +
            "AND (:origin IS NULL OR a.origin = :origin) " +
            "AND (:folio IS NULL OR a.folio = :folio) " +
+           "AND (:review IS NULL OR (:review = true AND a.stockReviewPending = true) " +
+           "     OR (:review = false AND (a.stockReviewPending IS NULL OR a.stockReviewPending = false))) " +
            "AND a.requestedAt BETWEEN :from AND :to " +
            "AND (:q IS NULL OR " +
            "     LOWER(a.customerName) LIKE LOWER(CONCAT('%',CAST(:q AS string),'%')) " +
@@ -61,6 +66,7 @@ public interface ApartadoRepository extends JpaRepository<Apartado, Long> {
                            @Param("status") ApartadoStatus status,
                            @Param("origin") ApartadoOrigin origin,
                            @Param("folio") Long folio,
+                           @Param("review") Boolean review,
                            @Param("from") LocalDateTime from,
                            @Param("to") LocalDateTime to,
                            @Param("q") String q,
@@ -74,8 +80,25 @@ public interface ApartadoRepository extends JpaRepository<Apartado, Long> {
            "AND (:tiendaId IS NULL OR a.tienda.id = :tiendaId)")
     long countPending(@Param("tiendaId") Long tiendaId);
 
+    /** Apartados vencidos o cancelados por el cliente con el inventario por revisar. */
+    @Query("SELECT COUNT(a) FROM Apartado a WHERE a.stockReviewPending = true " +
+           "AND (:tiendaId IS NULL OR a.tienda.id = :tiendaId)")
+    long countStockReview(@Param("tiendaId") Long tiendaId);
+
     /** Todos los apartados {@code ACTIVE} cuyo plazo ya venció — usado por {@code ApartadoExpiryJob}. */
     List<Apartado> findAllByStatusAndExpiresAtBefore(ApartadoStatus status, LocalDateTime now);
+
+    /**
+     * Anticipos con algún producto sobre pedido que siguen por entregar: activos, o pagados
+     * completos que el cliente todavía no recoge (sin importar la fecha). Sin los devueltos.
+     */
+    @Query("SELECT DISTINCT a FROM Apartado a JOIN a.items i LEFT JOIN i.product p " +
+           "WHERE a.tienda.id = :tiendaId AND a.origin = com.boutique.pos.model.ApartadoOrigin.DEPOSIT " +
+           "AND a.refundedAt IS NULL AND (i.onOrder = true OR p.isMadeToOrder = true) AND i.deliveredAt IS NULL " +
+           "AND (a.status = com.boutique.pos.model.ApartadoStatus.ACTIVE " +
+           "     OR (a.status = com.boutique.pos.model.ApartadoStatus.COMPLETED AND a.pendingDelivery = true)) " +
+           "ORDER BY a.deliveryDate ASC, a.folio ASC")
+    List<Apartado> findOnOrderDeposits(@Param("tiendaId") Long tiendaId);
 
     /**
      * Los apartados más recientes de una tienda (sin filtrar por teléfono aquí — el

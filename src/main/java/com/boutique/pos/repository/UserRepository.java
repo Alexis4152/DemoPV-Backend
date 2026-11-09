@@ -86,6 +86,10 @@ public interface UserRepository extends JpaRepository<User, Long> {
                        Pageable pageable);
 
     // para avisarle por correo al/los admin(es) de una tienda cuando se autocierra un corte
+    /** El supervisor de una tienda: la relación vive en Tienda, él no tiene tienda propia. */
+    @Query("SELECT t.supervisor FROM Tienda t WHERE t.id = :tiendaId")
+    Optional<User> findSupervisorOfTienda(@Param("tiendaId") Long tiendaId);
+
     /** Lista los usuarios activos con rol ADMIN de una tienda; usado para notificarles por correo cuando el job autocierra un corte. */
     @Query("SELECT u FROM User u WHERE u.tienda.id = :tiendaId AND u.role.name = 'ADMIN' AND u.isActive = true")
     List<User> findAdminsByTiendaId(@Param("tiendaId") Long tiendaId);

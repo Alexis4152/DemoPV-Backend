@@ -19,6 +19,8 @@ import com.boutique.pos.repository.ReimbursementRepository;
 import com.boutique.pos.repository.UserRepository;
 import com.boutique.pos.security.TenantScope;
 import lombok.RequiredArgsConstructor;
+import com.boutique.pos.model.WithdrawalDestination;
+import org.hibernate.Hibernate;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -46,6 +48,7 @@ public class CashMovementService {
     private static final long MAX_RECEIPT_BYTES = 5L * 1024 * 1024; // 5 MB
     private static final NumberFormat MONEY = NumberFormat.getCurrencyInstance(new Locale("es", "MX"));
 
+    private final EntityLocks entityLocks;
     private final CashCutRepository cashCutRepository;
     private final CashRegisterRepository cashRegisterRepository;
     private final CashMovementRepository movementRepository;
@@ -54,6 +57,8 @@ public class CashMovementService {
     private final CashBalanceCalculator calculator;
     private final ImageStorageService imageStorageService;
     private final TenantScope tenantScope;
+    private final EmailService emailService;
+    private final CashReportRecipientService recipientService;
 
     /**
      * Registra un movimiento dentro de un corte abierto. Lo puede hacer el dueño del corte o
@@ -66,6 +71,11 @@ public class CashMovementService {
     public CashMovement registerOnCut(Long cutId, CashMovementRequest req, User actor) {
         CashCut cut = lockOpenCut(cutId, actor);
         CashMovementType type = req.getType();
+        // Una devolución siempre va ligada a una venta (ver registerRefund): capturarla a
+        // mano sería sacar efectivo "justificado" sin ninguna venta detrás.
+        if (type == CashMovementType.REFUND) {
+            throw new IllegalStateException("Las devoluciones se registran desde Ventas, sobre la venta que se devuelve");
+        }
         if (type == CashMovementType.WITHDRAWAL && !tenantScope.isAdminLevel(actor)) {
             throw new AccessDeniedException("Solo un administrador o supervisor puede registrar retiros");
         }
@@ -98,6 +108,31 @@ public class CashMovementService {
     }
 
     /**
+     * Registra la salida de efectivo de una devolución (ver {@code SaleService#refund}) en el
+     * corte abierto del actor: el dinero sale físicamente de SU caja, así que es su esperado
+     * el que baja — nunca el del corte (ya cerrado) donde se hizo la venta.
+     *
+     * @param cutId corte abierto del actor
+     * @param amount efectivo que se le regresa al cliente
+     * @param concept descripción (folio, motivo y artículos que no regresaron)
+     * @throws IllegalStateException si no hay suficiente efectivo en la caja
+     */
+    @Transactional
+    public CashMovement registerRefund(Long cutId, BigDecimal amount, String concept, User actor, Long saleId) {
+        // Una devolución siempre saca dinero (SaleService#refund solo llama con total > 0).
+        if (amount == null || amount.signum() <= 0) {
+            throw new IllegalStateException("La devolución en efectivo debe ser mayor a cero");
+        }
+        CashCut cut = lockOpenCut(cutId, actor);
+        ensureAvailable(calculator.expectedCash(cut), amount, isBlind(cut, actor));
+        CashMovement m = newMovement(cut.getTienda(), cut.getCashRegister(), CashMovementType.REFUND, amount, actor);
+        m.setCashCut(cut);
+        m.setConcept(truncate(concept, 150));
+        m.setSaleId(saleId);
+        return movementRepository.save(m);
+    }
+
+    /**
      * Paga un reembolso pendiente con dinero de la caja de un corte abierto (lo usa
      * {@link ReimbursementService#pay} con origen "de la caja").
      */
@@ -110,7 +145,7 @@ public class CashMovementService {
     // Siempre por el monto completo: monto, persona y concepto salen del propio reembolso,
     // nunca de lo que mande el cliente.
     private CashMovement payReimbursement(CashCut cut, Long reimbursementId, String receiptPath, User actor) {
-        Reimbursement r = reimbursementRepository.findByIdForUpdate(reimbursementId)
+        Reimbursement r = reimbursementRepository.findByIdForUpdate(reimbursementId).map(entityLocks::fresh)
                 .filter(x -> x.getTienda().getId().equals(cut.getTienda().getId()))
                 .orElseThrow(() -> new IllegalArgumentException("Reembolso no encontrado"));
         if (r.getStatus() != ReimbursementStatus.PENDING) {
@@ -137,28 +172,34 @@ public class CashMovementService {
     }
 
     /**
-     * Registra un retiro o una entrada de efectivo con la caja cerrada (entre turnos). Ajusta
-     * la entrega pendiente de la caja; si el administrador cuenta lo que queda
-     * ({@code countedRemaining}), la entrega pasa a ser lo que contó, verificada por él.
+     * Registra un movimiento de efectivo con la caja cerrada (entre turnos). Ajusta la entrega
+     * pendiente de la caja; si el administrador cuenta lo que queda ({@code countedRemaining}),
+     * la entrega pasa a ser lo que contó, verificada por él. Un cajero solo puede registrar
+     * gastos y retiros al recibir la caja (lo que quedó del día anterior y ya no está); de esos
+     * se avisa por correo a los destinatarios del reporte de fin de día.
      *
-     * @throws AccessDeniedException si el actor no es administrador/supervisor
-     * @throws IllegalStateException si la caja está en uso, el tipo no aplica o el retiro excede lo que hay
+     * @throws AccessDeniedException si un cajero intenta algo que no sea un gasto o un retiro
+     * @throws IllegalStateException si la caja está en uso, el tipo no aplica o la salida excede lo que hay
      */
     @Transactional
     public CashMovement registerOnClosedRegister(Long registerId, CashMovementRequest req, User actor) {
-        if (!tenantScope.isAdminLevel(actor)) {
-            throw new AccessDeniedException("Solo un administrador o supervisor puede mover efectivo con la caja cerrada");
+        boolean admin = tenantScope.isAdminLevel(actor);
+        CashMovementType type = req.getType();
+        if (!admin && type != CashMovementType.WITHDRAWAL && type != CashMovementType.EXPENSE) {
+            throw new AccessDeniedException("Con la caja cerrada, un cajero solo puede registrar gastos y retiros");
         }
         Tienda tienda = requireTienda(actor);
-        CashRegister register = cashRegisterRepository.findByIdForUpdate(registerId)
+        CashRegister register = cashRegisterRepository.findByIdForUpdate(registerId).map(entityLocks::fresh)
                 .filter(r -> r.getTienda().getId().equals(tienda.getId()))
                 .orElseThrow(() -> new IllegalArgumentException("Caja no encontrada"));
         if (cashCutRepository.findFirstByCashRegisterIdAndStatus(register.getId(), CashCutStatus.OPEN).isPresent()) {
             throw new IllegalStateException("La caja está en uso: registra el movimiento dentro de su corte");
         }
-        CashMovementType type = req.getType();
-        if (type != CashMovementType.WITHDRAWAL && type != CashMovementType.FLOAT) {
-            throw new IllegalStateException("Con la caja cerrada solo se puede retirar o agregar efectivo");
+        if (!admin && CashDayCloseService.isDayClosed(register)) {
+            throw new IllegalStateException("La caja " + register.getName() + " ya hizo su corte de fin de día");
+        }
+        if (type != CashMovementType.WITHDRAWAL && type != CashMovementType.FLOAT && type != CashMovementType.EXPENSE) {
+            throw new IllegalStateException("Con la caja cerrada solo se puede retirar, gastar o agregar efectivo");
         }
 
         BigDecimal amount = requireAmount(req.getAmount());
@@ -168,12 +209,13 @@ public class CashMovementService {
 
         CashMovement m = newMovement(tienda, register, type, amount, actor);
         applyDetails(m, req, tienda, actor);
+        BigDecimal countedRemaining = admin ? req.getCountedRemaining() : null;
         m.setExpectedRemaining(expectedRemaining);
-        m.setCountedRemaining(req.getCountedRemaining());
+        m.setCountedRemaining(countedRemaining);
         CashMovement saved = movementRepository.save(m);
 
-        if (req.getCountedRemaining() != null) {
-            register.setPendingAmount(req.getCountedRemaining());
+        if (countedRemaining != null) {
+            register.setPendingAmount(countedRemaining);
             register.setPendingCountMethod(CashCountMethod.ADMIN_IN_PERSON);
             register.setPendingCountedBy(actor);
             register.setPendingCountedAt(LocalDateTime.now());
@@ -181,7 +223,22 @@ public class CashMovementService {
             register.setPendingAmount(expectedRemaining);
         }
         cashRegisterRepository.save(register);
+        if (!admin) notifyRecipients(register, saved, actor);
         return saved;
+    }
+
+    /** Avisa a los destinatarios del reporte de fin de día de lo que registró un cajero al recibir la caja. */
+    private void notifyRecipients(CashRegister register, CashMovement m, User actor) {
+        // La tienda de la caja y no la del actor: esa viene de la sesión de seguridad, ya cerrada,
+        // y resolveEmails lee su supervisor. Sin proxy porque el envío corre fuera de esta transacción.
+        Tienda real = (Tienda) Hibernate.unproxy(register.getTienda());
+        boolean withdrawal = m.getType() == CashMovementType.WITHDRAWAL;
+        String detail = withdrawal ? m.getDestination().describe(m.getDestinationOther()) : m.getConcept();
+        String person = m.getPerson() != null ? m.getPerson().getName() : actor.getName();
+        for (String email : recipientService.resolveEmails(real)) {
+            emailService.sendCashBeforeOpeningEmail(real, register.getName(), actor.getName(), withdrawal ? "Retiro" : "Gasto",
+                    m.getAmount(), detail, person, m.getOccurredAt(), email);
+        }
     }
 
     /** Sube la foto de un comprobante (ticket de gasto, captura de transferencia, evidencia de conteo). */
@@ -193,7 +250,7 @@ public class CashMovementService {
     // ── helpers ──────────────────────────────────────────────────────────────────
 
     private CashCut lockOpenCut(Long cutId, User actor) {
-        CashCut cut = cashCutRepository.findByIdForUpdate(cutId)
+        CashCut cut = cashCutRepository.findByIdForUpdate(cutId).map(entityLocks::fresh)
                 .orElseThrow(() -> new IllegalArgumentException("Corte no encontrado: " + cutId));
         boolean own = cut.getUser().getId().equals(actor.getId());
         if (!own && !(tenantScope.isAdminLevel(actor) && inScope(cut.getTienda(), actor))) {
@@ -234,10 +291,10 @@ public class CashMovementService {
         switch (m.getType()) {
             case EXPENSE -> {
                 if (concept == null) throw new IllegalStateException("Escribe el concepto del gasto");
+                if (req.getPersonId() != null) m.setPerson(findPerson(req.getPersonId(), tienda, actor));
             }
             case WITHDRAWAL -> {
-                if (req.getDestination() == null) throw new IllegalStateException("Indica el destino del dinero");
-                m.setDestination(req.getDestination());
+                applyDestination(m, req.getDestination(), req.getDestinationOther());
                 m.setPerson(req.getPersonId() != null ? findPerson(req.getPersonId(), tienda, actor) : actor);
             }
             case CONTRIBUTION -> {
@@ -267,14 +324,26 @@ public class CashMovementService {
         m.setReceiptPath(blankToNull(req.getReceiptPath()));
     }
 
-    // Persona de la misma tienda, o el propio actor (un SUPERVISOR/SUPER_ADMIN no tiene tienda propia).
+    /** Pone el destino de un retiro; "Otro" exige escribirlo. */
+    void applyDestination(CashMovement m, WithdrawalDestination destination, String other) {
+        if (destination == null) throw new IllegalStateException("Indica el destino del dinero");
+        String written = blankToNull(other);
+        if (destination == WithdrawalDestination.OTHER && written == null) {
+            throw new IllegalStateException("Escribe el destino del dinero");
+        }
+        m.setDestination(destination);
+        m.setDestinationOther(destination == WithdrawalDestination.OTHER ? written : null);
+    }
+
+    // Persona de la misma tienda, su supervisor (no tiene tienda propia) o el propio actor.
     User findPerson(Long personId, Tienda tienda, User actor) {
         if (personId.equals(actor.getId())) return actor;
         User person = userRepository.findById(personId)
                 .orElseThrow(() -> new IllegalArgumentException("Usuario no encontrado"));
-        if (person.getTienda() == null || !person.getTienda().getId().equals(tienda.getId())) {
-            throw new IllegalArgumentException("Usuario no encontrado");
-        }
+        boolean sameStore = person.getTienda() != null && person.getTienda().getId().equals(tienda.getId());
+        boolean supervisor = userRepository.findSupervisorOfTienda(tienda.getId())
+                .filter(s -> s.getId().equals(personId)).isPresent();
+        if (!sameStore && !supervisor) throw new IllegalArgumentException("Usuario no encontrado");
         return person;
     }
 

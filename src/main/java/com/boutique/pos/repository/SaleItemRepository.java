@@ -28,6 +28,9 @@ public interface SaleItemRepository extends JpaRepository<SaleItem, Long> {
     @Query(value = "SELECT si.product_id, si.product_name, SUM(si.quantity), SUM(si.subtotal) " +
                    "FROM sale_items si JOIN sales s ON si.sale_id = s.id " +
                    "WHERE s.status = 'COMPLETED' AND s.created_at BETWEEN :from AND :to " +
+                   // Anticipos y abonos: su línea es el pago a cuenta, no un producto vendido
+                   // (los productos cuentan cuando se liquida el apartado).
+                   "AND COALESCE(s.kind, 'REGULAR') <> 'DEPOSIT' " +
                    "AND (:tiendaId IS NULL OR s.tienda_id = :tiendaId) " +
                    "GROUP BY si.product_id, si.product_name " +
                    "ORDER BY SUM(si.quantity) DESC LIMIT :lim",

@@ -13,7 +13,17 @@ public enum MovementSource {
     SALE,
     /** Cancelación de una venta (las piezas regresan). */
     SALE_CANCEL,
-    /** Apartado confirmado (las piezas salen). */
+    /** Devolución de una venta de un turno ya cerrado: el cliente entregó la pieza y regresa al stock. */
+    SALE_REFUND,
+    /**
+     * Devolución de una venta en la que el cliente NO entregó la pieza: el stock no cambia,
+     * pero queda el registro para que se pueda revisar (ver SaleService#refund).
+     */
+    SALE_REFUND_NO_PRODUCT,
+    /**
+     * Al apartar: confirmar o registrar el anticipo (las piezas salen). Lo sobre pedido y por
+     * pedido deja un renglón informativo (ajuste, sin cambiar el stock).
+     */
     APARTADO,
     /** Apartado cancelado o vencido (las piezas regresan). */
     APARTADO_RETURN,
@@ -32,5 +42,12 @@ public enum MovementSource {
     /** "Actualizar existencias (Excel)": stock fijado a la cantidad real contada. */
     STOCK_IMPORT,
     /** Piezas pasadas desde materia prima. */
-    RAW_MATERIAL
+    RAW_MATERIAL,
+    /**
+     * Entrega de un apartado pagado completo (ver ApartadoService#deliver): informativo, el stock
+     * no cambia (ya se descontó en el anticipo, o es sobre pedido y no se descontó).
+     */
+    APARTADO_DELIVERED,
+    /** Abono a un apartado con anticipo: informativo, un renglón por producto; el stock no cambia. */
+    APARTADO_INSTALLMENT
 }

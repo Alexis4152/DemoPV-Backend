@@ -2,6 +2,8 @@ package com.boutique.pos.controller;
 
 import com.boutique.pos.dto.ApiResponse;
 import com.boutique.pos.dto.PageResponse;
+import com.boutique.pos.dto.SaleCancelRequest;
+import com.boutique.pos.dto.SaleRefundRequest;
 import com.boutique.pos.dto.SaleRequest;
 import com.boutique.pos.model.PaymentMethod;
 import com.boutique.pos.model.Sale;
@@ -60,11 +62,31 @@ public class SaleController {
      * @param actor usuario autenticado; la venta debe pertenecer a su tienda
      */
     @GetMapping("/{id}/ticket-escpos")
-    @PreAuthorize("@sectionAccess.checkAny('SALES', 'POS')")
+    @PreAuthorize("@sectionAccess.checkAny('SALES', 'POS', 'APARTADOS')")
     public ResponseEntity<ApiResponse<String>> ticketEscPos(@PathVariable Long id,
                                                               @AuthenticationPrincipal User actor) {
         Sale sale = saleService.findById(id, actor);
         return ResponseEntity.ok(ApiResponse.ok(escPosTicketService.build(sale), null));
+    }
+
+    /** El ticket digital (PDF) de una venta, para verlo en pantalla. */
+    @GetMapping("/{id}/ticket-pdf")
+    @PreAuthorize("@sectionAccess.checkAny('SALES', 'POS', 'APARTADOS')")
+    public ResponseEntity<byte[]> ticketPdf(@PathVariable Long id, @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok()
+                .contentType(org.springframework.http.MediaType.APPLICATION_PDF)
+                .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION, "inline; filename=ticket-" + id + ".pdf")
+                .body(saleService.ticketPdf(id, actor));
+    }
+
+    /** Manda por correo el ticket digital de una venta. */
+    @PostMapping("/{id}/send-ticket")
+    @PreAuthorize("@sectionAccess.checkAny('SALES', 'POS', 'APARTADOS')")
+    public ResponseEntity<ApiResponse<Void>> sendTicket(@PathVariable Long id,
+                                                        @Valid @RequestBody com.boutique.pos.dto.SendTicketRequest req,
+                                                        @AuthenticationPrincipal User actor) {
+        saleService.sendTicket(id, req.getEmail(), actor);
+        return ResponseEntity.ok(ApiResponse.ok(null, "Ticket enviado a " + req.getEmail().trim()));
     }
 
     /**
@@ -111,14 +133,26 @@ public class SaleController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
             @RequestParam(required = false) String customerName,
             @RequestParam(required = false) PaymentMethod paymentMethod,
-            @RequestParam(required = false) SaleStatus status,
+            @RequestParam(required = false) String status,
             @RequestParam(required = false) String sort,
             @RequestParam(required = false) String dir,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @AuthenticationPrincipal User actor) {
         Pageable pageable = SortParams.page(page, size, sort, dir, SORT_SALES, DEFAULT_SORT_SALES);
-        Page<Sale> result = saleService.findAll(from, to, customerName, paymentMethod, status, pageable, actor);
+        // "Devuelta" no es un SaleStatus (la venta devuelta sigue COMPLETED, ver SaleService#refund):
+        // COMPLETED = completada sin devolver, REFUNDED = devuelta, CANCELLED = cancelada.
+        SaleStatus saleStatus = null;
+        Boolean refunded = null;
+        if (status != null && !status.isBlank()) {
+            switch (status) {
+                case "COMPLETED" -> { saleStatus = SaleStatus.COMPLETED; refunded = false; }
+                case "REFUNDED" -> { saleStatus = SaleStatus.COMPLETED; refunded = true; }
+                case "CANCELLED" -> saleStatus = SaleStatus.CANCELLED;
+                default -> throw new IllegalArgumentException("Estado no válido: " + status);
+            }
+        }
+        Page<Sale> result = saleService.findAll(from, to, customerName, paymentMethod, saleStatus, refunded, pageable, actor);
         return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(result), null));
     }
 
@@ -162,5 +196,29 @@ public class SaleController {
     @PreAuthorize("@sectionAccess.checkAction('SALES', 'DELETE')")
     public ResponseEntity<ApiResponse<Sale>> cancel(@PathVariable Long id, @AuthenticationPrincipal User actor) {
         return ResponseEntity.ok(ApiResponse.ok(saleService.cancel(id, actor), "Venta cancelada"));
+    }
+
+    /**
+     * Cancela una venta eligiendo por artículo qué pasó con el producto (regresa / merma / no
+     * regresó) — ver {@link SaleService#cancel(Long, SaleCancelRequest, User)}. Mismo permiso.
+     */
+    @PostMapping("/{id}/cancel")
+    @PreAuthorize("@sectionAccess.checkAction('SALES', 'DELETE')")
+    public ResponseEntity<ApiResponse<Sale>> cancelWithItems(@PathVariable Long id,
+                                                             @Valid @RequestBody SaleCancelRequest req,
+                                                             @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(saleService.cancel(id, req, actor), "Venta cancelada"));
+    }
+
+    /**
+     * Devuelve una venta de un turno ya cerrado — ver {@link SaleService#refund}. Mismo
+     * permiso que cancelar ({@code SALES:DELETE}).
+     */
+    @PostMapping("/{id}/refund")
+    @PreAuthorize("@sectionAccess.checkAction('SALES', 'DELETE')")
+    public ResponseEntity<ApiResponse<Sale>> refund(@PathVariable Long id,
+                                                    @Valid @RequestBody SaleRefundRequest req,
+                                                    @AuthenticationPrincipal User actor) {
+        return ResponseEntity.ok(ApiResponse.ok(saleService.refund(id, req, actor), "Devolución registrada"));
     }
 }

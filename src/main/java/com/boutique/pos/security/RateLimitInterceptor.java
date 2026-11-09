@@ -44,6 +44,12 @@ public class RateLimitInterceptor implements HandlerInterceptor {
             // límite bajo para que nadie lo use para inundarle el correo, o para saturar el
             // endpoint con solicitudes falsas (segundo hallazgo de la auditoría).
             Map.entry("POST:/api/public/tiendas/{slug}/apartados", new Rule(5, Duration.ofMinutes(1))),
+            // Consultas públicas de apartados: sin límite, alguien con una lista de teléfonos
+            // (o probando folios) podría recorrerlos en minutos y armar quién apartó qué. Un
+            // cliente real consulta pocas veces.
+            Map.entry("POST:/api/public/tiendas/{slug}/apartados/lookup", new Rule(20, Duration.ofMinutes(15))),
+            Map.entry("POST:/api/public/tiendas/{slug}/apartados/lookup-by-phone", new Rule(10, Duration.ofMinutes(15))),
+            Map.entry("POST:/api/public/tiendas/{slug}/apartados/self-cancel", new Rule(10, Duration.ofMinutes(15))),
             // Manda un correo a CADA SUPER_ADMIN activo por solicitud — mismo límite bajo
             // que forgot-password, por el mismo motivo (nadie debe poder usarlo para
             // inundarles el correo ni para saturar la tabla con solicitudes falsas).
