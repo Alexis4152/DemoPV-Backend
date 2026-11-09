@@ -92,7 +92,10 @@ public class EscPosTicketService {
             if (sale.getApartadoFolio() != null) {
                 text(buf, "Apartado #" + sale.getApartadoFolio() + "\n");
             }
-            for (String l : wrapWords(stripAccents(retentionLegend.text(sale)))) text(buf, l + "\n");
+            String legend = retentionLegend.text(sale);
+            if (legend != null) {
+                for (String l : wrapWords(stripAccents(legend))) text(buf, l + "\n");
+            }
         }
         ctl(buf, 0x1B, 0x61, 0x00); // alinear a la izquierda
         text(buf, line());

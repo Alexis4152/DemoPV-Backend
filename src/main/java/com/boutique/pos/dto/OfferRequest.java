@@ -3,8 +3,10 @@ package com.boutique.pos.dto;
 import jakarta.validation.constraints.*;
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Payload para crear o actualizar una {@code Offer} ({@code POST}/{@code PUT /api/offers/**},
@@ -42,6 +44,10 @@ public class OfferRequest {
 
     @NotEmpty(message = "Elige al menos un producto para esta oferta")
     private List<Long> productIds;
+
+    // Precio en oferta de cada producto elegido (id -> precio). Obligatorio para todos; lo
+    // valida OfferService#resolvePrices.
+    private Map<Long, BigDecimal> productPrices;
 
     /**
      * Valida que lo que se paga sea realmente menos que lo que se lleva — si no, no es una

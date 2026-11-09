@@ -6,9 +6,12 @@ import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Promoción tipo "compra X paga Y" (2x1, 3x2, 4x2, ...), propiedad de una {@link Tienda}
@@ -75,6 +78,22 @@ public class Offer {
             inverseJoinColumns = @JoinColumn(name = "product_id"))
     @Builder.Default
     private List<Product> products = new ArrayList<>();
+
+    // Precio de cada producto en esta oferta (id de producto -> precio): las piezas que se
+    // pagan de una promoción se cobran a este precio, no al precio oficial del producto
+    // (ver SaleService#applyOffer). Obligatorio al crear/editar; una oferta guardada antes
+    // de este campo no lo tiene y cobra el precio oficial hasta que se edite.
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "offer_product_prices", joinColumns = @JoinColumn(name = "offer_id"))
+    @MapKeyColumn(name = "product_id")
+    @Column(name = "price", precision = 12, scale = 2, nullable = false)
+    @Builder.Default
+    private Map<Long, BigDecimal> productPrices = new HashMap<>();
+
+    /** Precio en oferta de un producto, o null si la oferta no lo tiene (oferta anterior). */
+    public BigDecimal priceFor(Long productId) {
+        return productPrices != null ? productPrices.get(productId) : null;
+    }
 
     @JsonIgnoreProperties({"role", "tienda", "createdBy", "updatedBy", "deletedBy"})
     @ManyToOne(fetch = FetchType.LAZY)

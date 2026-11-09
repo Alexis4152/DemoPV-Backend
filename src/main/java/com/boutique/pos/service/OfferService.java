@@ -15,9 +15,12 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -117,7 +120,46 @@ public class OfferService {
         offer.setStartsAt(req.getStartsAt());
         offer.setEndsAt(req.getEndsAt());
         if (req.getIsActive() != null) offer.setIsActive(req.getIsActive());
-        offer.setProducts(resolveProducts(req.getProductIds(), tiendaId));
+        List<Product> products = resolveProducts(req.getProductIds(), tiendaId);
+        offer.setProducts(products);
+        Map<Long, BigDecimal> prices = resolvePrices(products, req.getProductPrices());
+        // Se reemplaza el contenido (no la colección) para que Hibernate solo sincronice filas.
+        if (offer.getProductPrices() == null) offer.setProductPrices(new HashMap<>());
+        offer.getProductPrices().clear();
+        offer.getProductPrices().putAll(prices);
+    }
+
+    private static final BigDecimal MAX_PRICE = new BigDecimal("9999999999.99");
+    private static final java.text.NumberFormat MONEY_FMT = java.text.NumberFormat.getCurrencyInstance(java.util.Locale.forLanguageTag("es-MX"));
+
+    /**
+     * Precio en oferta de cada producto elegido: obligatorio, mayor a cero y con máximo dos
+     * decimales. Los precios de productos que no están en la oferta se ignoran.
+     */
+    private Map<Long, BigDecimal> resolvePrices(List<Product> products, Map<Long, BigDecimal> requested) {
+        Map<Long, BigDecimal> prices = new HashMap<>();
+        for (Product p : products) {
+            BigDecimal price = requested != null ? requested.get(p.getId()) : null;
+            if (price == null) {
+                throw new FieldConflictException("productPrices", "Escribe el precio en oferta de \"" + p.getName() + "\"");
+            }
+            if (price.signum() <= 0) {
+                throw new FieldConflictException("productPrices", "El precio en oferta de \"" + p.getName() + "\" debe ser mayor a 0");
+            }
+            if (price.compareTo(MAX_PRICE) > 0) {
+                throw new FieldConflictException("productPrices", "El precio en oferta de \"" + p.getName()
+                        + "\" es excesivamente grande — el máximo permitido es 9,999,999,999.99");
+            }
+            if (p.getPrice() != null && price.compareTo(p.getPrice()) >= 0) {
+                throw new FieldConflictException("productPrices", "El precio en oferta de \"" + p.getName()
+                        + "\" debe ser menor a su precio oficial (" + MONEY_FMT.format(p.getPrice()) + ")");
+            }
+            if (price.stripTrailingZeros().scale() > 2) {
+                throw new FieldConflictException("productPrices", "El precio en oferta de \"" + p.getName() + "\" admite máximo 2 decimales");
+            }
+            prices.put(p.getId(), price);
+        }
+        return prices;
     }
 
     private void validatePayLessThanBuy(OfferRequest req) {

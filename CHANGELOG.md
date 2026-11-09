@@ -2,10 +2,27 @@
 
 Cambios del backend. Los del portal están en el `CHANGELOG.md` de DemoPV-Frontend.
 Los números entre paréntesis son las secciones de la matriz `Pruebas aprobacion DemoPV (version 4).xlsx`.
+Cada versión lleva su fecha; la más reciente va primero.
 
-## [Sin liberar] — 2026-11-07
+## [2.0.5] — 2026-11-09
 
-Cambios posteriores al commit `50bc75f` (2026-10-28). Todavía no tienen commit.
+Sin commit todavía.
+
+### Cambios
+
+- **Mismo texto para sobre pedido:** el movimiento del anticipo ahora dice "Apartado #N (anticipo, sobre pedido, sin descontar del inventario)", igual que la entrega y Ver productos. `MovementSourceBackfill` cambia al arrancar los movimientos ya registrados que decían "no sale del inventario".
+- **Precio en oferta por producto:** cada producto de una oferta lleva su precio (obligatorio al crear o editar). Al vender, las piezas pagadas de la promoción se cobran a ese precio sin tocar el precio oficial. Con oferta se venden promociones completas y nunca más del límite por venta: si se pasa, se rechaza ("haz otra venta"). Las ofertas anteriores, sin precio, cobran el oficial hasta que se editen. Tabla nueva `offer_product_prices` (la crea Hibernate). El precio en oferta tiene que ser menor al precio oficial (ni igual ni mayor).
+- **Sin leyenda de retención:** los tickets de anticipo y abono (impreso y PDF) ya no traen "Si cancela o devuelve por cambio de opinión, la tienda retiene...". Solo los apartados sin % de retención siguen diciendo "Anticipo no reembolsable".
+
+### Despliegue
+
+- `ddl-auto=update` crea la tabla `offer_product_prices`.
+- Al arrancar, `MovementSourceBackfill` cambia el texto de los movimientos de anticipo que decían "no sale del inventario".
+- Las ofertas que ya existen no tienen precio en oferta: cobran el precio oficial hasta que se editen.
+
+## [2.0.0] — 2026-11-09
+
+Commit `4e77b87`. Cambios del 2026-10-28 (commit `50bc75f`) al 2026-11-09.
 
 **Estado de validación:** de 312 casos en la matriz, 212 están OK, 99 pendientes, 1 no aplica y ninguno en falla. La sección 32 ya está validada; 34 y 35 van a medias, y 33, 36, 37, 38 y 39 aún no se validan en pantalla.
 

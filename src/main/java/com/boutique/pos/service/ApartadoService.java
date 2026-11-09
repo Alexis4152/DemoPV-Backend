@@ -273,7 +273,7 @@ public class ApartadoService {
                 mv.setPreviousStock(product.getStock());
                 mv.setNewStock(product.getStock());
                 mv.setReason("Apartado #" + apartado.getFolio() + " (anticipo, "
-                        + (catalogMadeToOrder ? "por pedido, no maneja inventario" : "sobre pedido, no sale del inventario") + ")");
+                        + (catalogMadeToOrder ? "por pedido, no maneja inventario" : "sobre pedido, sin descontar del inventario") + ")");
                 mv.setSource(MovementSource.APARTADO);
                 movementRepository.save(mv);
             }

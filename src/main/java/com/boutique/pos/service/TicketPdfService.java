@@ -112,7 +112,8 @@ public class TicketPdfService {
                 if (sale.getApartadoFolio() != null) {
                     document.add(paragraph("Apartado #" + sale.getApartadoFolio(), FONT_BODY, Element.ALIGN_CENTER, 0, 2));
                 }
-                document.add(paragraph(retentionLegend.text(sale), FONT_BODY, Element.ALIGN_CENTER, 0, 8));
+                String legend = retentionLegend.text(sale);
+                if (legend != null) document.add(paragraph(legend, FONT_BODY, Element.ALIGN_CENTER, 0, 8));
             }
 
             // ── Datos de la venta ────────────────────────────────────────────

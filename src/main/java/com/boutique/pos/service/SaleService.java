@@ -90,11 +90,9 @@ public class SaleService {
      * manual del cajero, para {@code grossSubtotal}).
      * <p>
      * La cantidad capturada ({@code qtyInt}) son SIEMPRE piezas físicas — nunca "número de
-     * promociones" — así que primero se calcula cuántas promociones completas caben ahí
-     * ({@code promosPosibles}), topadas por {@link Offer#getMaxPromosPerSale()} si tiene
-     * límite. Lo que no forma parte de una promoción completa (porque sobra, o porque
-     * excede el límite) se cobra a precio normal, exactamente igual que si no hubiera
-     * oferta — nunca queda sin cobrarse.
+     * promociones" — y tienen que ser promociones completas, sin pasar de
+     * {@link Offer#getMaxPromosPerSale()} si tiene límite (si no, se rechaza la venta). Las
+     * piezas pagadas van al precio de la oferta para ese producto ({@link Offer#priceFor}).
      * <ul>
      *   <li>Línea 1 (siempre): piezas pagadas (las de las promociones + las normales) a
      *       precio normal, con el descuento manual del cajero aplicado ahí si vino alguno
@@ -110,7 +108,7 @@ public class SaleService {
      * @param items lista acumuladora de líneas de la venta; se le agregan 1 o 2 nuevas
      * @param product producto de esta línea
      * @param qtyInt piezas físicas que se lleva el cliente (no cambia si hay oferta o no)
-     * @param unitPrice precio normal del producto
+     * @param unitPrice precio oficial del producto (se usa el de la oferta si lo tiene)
      * @param discount descuento manual del cajero para esta línea (puede ser cero)
      * @param offer oferta vigente para este producto
      * @param tienda tienda de la venta, para validar el tope de descuento manual
@@ -121,10 +119,21 @@ public class SaleService {
                                    BigDecimal unitPrice, BigDecimal discount, Offer offer, Tienda tienda) {
         int buy = offer.getBuyQuantity();
         int pay = offer.getPayQuantity();
-        int promosPosibles = qtyInt / buy;
-        int promosAplicados = offer.getMaxPromosPerSale() != null
-                ? Math.min(promosPosibles, offer.getMaxPromosPerSale())
-                : promosPosibles;
+        // Con oferta se venden promociones completas, sin piezas sueltas, y nunca más de las
+        // permitidas por venta: para llevar más, otra venta (o "No aplicar oferta").
+        if (qtyInt % buy != 0) {
+            throw new IllegalStateException("\"" + product.getName() + "\" está en oferta (" + buy + "x" + pay
+                    + "): se vende en promociones completas de " + buy + " piezas");
+        }
+        int promosAplicados = qtyInt / buy;
+        if (offer.getMaxPromosPerSale() != null && promosAplicados > offer.getMaxPromosPerSale()) {
+            throw new IllegalStateException("La oferta de \"" + product.getName() + "\" permite máximo "
+                    + offer.getMaxPromosPerSale() + " promoción(es) por venta; para llevar más, haz otra venta");
+        }
+        // Las piezas que se pagan van al precio de la oferta (el oficial, si es una oferta
+        // anterior a este campo que todavía no se edita).
+        BigDecimal offerPrice = offer.priceFor(product.getId());
+        if (offerPrice != null) unitPrice = offerPrice;
         int piezasGratis = promosAplicados * (buy - pay);
         int piezasPagadas = qtyInt - piezasGratis;
 

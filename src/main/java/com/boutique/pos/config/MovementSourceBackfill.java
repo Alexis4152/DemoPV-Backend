@@ -62,5 +62,14 @@ public class MovementSourceBackfill implements CommandLineRunner {
         if (delivered > 0) {
             log.info("Salidas sobre pedido reclasificadas como Apartado entregado: {}", delivered);
         }
+        // Mismo texto en todos lados: el anticipo decía "no sale del inventario".
+        int renamed = entityManager.createNativeQuery(
+                "UPDATE inventory_movements SET reason = REPLACE(reason, 'sobre pedido, no sale del inventario', " +
+                "'sobre pedido, sin descontar del inventario') " +
+                "WHERE reason LIKE 'Apartado #% (anticipo, sobre pedido, no sale del inventario)'")
+                .executeUpdate();
+        if (renamed > 0) {
+            log.info("Movimientos de anticipo con el texto \"sobre pedido, sin descontar del inventario\": {}", renamed);
+        }
     }
 }
