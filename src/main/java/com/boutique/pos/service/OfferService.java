@@ -150,9 +150,9 @@ public class OfferService {
                 throw new FieldConflictException("productPrices", "El precio en oferta de \"" + p.getName()
                         + "\" es excesivamente grande — el máximo permitido es 9,999,999,999.99");
             }
-            if (p.getPrice() != null && price.compareTo(p.getPrice()) >= 0) {
+            if (p.getPrice() != null && price.compareTo(p.getPrice()) < 0) {
                 throw new FieldConflictException("productPrices", "El precio en oferta de \"" + p.getName()
-                        + "\" debe ser menor a su precio oficial (" + MONEY_FMT.format(p.getPrice()) + ")");
+                        + "\" no puede ser menor a su precio oficial (" + MONEY_FMT.format(p.getPrice()) + ")");
             }
             if (price.stripTrailingZeros().scale() > 2) {
                 throw new FieldConflictException("productPrices", "El precio en oferta de \"" + p.getName() + "\" admite máximo 2 decimales");
