@@ -53,6 +53,7 @@ public class EscPosTicketService {
     private final TiendaInfoRepository tiendaInfoRepository;
     private final ApartadoRetentionLegend retentionLegend;
     private final DepositLines depositLines;
+    private final EscPosLogo escPosLogo;
 
     /**
      * Arma el ticket completo de una venta y lo entrega como cadena hexadecimal, lista
@@ -72,16 +73,22 @@ public class EscPosTicketService {
         ctl(buf, 0x1B, 0x40); // ESC @ : inicializa la impresora
 
         ctl(buf, 0x1B, 0x61, 0x01); // alinear al centro
+        // Logo propio de la tienda (si subió uno), centrado arriba del nombre.
+        byte[] logo = escPosLogo.forTienda(sale.getTienda());
+        if (logo.length > 0) {
+            buf.writeBytes(logo);
+            text(buf, "\n");
+        }
         ctl(buf, 0x1B, 0x45, 0x01); // negritas ON
-        text(buf, wrap(sale.getTienda() != null ? sale.getTienda().getName() : "Punto de Venta") + "\n");
+        for (String l : wrapWords(sale.getTienda() != null ? sale.getTienda().getName() : "Punto de Venta")) {
+            text(buf, l + "\n");
+        }
         ctl(buf, 0x1B, 0x45, 0x00); // negritas OFF
 
         TiendaInfo info = sale.getTienda() != null
                 ? tiendaInfoRepository.findByTiendaId(sale.getTienda().getId()).orElse(null)
                 : null;
-        if (info != null && info.getRfc() != null && !info.getRfc().isBlank()) {
-            text(buf, "RFC: " + info.getRfc() + "\n");
-        }
+        appendStoreData(buf, info);
         // Leyenda de anticipo: el ticket NO es de una compra liquidada, solo del pago a
         // cuenta de un apartado — se deja claro arriba, antes que cualquier otro dato.
         if (sale.getKind() == SaleKind.DEPOSIT) {
@@ -151,6 +158,9 @@ public class EscPosTicketService {
 
         text(buf, line());
         ctl(buf, 0x1B, 0x61, 0x01);
+        if (info != null && info.getPaginaWeb() != null && !info.getPaginaWeb().isBlank()) {
+            for (String l : wrapWords(info.getPaginaWeb().trim())) text(buf, l + "\n");
+        }
         text(buf, "Gracias por su compra\n");
         ctl(buf, 0x1B, 0x61, 0x00);
         text(buf, "\n\n\n");
@@ -249,6 +259,29 @@ public class EscPosTicketService {
             text(buf, padBetween("Recibido", money(sale.getAmountReceived())) + "\n");
             text(buf, padBetween("Cambio", money(sale.getChangeGiven())) + "\n");
         }
+    }
+
+    /**
+     * Datos de la tienda bajo el nombre, centrados y uno por renglón (igual que el PDF):
+     * razón social, RFC, calle, colonia, C.P., localidad, estado y teléfono. Se salta el
+     * que venga vacío; la página web va al pie del ticket.
+     */
+    private void appendStoreData(ByteArrayOutputStream buf, TiendaInfo info) {
+        if (info == null) return;
+        storeLine(buf, info.getRazonSocial(), null);
+        storeLine(buf, info.getRfc(), "RFC: ");
+        storeLine(buf, info.getCalle(), null);
+        storeLine(buf, info.getColonia(), null);
+        storeLine(buf, info.getCodigoPostal(), "C.P. ");
+        storeLine(buf, info.getLocalidad(), null);
+        storeLine(buf, info.getEstado(), null);
+        storeLine(buf, info.getTelefono(), "Tel. ");
+    }
+
+    private void storeLine(ByteArrayOutputStream buf, String value, String prefix) {
+        if (value == null || value.isBlank()) return;
+        String s = stripAccents((prefix != null ? prefix : "") + value.trim().replaceAll("\\s+", " "));
+        for (String l : wrapWords(s)) text(buf, l + "\n");
     }
 
     private String padBetween(String left, String right) {

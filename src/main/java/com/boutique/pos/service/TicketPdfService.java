@@ -16,7 +16,6 @@ import com.lowagie.text.pdf.PdfWriter;
 import com.lowagie.text.pdf.draw.LineSeparator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
@@ -28,7 +27,6 @@ import java.io.InputStream;
 import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.text.NumberFormat;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
@@ -67,11 +65,10 @@ public class TicketPdfService {
     private static final Font FONT_NEGATIVE = FontFactory.getFont(FontFactory.HELVETICA, 9, new Color(200, 0, 0));
 
     private final TiendaInfoRepository tiendaInfoRepository;
+    private final TiendaLogoFiles tiendaLogoFiles;
     private final ApartadoRetentionLegend retentionLegend;
     private final DepositLines depositLines;
 
-    @Value("${app.uploads.dir}")
-    private String uploadsDir;
 
     /**
      * Genera el PDF del ticket de una venta ya registrada.
@@ -261,11 +258,9 @@ public class TicketPdfService {
      * @throws IOException si falla la lectura del logo por defecto
      */
     private byte[] logoBytes(Tienda tienda) throws IOException {
-        if (tienda != null && tienda.getLogoPath() != null && !tienda.getLogoPath().isBlank()) {
-            Path path = Paths.get(uploadsDir, tienda.getLogoPath().replaceFirst("^/uploads/", ""));
-            if (Files.exists(path)) {
-                return Files.readAllBytes(path);
-            }
+        Path own = tiendaLogoFiles.ownLogo(tienda).orElse(null);
+        if (own != null) {
+            return Files.readAllBytes(own);
         }
         try (InputStream in = new ClassPathResource("branding/default-logo.png").getInputStream()) {
             return in.readAllBytes();
